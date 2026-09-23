@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S python3 -I
 """Leak check for this repository.
 
 Three parts, each ends as passed, failed or did not run:
@@ -11,7 +11,11 @@ Three parts, each ends as passed, failed or did not run:
 Parts 2 and 3 scan tracked files (path and content), every commit in range
 (author and committer name and email, message, patch) and the PR title and
 body (PR_TITLE, PR_BODY). Text that is not UTF-8 makes parts 2 and 3 "did not
-run"; image files (by extension) are not read, only counted as skipped.
+run"; image files (by extension and file signature) are not read, only counted
+as skipped; a file with an image name that is not an image is scanned as text
+and makes all three parts "did not run" (gitleaks skips such names).
+Run it isolated (python3 -I, as the shebang does): a module placed next to
+the script must not replace the standard library.
 
 Range: BASE_SHA..HEAD_SHA when BASE_SHA is set; otherwise from the merge
 base with origin/main; otherwise every commit reachable from HEAD.
@@ -42,8 +46,8 @@ ALLOWLIST = ".github/public-repos.txt"
 ENCODING = "utf-8"
 GITLEAKS_LEAKS_EXIT = 99
 IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")
-# Patches leave image files out: their bytes are not text.
-IMAGE_PATHSPECS = [f":(exclude,icase,glob)**/*{ext}" for ext in IMAGE_EXTENSIONS]
+# File signatures: a file counts as an image only when its bytes start like one.
+IMAGE_SIGNATURES = (b"\x89PNG\r\n\x1a\n", b"\xff\xd8\xff", b"GIF87a", b"GIF89a", b"\x00\x00\x01\x00")
 
 PASSED, FAILED, DID_NOT_RUN = "passed", "failed", "did not run"
 EXIT_CODES = {PASSED: 0, FAILED: 1, DID_NOT_RUN: 2}
@@ -160,16 +164,29 @@ def is_image(path):
     return path.lower().endswith(IMAGE_EXTENSIONS)
 
 
-def tracked_items(label, problems):
+def is_real_image(data):
+    return data.startswith(IMAGE_SIGNATURES) or (data[:4] == b"RIFF" and data[8:12] == b"WEBP")
+
+
+def fake_image(where):
+    return f"{where} has an image name but is not an image"
+
+
+def tracked_items(label, problems, fakes):
     """Items for every tracked file: its path and its content in the working tree. Return (items, count, images)."""
     items, missing, images = [], 0, set()
     paths = list(dict.fromkeys(p for p in git("ls-files", "-z").split(b"\0") if p))
     for index, raw in enumerate(paths, 1):
         where = label(decode(raw), index)
         items.append((f"path of {where}", decode(raw), False))
-        if is_image(decode(raw)):
-            images.add(decode(raw))
-            continue
+        if decode_strict(raw) is None:
+            problems.append(f"{where}: its name is not UTF-8")
+        if is_image(decode(raw)) and os.path.isfile(raw) and not os.path.islink(raw):
+            with open(raw, "rb") as f:
+                if is_real_image(f.read(16)):
+                    images.add(decode(raw))
+                    continue
+            fakes.append(fake_image(where))
         if os.path.islink(raw):
             content = os.readlink(raw)
         elif os.path.isfile(raw):
@@ -190,16 +207,37 @@ def tracked_items(label, problems):
     return items, len(paths), images
 
 
-def commit_items(revs, problems):
+def commit_image_excludes(sha, label, fakes, images):
+    """Pathspecs that leave this commit's real image files out of its patch."""
+    excludes = []
+    names = git("show", "--format=", "--name-only", "--cc", "-z", sha, "--").split(b"\0")
+    for raw in (name.strip(b"\n") for name in names):
+        if not raw or not is_image(decode(raw)):
+            continue
+        # The new version, or for a deletion the version it removes (it shows in the patch too).
+        blob = subprocess.run([*GIT, "cat-file", "blob", f"{sha}:{decode(raw)}"], capture_output=True)
+        if blob.returncode != 0:
+            blob = subprocess.run([*GIT, "cat-file", "blob", f"{sha}^:{decode(raw)}"], capture_output=True)
+        if blob.returncode != 0:
+            continue
+        if is_real_image(blob.stdout[:16]):
+            images.add(decode(raw))
+            excludes.append(":(exclude,literal)" + decode(raw))
+        else:
+            fakes.append(fake_image(label(decode(raw))))
+    return excludes
+
+
+def commit_items(revs, problems, label, fakes):
     """Items for every commit in range: identities, message and patch. Return (items, count, images)."""
-    items = []
+    items, images = [], set()
     shas = decode(git("rev-list", *revs, "--")).split()
-    names = decode(git("log", "--format=", "--name-only", "-z", *revs, "--")).split("\0")
-    images = {name.strip("\n") for name in names if is_image(name.strip("\n"))}
     for sha in shas:
         where = f"commit {sha[:12]}"
-        meta = decode(git("show", "-s", "--format=%an%x00%ae%x00%cn%x00%ce%x00%B", sha)).split("\0")
-        author_name, author_email, committer_name, committer_email, message = meta
+        raw_meta = git("show", "-s", "--format=%an%x00%ae%x00%cn%x00%ce%x00%B", sha)
+        if decode_strict(raw_meta) is None:
+            problems.append(f"{where}: its identity or message is not UTF-8")
+        author_name, author_email, committer_name, committer_email, message = decode(raw_meta).split("\0")
         items += [
             (f"{where} author name", author_name, False),
             (f"{where} author email", author_email, False),
@@ -207,7 +245,8 @@ def commit_items(revs, problems):
             (f"{where} committer email", committer_email, False),
             (f"{where} message", message, True),
         ]
-        patch = decode_strict(git("show", *PATCH_ARGS, sha, "--", ".", *IMAGE_PATHSPECS))
+        excludes = commit_image_excludes(sha, label, fakes, images)
+        patch = decode_strict(git("show", *PATCH_ARGS, sha, "--", ".", *excludes))
         if patch is None:
             problems.append(f"{where} patch is not UTF-8")
         else:
@@ -361,9 +400,9 @@ def main(argv=None):
             return f"file {name}"
         return f"tracked file #{index} (name hidden: it matches a check)" if index else "a file (name hidden: it matches a check)"
 
-    images = set()
+    images, fakes = set(), []
     try:
-        file_items, file_count, file_images = tracked_items(label, problems)
+        file_items, file_count, file_images = tracked_items(label, problems, fakes)
         items += file_items
         images |= file_images
         facts.append(f"{file_count} tracked files")
@@ -372,7 +411,7 @@ def main(argv=None):
 
     if revs is not None:
         try:
-            commit_list, commit_count, commit_images = commit_items(revs, problems)
+            commit_list, commit_count, commit_images = commit_items(revs, problems, label, fakes)
             items += commit_list
             images |= commit_images
             facts.append(f"{commit_count} commits ({description})")
@@ -389,10 +428,14 @@ def main(argv=None):
         facts.append("PR " + " and ".join(where.split()[1] for where, _, _ in pr_list))
 
     scanned = ", ".join(facts) if items else ""
+    fakes = list(dict.fromkeys(fakes))
+    problems += fakes
     if revs is None:
         gitleaks = (DID_NOT_RUN, "commit range unavailable", [])
     else:
         gitleaks = gitleaks_part(revs, label, shown)
+        if fakes and gitleaks[0] == PASSED:
+            gitleaks = (DID_NOT_RUN, "gitleaks skips image names; " + "; ".join(fakes), [])
     refs = scan_part(items, ref_hits, scanned, problems + refs_problems)
     if patterns:
         pattern_problems = problems + ([patterns_problem] if patterns_problem else [])
@@ -409,7 +452,8 @@ def main(argv=None):
         for line in lines:
             print(line)
     if any(" patch line " in line for _, (_, _, lines) in parts for line in lines):
-        print("  (patch line N is line N of: git -c core.quotepath=off show " + " ".join(PATCH_ARGS) + " <commit>)")
+        print("  (patch line N is line N of: git -c core.quotepath=off show " + " ".join(PATCH_ARGS)
+              + " <commit> -- . ':(exclude,literal)<each real image file of the commit>')")
 
     statuses = [status for _, (status, _, _) in parts]
     overall = FAILED if FAILED in statuses else DID_NOT_RUN if DID_NOT_RUN in statuses else PASSED

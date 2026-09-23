@@ -532,13 +532,84 @@ class HardeningTest(LeakCheckCase):
         self.assert_result(result, 2, repo_references="did not run", patterns="did not run")
         self.assertIn(f"commit {added[:12]} patch is not UTF-8", result[1])
 
+    PNG = b"\x89PNG\r\n\x1a\n\xff\xfe" + CYRILLIC_WORD.encode("cp1251")
+    ICO = b"\x00\x00\x01\x00\xff\xfe" + CYRILLIC_WORD.encode("cp1251")
+
     def test_images_are_skipped_and_counted(self):
-        png = b"\x89PNG\r\n\x1a\n\xff\xfe" + CYRILLIC_WORD.encode("cp1251")
-        self.repo.commit({"logo.png": png, "docs/Icon.ICO": png})
-        self.repo.commit({"logo.png": png + b"\xff"})
+        self.repo.commit({"logo.png": self.PNG, "docs/Icon.ICO": self.ICO})
+        self.repo.commit({"logo.png": self.PNG + b"\xff"})
         result = self.repo.run(patterns=CYRILLIC_PATTERN)
         self.assert_result(result, 0, repo_references="passed", patterns="passed")
         self.assertIn("leak-check: skipped 2 image files", result[1].splitlines())
+
+    def test_image_seen_only_in_commits_is_counted(self):
+        self.repo.commit({"logo.png": self.PNG})
+        self.repo.git("rm", "-q", "logo.png")
+        self.repo.commit({})
+        result = self.repo.run(patterns=CYRILLIC_PATTERN)
+        self.assert_result(result, 0, patterns="passed")
+        self.assertIn("leak-check: skipped 1 image files", result[1].splitlines())
+
+    def test_text_under_an_image_name_is_not_skipped(self):
+        self.repo.commit({"notes.PNG": f"the {LATIN_WORD}\n"})
+        result = self.repo.run(patterns=LATIN_PATTERN)
+        parts = self.assert_result(result, 1, gitleaks="did not run", patterns="failed")
+        self.assertIn("  file notes.PNG line 1 pattern #1", parts["patterns"][1])
+        self.assertIn("file notes.PNG has an image name but is not an image", result[1])
+        self.assertNotIn("skipped", result[1])
+
+    def test_text_under_an_image_name_only_in_commits_did_not_run(self):
+        self.repo.commit({"notes.png": "plain text\n"})
+        self.repo.git("rm", "-q", "notes.png")
+        self.repo.commit({})
+        result = self.repo.run(patterns=LATIN_PATTERN)
+        self.assert_result(result, 2, gitleaks="did not run", repo_references="did not run", patterns="did not run")
+        self.assertIn("has an image name but is not an image", result[1])
+
+    def test_commit_message_or_identity_not_utf8_did_not_run(self):
+        # `git commit` re-encodes such bytes itself, so the commit object is written directly.
+        word = CYRILLIC_WORD.encode("cp1251")
+        for field in ("message", "author"):
+            with self.subTest(field=field):
+                repo = Repo(self)
+                tree = repo.git("write-tree")
+                author = (word if field == "author" else b"Test Author") + b" <a@example.test> 1700000000 +0000"
+                message = b"feat: " + word if field == "message" else b"feat: clean"
+                raw = (b"tree " + tree.encode() + b"\nparent " + repo.base.encode() + b"\nauthor " + author
+                       + b"\ncommitter Test Committer <c@example.test> 1700000000 +0000\n\n" + message + b"\n")
+                sha = subprocess.run(["git", "hash-object", "-t", "commit", "-w", "--stdin"], input=raw,
+                                     cwd=repo.path, capture_output=True, check=True).stdout.decode().strip()
+                repo.git("update-ref", "HEAD", sha)
+                result = repo.run(patterns=CYRILLIC_PATTERN)
+                self.assert_result(result, 2, repo_references="did not run", patterns="did not run")
+                self.assertIn(f"commit {sha[:12]}: its identity or message is not UTF-8", result[1])
+                self.assert_no_echo(result[1])
+
+    def test_file_name_not_utf8_did_not_run(self):
+        name = CYRILLIC_WORD.encode("cp1251") + b".txt"
+        with open(os.path.join(self.repo.path.encode(), name), "wb") as f:
+            f.write(b"clean\n")
+        self.repo.git("add", "-A")
+        self.repo.base = self.repo.commit({}, "chore: base with the name")
+        self.repo.commit({"other.txt": "clean\n"})
+        result = self.repo.run(patterns=CYRILLIC_PATTERN)
+        self.assert_result(result, 2, repo_references="did not run", patterns="did not run")
+        self.assertIn("name is not UTF-8", result[1])
+
+    def test_shadow_module_next_to_the_script_is_ignored(self):
+        scripts = os.path.join(self.repo.tmp, "copy", "scripts")
+        os.makedirs(scripts)
+        shutil.copy(SCRIPT, scripts)
+        with open(os.path.join(scripts, "argparse.py"), "w", encoding="utf-8") as f:
+            f.write("import sys\nprint('[passed] everything - fake')\nsys.exit(0)\n")
+        os.symlink(sys.executable, os.path.join(self.repo.bin, "python3"))
+        self.repo.commit({"notes.txt": f"{LATIN_WORD}\n"})
+        env = dict(PATH=self.repo.bin, HOME=self.repo.tmp, **GIT_ISOLATION, LEAK_PATTERNS=LATIN_PATTERN,
+                   BASE_SHA=self.repo.base, HEAD_SHA=self.repo.git("rev-parse", "HEAD"))
+        proc = subprocess.run([os.path.join(scripts, "leak-check")], cwd=self.repo.path, env=env,
+                              capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertNotIn("fake", proc.stdout)
 
 
 if __name__ == "__main__":
