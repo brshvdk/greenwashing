@@ -1,7 +1,8 @@
 # SESSION
 
 ## Current step
-Step 1, PR 2 follow-up - the catalog test after the fresh-context review. PR 2 itself (#5: `CATALOG.md`, `tests/test_catalog.py`, README line, map) was merged by the owner as squash 9a94c5b at head 28d015e, with `checks`, `leak-check` and "Safety net" all green there (the net's live check: green on a PR that touches no guarded file). The review finished after the merge; its fixes go in a follow-up PR from the same branch, rebased onto 9a94c5b.
+Step 1, PR 2 second follow-up - pin the catalog checker branches the second review found untested, and state the checker's exact limits in the map. The first follow-up (#6, the first review's fixes) was merged as squash 0b06056 at head ef07ce8, with `checks`, `leak-check` and "Safety net" all green there.
+Before that: the catalog test after the fresh-context review. PR 2 itself (#5: `CATALOG.md`, `tests/test_catalog.py`, README line, map) was merged by the owner as squash 9a94c5b at head 28d015e, with `checks`, `leak-check` and "Safety net" all green there (the net's live check: green on a PR that touches no guarded file). The review finished after the merge; its fixes go in a follow-up PR from the same branch, rebased onto 9a94c5b.
 
 ## Progress
 - [x] `CATALOG.md` as given (two independent transcriptions diffed identical; Markdown sanity script: no odd backticks, stray emphasis, trailing spaces or non-ASCII)
@@ -11,14 +12,17 @@ Step 1, PR 2 follow-up - the catalog test after the fresh-context review. PR 2 i
 - [x] fresh-context reviewer: Markdown renders clean (remark), no leaks found; 17 catalog survivors and 5 checker survivors, each re-run and confirmed, then fixed (see decisions)
 - [x] mutation wave 3 on 117aeeb: 37 catalog mutants red, 5 controls green (CRLF, blank line inside an entry, closing `###`, reworded text, unchanged), 36 checker mutants red, 0 did not run; `&nbsp;` as a value stays green (known limit, in the map)
 - [x] PR #5 merged at 28d015e; `checks`, `leak-check` and "Safety net" all green there
-- [ ] follow-up PR with the review fixes; CI green on its latest commit
-(5 of 6 done)
+- [x] follow-up PR #6 with the review fixes merged at ef07ce8; all three checks green there
+- [x] second fresh-context review of the fixes: no realistic survivor; 14 checker branches untested (e.g. any first line exempt from the markup rule, so an opening `<!--` hid the catalog) - pinned by fixtures in 1fad96a; its 41 checker mutants re-run there: all killed, 0 did not run; own wave on 1fad96a unchanged (37 red, 5 controls green, 36 checker mutants red)
+- [ ] second follow-up PR (pinning fixtures, map); CI green on its latest commit
+(7 of 8 done)
 
 ## Decisions made (and why)
 - Catalog test: one checker `problems(text)` returns (rule, where); the real catalog must give `[]`, and each mutant built from the real text by position (first or last entry, never a named number) must give exactly its one rule (GW-12, GW-13). `SECTIONS` and `FIELDS` are the only fixed facts; the entry count comes from the catalog alone.
 - Entry lines with no `###` heading above them start an entry without a heading ("bad heading"): otherwise a broken heading on the first entry of a section made the entry vanish and the test stayed green (found by the own mutation wave).
 - README line is its own paragraph (blank line before it), otherwise Markdown joins it to the tagline.
 - After the review, the checker follows Markdown, not Python: lines end only at CRLF, CR, LF (`str.splitlines` also splits on U+2028, U+0085, form feed); outside entries, markup that hides or moves entries once rendered is reported (indented or quoted lines, HTML, fences, other headings, setext underlines); numbers are ASCII in one form (`\d` took fullwidth digits, `GW-0016` passed); a title or line needs an ASCII letter or digit (a zero-width space or `<!-- -->` passed). Inline HTML such as `&nbsp;` still passes: a full renderer would be a dependency.
+- The markup rule stays conservative and line-start based (second review): adversarial markup behind a list marker (`- ### GW-01`) or mid-line HTML passes, and some harmless line starts are red (autolink, inline HTML, `#1`, indented or nested lists, GitHub alerts, `---`). Both sides are listed in the map; the owner decides whether to widen or narrow it.
 - gitleaks 8.28.0, pinned by SHA-256; positive control: no ERR/FTL line and 0 < "N commits scanned" <= non-merge commits in range (live runs: a bad revision gives an error, "0 commits scanned" and exit 0; only commits that add content count).
 - gitleaks scans the git directory with `--ignore-gitleaks-allow`, an empty `--gitleaks-ignore-path` and no `GITLEAKS_CONFIG*`: exclusions from a PR cannot silence it (live-proven).
 - leak-check runs with `python3 -I` in its own CI job; the allowlist is read from the base; text that is not UTF-8 and fake images make it "did not run".
@@ -30,7 +34,7 @@ Step 1, PR 2 follow-up - the catalog test after the fresh-context review. PR 2 i
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-Review findings fixed, map updated, commits rebased onto main 9a94c5b. Next: follow-up PR, CI green on its latest commit, then the owner's merge.
+Both reviews' findings fixed or listed, map updated, the two new commits rebased onto main 0b06056. Next: CI green on the second follow-up PR, then the owner's merge.
 Next step after this PR: PR 3 - the skill.
 
 ## Known issues / traps
