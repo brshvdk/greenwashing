@@ -98,16 +98,19 @@ class CheckerTest(unittest.TestCase):
         self.assert_breaks(self.replace("name: greenwashing\n", ""), "no name")
 
     def test_bad_name(self):
-        for name in ("Greenwashing", "green_washing", "green washing", "green.washing", "greenwashing2", "g" * 65, ""):
+        # The folder carries the same name, so only the name's own rules can fail.
+        for name in ("Greenwashing", "green_washing", "green washing", "green.washing", "g" * 65, ""):
             with self.subTest(name=name):
-                self.assert_breaks(self.replace("name: greenwashing\n", f"name: {name}\n"), "bad name")
+                self.assert_breaks(self.replace("name: greenwashing\n", f"name: {name}\n"), "bad name", folder=name or "-")
+
+    def test_good_names(self):
+        # Limits are literals here, not the checker's constants.
+        for name in ("greenwashing2", "green-washing", "g" * 64):
+            with self.subTest(name=name):
+                self.assert_breaks(self.replace("name: greenwashing\n", f"name: {name}\n"), folder=name)
 
     def test_name_differs_from_folder(self):
         self.assert_breaks(self.skill, "bad name", folder="green-washing")
-
-    def test_longest_name_passes(self):
-        name = "g" * NAME_MAX
-        self.assert_breaks(self.replace("name: greenwashing\n", f"name: {name}\n"), folder=name)
 
     def test_no_description(self):
         line = next(line for line in self.skill.split("\n") if line.startswith("description:"))
@@ -118,7 +121,7 @@ class CheckerTest(unittest.TestCase):
 
     def test_description_length(self):
         line = next(line for line in self.skill.split("\n") if line.startswith("description:"))
-        for length, rules in ((DESCRIPTION_MAX, []), (DESCRIPTION_MAX + 1, ["description too long"])):
+        for length, rules in ((1024, []), (1025, ["description too long"])):
             with self.subTest(length=length):
                 self.assert_breaks(self.replace(line, "description: " + "x" * length), *rules)
 
@@ -128,7 +131,8 @@ class CheckerTest(unittest.TestCase):
                 self.assert_breaks(self.replace("(GW-55)", f"({missing})"), "id not in catalog")
 
     def test_id_removed_from_catalog(self):
-        catalog = self.catalog.replace("### GW-55 ", "### GW-56x ", 1)
+        # The number stays in the catalog's prose but is no longer an entry heading.
+        catalog = self.catalog.replace("### GW-55 ", "Formerly GW-55: ", 1)
         self.assertNotEqual(catalog, self.catalog)
         self.assert_breaks(self.skill, "id not in catalog", catalog=catalog)
 
