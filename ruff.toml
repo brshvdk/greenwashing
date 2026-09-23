@@ -1,0 +1,2 @@
+# Lint config. scripts/leak-check has no .py extension, so it is included by name.
+extend-include = ["scripts/leak-check"]
