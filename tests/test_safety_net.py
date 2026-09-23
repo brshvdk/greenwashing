@@ -148,12 +148,21 @@ class SafetyNetScriptTest(unittest.TestCase):
         self.assertEqual(code, 2, out)
         self.assertIn("[did not run] safety net - GitHub API request failed", out)
 
+    def test_empty_or_malformed_file_list_did_not_run(self):
+        for files in ([], [{"status": "modified"}]):
+            with self.subTest(files=files):
+                FakeGitHub.files = files
+                code, out = self.run_script()
+                self.assertEqual(code, 2, out)
+                self.assertIn("[did not run] safety net", out)
+
     def test_missing_or_malformed_input_did_not_run(self):
+        FakeGitHub.files = [entry("README.md")]
         for overrides in ({"GITHUB_TOKEN": None}, {"PR_NUMBER": "7; true"}, {"PR_NUMBER": None}):
             with self.subTest(overrides=overrides):
                 code, out = self.run_script(**overrides)
                 self.assertEqual(code, 2, out)
-                self.assertIn("[did not run] safety net", out)
+                self.assertIn("[did not run] safety net - PR_NUMBER, GITHUB_REPOSITORY or GITHUB_TOKEN", out)
 
 
 if __name__ == "__main__":

@@ -47,6 +47,8 @@ def guarded_changes(files):
     """Sorted guarded names among the changed files, old names of renames included."""
     touched = set()
     for entry in files:
+        if not isinstance(entry, dict) or not isinstance(entry.get("filename"), str):
+            raise CheckError("a changed file without a name")
         for name in (entry.get("filename"), entry.get("previous_filename")):
             if name and is_guarded(name):
                 touched.add(name)
@@ -75,6 +77,8 @@ def pr_files(api, repo, number, token):
         files += batch
         if len(batch) < PAGE_SIZE:
             break
+    if not files:
+        raise CheckError("the pull request lists no changed files")
     if len(files) != expected:
         raise CheckError(f"read {len(files)} changed files, the pull request has {expected}")
     return files
