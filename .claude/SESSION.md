@@ -25,7 +25,8 @@ Step 1, PR 1d - close three holes from the PR 1c review: tests cannot be faked, 
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-Review findings fixed and pushed. Next: CI green on the latest commit, then the owner's merge.
+Review findings fixed and pushed. Mutations after the review: 33 plus 5 re-checks; single removals of the venv `-I`, the venv `cd` or the safety-net workflow `-I` are equivalent (the other protection holds), removing both turns a test red.
+Next: CI green on the latest commit, then the owner's merge.
 Next step after this PR: PR 2 - the catalog (the owner provides the catalog text).
 
 ## Known issues / traps
