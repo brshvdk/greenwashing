@@ -159,11 +159,18 @@ class CheckerTest(unittest.TestCase):
     def test_bad_heading(self):
         for heading in ("### GW-1 Title", "### GW-01", "### GW-01 ", "### GW-01Title", "### gw-01 Title",
                         "### Title", "**GW-01 Title**", "", "### GW-001 Title", "### GW-\uff10\uff11 Title",
-                        "### GW-01 \u200b"):
+                        "### GW-0\uff11 Title", "### GW-01 \u200b"):
             with self.subTest(heading=heading):
                 lines = self.lines()
                 lines[headings(lines)[0]] = heading
                 self.assert_breaks(lines, "bad heading")
+
+    def test_bad_heading_and_no_first_line(self):
+        lines = self.lines()
+        first = headings(lines)[0]
+        lines[first] = "**GW-01 Title**"
+        del lines[index(lines, "- **Looks like:**", first)]
+        self.assert_breaks(lines, "bad heading")
 
     def test_heading_at_another_level(self):
         # The heading line itself is stray markup, and the entry under it has no heading.
@@ -238,7 +245,8 @@ class CheckerTest(unittest.TestCase):
             with self.subTest(separator=ascii(separator)):
                 lines = self.lines()
                 first = headings(lines)[0]
-                lines[first:first + 2] = [lines[first] + separator + lines[first + 1]]
+                looks = index(lines, "- **Looks like:**", first)
+                lines[first:looks + 1] = [lines[first] + separator + lines[looks]]
                 self.assert_breaks(lines, "wrong lines")
 
     def test_line_endings_markdown_knows(self):
