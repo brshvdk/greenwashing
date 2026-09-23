@@ -14,7 +14,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Check out with full history
-        uses: actions/checkout@v5
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha }}
@@ -33,6 +33,19 @@ jobs:
 
       - name: Unit tests
         run: python3 -m unittest discover -s tests -v
+
+  # A separate job: no test or tool from the PR runs before the leak check, so
+  # nothing can rewrite its environment (GITHUB_ENV, GITHUB_PATH) first.
+  leak-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out with full history
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
 
       - name: Install gitleaks (official release, checksum pinned)
         env:
@@ -58,8 +71,9 @@ jobs:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
+          # -I: a module added next to the script cannot replace the standard library.
           if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            scripts/leak-check --all-history
+            python3 -I scripts/leak-check --all-history
           else
-            scripts/leak-check
+            python3 -I scripts/leak-check
           fi

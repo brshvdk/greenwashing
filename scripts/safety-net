@@ -1,0 +1,113 @@
+#!/usr/bin/env python3
+"""Safety net: fail when a pull request touches a file that guards the checks.
+
+The file list comes from the GitHub API (env PR_NUMBER, GITHUB_REPOSITORY,
+GITHUB_TOKEN, GITHUB_API_URL). A guarded file that is added, changed, removed
+or renamed fails the check; for a rename both the old and the new name count.
+The list is complete only when its length equals the PR's changed_files.
+
+Exit code: 0 - no guarded file touched; 1 - a guarded file touched; 2 - the
+file list could not be read completely (did not run). The output names only
+guarded files.
+"""
+
+import json
+import os
+import re
+import sys
+import traceback
+import urllib.request
+
+GUARDED_FILES = {
+    "CLAUDE.md",
+    "scripts/leak-check",
+    "tests/test_leak_check.py",
+    "scripts/safety-net",
+    "tests/test_safety_net.py",
+    ".github/public-repos.txt",
+    "ruff.toml",
+    ".gitleaks.toml",
+    ".gitleaksignore",
+}
+GUARDED_DIRS = (".github/workflows/",)
+PAGE_SIZE = 100
+MAX_PAGES = 30  # the API lists at most 3000 files of a pull request
+CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+class CheckError(Exception):
+    """The file list could not be read completely."""
+
+
+def is_guarded(path):
+    return path in GUARDED_FILES or path.startswith(GUARDED_DIRS)
+
+
+def guarded_changes(files):
+    """Sorted guarded names among the changed files, old names of renames included."""
+    touched = set()
+    for entry in files:
+        if not isinstance(entry, dict) or not isinstance(entry.get("filename"), str):
+            raise CheckError("a changed file without a name")
+        for name in (entry.get("filename"), entry.get("previous_filename")):
+            if name and is_guarded(name):
+                touched.add(name)
+    return sorted(touched)
+
+
+def fetch(url, token):
+    request = urllib.request.Request(url, headers={
+        "Accept": "application/vnd.github+json",
+        "Authorization": f"Bearer {token}",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "safety-net",
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return json.load(response)
+    except (OSError, ValueError) as exc:
+        raise CheckError(f"GitHub API request failed ({type(exc).__name__})") from None
+
+
+def pr_files(api, repo, number, token):
+    expected = fetch(f"{api}/repos/{repo}/pulls/{number}", token)["changed_files"]
+    files = []
+    for page in range(1, MAX_PAGES + 1):
+        batch = fetch(f"{api}/repos/{repo}/pulls/{number}/files?per_page={PAGE_SIZE}&page={page}", token)
+        files += batch
+        if len(batch) < PAGE_SIZE:
+            break
+    if not files:
+        raise CheckError("the pull request lists no changed files")
+    if len(files) != expected:
+        raise CheckError(f"read {len(files)} changed files, the pull request has {expected}")
+    return files
+
+
+def main():
+    number, repo = os.environ.get("PR_NUMBER", ""), os.environ.get("GITHUB_REPOSITORY", "")
+    token = os.environ.get("GITHUB_TOKEN", "")
+    api = os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
+    if not number.isdigit() or not re.fullmatch(r"[\w.-]+/[\w.-]+", repo) or not token:
+        raise CheckError("PR_NUMBER, GITHUB_REPOSITORY or GITHUB_TOKEN missing or malformed")
+    files = pr_files(api, repo, number, token)
+    touched = guarded_changes(files)
+    if touched:
+        print(f"[failed] safety net - {len(touched)} guarded file(s) touched")
+        for name in touched:
+            print(f"  {CONTROL_RE.sub('?', name)}")
+        return 1
+    print(f"[passed] safety net - {len(files)} changed files, none guarded")
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except CheckError as exc:
+        print(f"[did not run] safety net - {exc}")
+        sys.exit(2)
+    except Exception as exc:  # a crash must never read as a verdict
+        frame = traceback.extract_tb(exc.__traceback__)[-1]
+        print(f"[did not run] safety net - internal error {type(exc).__name__} at line {frame.lineno}")
+        sys.exit(2)
