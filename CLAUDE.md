@@ -95,7 +95,7 @@ Before any code change:
 
 ```bash
 pip install ruff                               # dev only
-python3 -I -m unittest discover -s tests -v    # all tests; -I: modules in the repo cannot replace the standard library
+python3 -I -m unittest discover -s tests -v    # all tests; -I: modules at the repo root cannot replace the standard library
 python3 -I -m unittest discover -s tests -p test_leak_check.py -v   # one test file
 ruff check .                                   # lint
 scripts/leak-check                             # gitleaks + repo references + pattern scan. Patterns live only in the CI secret LEAK_PATTERNS,
