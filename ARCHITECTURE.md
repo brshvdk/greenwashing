@@ -29,7 +29,7 @@ tests/test_catalog.py         tests of the catalog structure (unittest)
 
 Purpose: the public catalog - the ways a test suite goes green without the code being right. Data, not code. Sections `## A.` to `## H.`; each entry is a `### GW-NN Title` heading followed by exactly three list items in order: `- **Looks like:**`, `- **Why it's green:**`, `- **Catch it:**`. IDs are stable and never renumbered; gaps between sections are on purpose. The catalog is the only source of its entries: nothing else counts them or lists their numbers.
 
-Tests: `tests/test_catalog.py` - the structure only, read line by line as Markdown splits lines: entry headings (ASCII number in one form, a title with a letter or digit), numbers unique and ascending, the three lines in order and each with a letter or digit, sections A-H in order and none empty, no entry outside them, and outside entries no markup that would hide entries or move them under another heading once rendered (indented or quoted lines, HTML, code fences, other headings, setext underlines); each rule has mutants of the real catalog that must report exactly that rule.
+Tests: `tests/test_catalog.py` - the structure only, read line by line as Markdown splits lines: entry headings (ASCII number in one form, a title with an ASCII letter or digit), numbers unique and ascending, the three lines in order and each with an ASCII letter or digit, sections A-H in order and none empty, no entry outside them, and outside entries no line that starts like markup able to hide entries or move them under another heading (indented or quoted lines, HTML, code fences, headings other than a `# ` title on the first line, setext underlines); markup after a list marker or in the middle of a line is not checked. Mutants of the real catalog must report exactly the rules they break, valid variants none.
 
 Depends on: nothing.
 
@@ -38,7 +38,8 @@ Breaks: `tests/test_catalog.py` (the structure is its contract); the link in `RE
 Traps:
 - adding a section after H or changing the three lines - change `SECTIONS` or `FIELDS` in `tests/test_catalog.py` in the same PR, otherwise the test goes red.
 - renumbering an entry - the test checks that numbers are unique and ascending, not that they stay the same, so a renumbering passes it.
-- inline HTML inside an entry line - the test only asks for one ASCII letter or digit, so a line of `&nbsp;` passes and renders empty.
+- inline HTML or an empty link inside an entry line or title - the test only asks for one ASCII letter or digit, so `&nbsp;`, `<!-- x -->` or `[](url)` passes and renders empty.
+- writing outside entries - the markup rule is conservative: an autolink, inline HTML or `#1` at the start of a line, an indented or nested list, a GitHub alert (`> [!NOTE]`) and `---` turn the test red.
 - touching line splitting in the test - keep CRLF, CR and LF only, otherwise (`str.splitlines`) U+2028, form feed and others split an entry that Markdown renders as one line.
 
 ### scripts/leak-check
