@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Tools
+.ruff_cache/
+
+# Local secrets: never committed
+.env
+.env.*
+
+# OS
+.DS_Store

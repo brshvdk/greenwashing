@@ -1,0 +1,1 @@
+# One public repository name per line (the name only, without the owner). Lines starting with # are ignored.
