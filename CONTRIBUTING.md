@@ -7,7 +7,7 @@ Thanks for your interest in greenwashing. The project is at an early stage.
 Python 3 and git are enough for the tests; ruff is needed for lint only.
 
 ```bash
-python3 -m unittest discover -s tests -v   # tests
+python3 -I -m unittest discover -s tests -v   # tests (isolated, as in CI)
 pip install ruff && ruff check .           # lint
 scripts/leak-check                         # leak check
 ```
