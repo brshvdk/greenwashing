@@ -1,6 +1,6 @@
 # The greenwashing catalog
 
-Ways a test suite goes green without the code being right. Collected from months of running AI coding agents on a production codebase. Every entry is a pattern that actually happened. The examples here are rewritten on neutral code, and the numbers are illustrative.
+Ways a test suite goes green without the code being right. Collected from months of running AI coding agents on a production codebase. Every entry is a pattern that actually happened. The examples here use neutral code, and the numbers are illustrative.
 
 IDs are stable and never renumbered. Gaps between sections are on purpose.
 
@@ -145,7 +145,7 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 - **Why it's green:** the mock returns success at the first layer, so the negative branch deeper down is unreachable.
 - **Catch it:** mocks that can fail at every layer the code checks, and a test per layer.
 
-### GW-28 A cache warmed by the neighbours
+### GW-28 A cache warmed by the neighbors
 - **Looks like:** a cache test passes.
 - **Why it's green:** earlier tests already filled the keys.
 - **Catch it:** isolate state per test; run tests in random order.
@@ -187,10 +187,10 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 - **Why it's green:** quoting, line continuations and path tricks: the shell sees something the guard didn't.
 - **Catch it:** guard at execution, not by reading text. If you must read text, use the executor's own parser.
 
-### GW-37 A grep that catches homonyms
-- **Looks like:** a metric counts `status=fail`.
-- **Why it's green:** it also matches `status=failed` and reports failures in a file that has none.
-- **Catch it:** parse structured fields; anchor patterns.
+### GW-37 A grep that misses the real spelling
+- **Looks like:** a check counts `status=fail` lines and reports zero failures.
+- **Why it's green:** the tool logs `status=FAILED`. The pattern never matches, and zero reads as clean.
+- **Catch it:** parse structured fields; add a positive fixture that must match.
 
 ### GW-38 A grep that finds its own trace
 - **Looks like:** a search confirms a problem exists.
@@ -232,7 +232,7 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 ### GW-54 The fix that looks done and does nothing
 - **Looks like:** a retry option added for a failing case.
 - **Why it's green:** with a limit of one attempt, the retry can never happen.
-- **Catch it:** a test that exercises the new behaviour, not the existence of new code.
+- **Catch it:** a test that exercises the new behavior, not the existence of new code.
 
 ### GW-55 A confident wrong answer
 - **Looks like:** a detailed diagnosis with a clear verdict.
@@ -249,17 +249,17 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 - **Why it's green:** not finding a prohibition doesn't mean it works.
 - **Catch it:** one live run before the conclusion.
 
-### GW-58 Certainty about someone else's behaviour
+### GW-58 Certainty about someone else's behavior
 - **Looks like:** "a false alarm is impossible here".
 - **Why it's green:** an untested assumption; the first real run disproves it.
-- **Catch it:** treat third-party behaviour as a hypothesis until observed.
+- **Catch it:** treat third-party behavior as a hypothesis until observed.
 
 ### GW-59 The label is stronger than the evidence
 - **Looks like:** a result tagged `cause=network` blames the network.
 - **Why it's green:** the check behind the tag verifies nothing.
 - **Catch it:** every label points to the observation that produced it.
 
-### GW-60 One verdict for seven failures
+### GW-60 One verdict for several failures
 - **Looks like:** "the backend didn't respond".
 - **Why it's green:** several different failures collapsed into one line. It's an opinion, not an observation.
 - **Catch it:** separate outcomes per mechanism.
@@ -296,9 +296,9 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 - **Why it's green:** the counter resets on success, so intermittent failures never add up.
 - **Catch it:** count events, not state.
 
-### GW-73 Two signals treated as equal evidence
-- **Looks like:** "record gone" and "record deleted" are read as the same.
-- **Why it's green:** one proves absence, the other only that the record once existed.
+### GW-73 A signal read as more than it proves
+- **Looks like:** the log says "job cancelled", so the job counts as stopped.
+- **Why it's green:** the line proves a cancel was sent, not that the job stopped. Only a status check proves it is gone.
 - **Catch it:** state what each signal actually proves.
 
 ### GW-74 An unnamed denominator
@@ -375,7 +375,7 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 
 ### GW-90 A time-bomb fixture
 - **Looks like:** a fixture "one hour ago" and a grouping by "yesterday".
-- **Why it's green:** the test fails after midnight.
+- **Why it's green:** it passes whenever the suite runs after 1 am. Between midnight and 1 am, "one hour ago" is yesterday and the test fails.
 - **Catch it:** freeze time; run with clocks around boundaries.
 
 ### GW-91 Green depends on the installed tools
@@ -425,7 +425,7 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 - **Why it's green:** the twin still ships the bug.
 - **Catch it:** search all call sites; one test per site.
 
-### GW-104 The lever has a fourth half: the config template
+### GW-104 Code changed, the config template didn't
 - **Looks like:** a default flipped to OFF in code.
 - **Why it's green:** the example config files still ship ON, so real deployments stay ON.
 - **Catch it:** change the code, every config template, and verify the live value.
