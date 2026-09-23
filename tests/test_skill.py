@@ -15,7 +15,8 @@ CATALOG = os.path.join(ROOT, "CATALOG.md")
 # Limits of the Agent Skills format for the name and description fields.
 NAME_MAX = 64
 DESCRIPTION_MAX = 1024
-NAME_RE = re.compile(r"[a-z0-9-]+")
+# Hyphens only between letters or digits: none at the start or end, never two in a row.
+NAME_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
 FIELD_RE = re.compile(r"([A-Za-z_-]+):(.*)")
 ID_RE = re.compile(r"\bGW-(\d+)\b")
 CATALOG_ID_RE = re.compile(r"^### GW-(\d+) ", re.M)
@@ -115,13 +116,13 @@ class CheckerTest(unittest.TestCase):
     def test_bad_name(self):
         # The folder carries the same name, so only the name's own rules can fail.
         for name in ("Greenwashing", "green_washing", "green washing", "green.washing", "gr\u00eben", "green/washing",
-                     "g" * 65):
+                     "g" * 65, "-greenwashing", "greenwashing-", "green--washing"):
             with self.subTest(name=name):
                 self.assert_breaks(self.replace("name: greenwashing\n", f"name: {name}\n"), "bad name", folder=name or "-")
 
     def test_good_names(self):
         # Limits are literals here, not the checker's constants.
-        for name in ("greenwashing2", "green-washing", "g" * 64):
+        for name in ("greenwashing2", "green-washing", "g" * 64, "g", "2-green-washing-2"):
             with self.subTest(name=name):
                 self.assert_breaks(self.replace("name: greenwashing\n", f"name: {name}\n"), folder=name)
 
