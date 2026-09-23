@@ -29,10 +29,11 @@ def read(path):
 def frontmatter(text):
     """Fields of the `---` block that opens the file, or None when there is none."""
     lines = text.split("\n")
-    if lines[0] != "---" or "---" not in lines[1:]:
+    end = next((i for i, line in enumerate(lines) if i and line == "---"), None)
+    if lines[0] != "---" or end is None:
         return None
     fields = {}
-    for line in lines[1:lines.index("---", 1)]:
+    for line in lines[1:end]:
         match = FIELD_RE.fullmatch(line)
         if match:
             fields[match.group(1)] = match.group(2).strip()
