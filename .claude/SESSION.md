@@ -7,18 +7,19 @@ Step 1, PR 3 - the skill: `skills/greenwashing/SKILL.md` (text from the owner, v
 - [x] SKILL.md as given; catalog edits (two lines)
 - [x] `tests/test_skill.py`; own mutation wave (fresh bytecode caches): 13 file mutants red, 1 control green, 25 checker mutants red, 0 did not run
 - [x] path and limits checked against the docs (fetched 2026-09-23): `skills` npm README 1.7.0, "Skill Discovery" lists `skills/` (flat layout `skills/<name>/SKILL.md`); agentskills.io/specification: name 1-64, `a-z0-9-`, no hyphen at the start or end, no `--`, equals the folder; description 1-1024, non-empty; platform.claude.com Agent Skills overview: 64 / 1024. skills.sh unreadable: every path redirects (308) to www.skills.sh, which the proxy denies (403, example.com as control)
-- [x] the spec's hyphen rules for `name` added to the checker; own wave (fresh bytecode caches): 12 pattern mutants red, 1 control green
+- [x] the spec's hyphen rules for `name` added to the checker; own wave on the first (two-class) pattern, fresh bytecode caches: 12 mutants red, 1 control green
 - [x] live install, `DISABLE_TELEMETRY=1 npx -y skills@1.7.0 add <clean copy of 440f071> --skill greenwashing -a claude-code -y` in an empty project: "Found 1 skill", copied to `.claude/skills/greenwashing/SKILL.md` (`cmp`: identical) plus `skills-lock.json` (`sourceType: local`); nothing installed globally
 - [x] fresh-context review: no leaks; realistic survivors (empty quoted or null description, folded description of any length) and false alarms (quoted name, CRLF, BOM) re-run, confirmed, fixed; map items fixed; adversarial ones listed in the report
-- [ ] second fresh-context review (hyphen rules, doc claims, own mutations): running; its report is accepted only by re-running it
+- [x] second fresh-context review (hyphen rules, doc claims, own mutations): doc claims and the live install confirmed (its own offline re-run); one hole in this session's first pattern re-run and confirmed (the second character class, after a hyphen, was untested: three weaker patterns stayed green), fixed with one class; own wave on the new pattern (fresh bytecode caches): 24 mutants red, 2 controls green, 1 equivalent (`+` to `*`: an empty name never equals the folder, shown by a probe); pre-existing items listed in the report
 - [ ] PR to main; three checks green
-(5 of 7 done)
+(6 of 7 done)
 
 ## Decisions made (and why)
 - Owner: the three adversarial cases from the first PR 3 review (a number written another way, a number in words, a repeated frontmatter key) stay unfixed.
 - Owner: skills.sh cannot be read from the session, so the install path is checked by the `skills` npm README and a live run instead.
 - Owner: gitleaks is not run in this session (its release binary lives in another repository, CLAUDE.md section 1); the CI leak-check job runs gitleaks 8.28.0.
 - Live runs of the `skills` CLI use `DISABLE_TELEMETRY=1`: the repository is not public yet.
+- The name pattern is one character class plus one lookaround per hyphen rule (second review): with two classes the one after a hyphen went untested, since no bad-character name has a hyphen. Brute force: the same names as the two-class pattern on all 2,396,745 strings of length 0-7 over `a`, `1`, `-`, `A`, `_`, U+00EB, space and dot.
 - The name charset stays ASCII `a-z0-9-`, although the spec's text says "unicode lowercase alphanumeric characters (`a-z`, `0-9`)": stricter can only give a false alarm here, never a false pass.
 - Mutation runs use a fresh bytecode cache per run (`-X pycache_prefix=<new dir>`, works under `-I`): two mutants of the same file size written in the same second reused the previous mutant's `.pyc`, so kills were credited to the wrong test (PR 3 wave). The catalog waves were re-run this way: same result (37 red, 5 controls + 1 known limit green, 36 checker mutants red; the second review's 41 mutants all killed).
 - Skill test limits are literals in the boundary tests (64/65, 1024/1025), not the checker's constants, and each name rule is tested with the folder set to the same name: otherwise the folder check masked the charset and length rules (first wave).
@@ -42,6 +43,7 @@ All PR 3 work is committed on `claude/hopeful-pascal-i0o22j` (the first session'
 Next step after this PR: PR 4 - the gate: running the tests.
 
 ## Known issues / traps
+- Open, owner decision (second review): a block value in `name` (`name: >`) is not tested; with the name dropped from the block check the skill still fails, only the reported rule changes to "bad name". Stricter patterns that need a letter somewhere or allow at most N hyphens also stay green (false alarms only).
 - Open, owner decision: the skill test checks the Agent Skills spec only. Claude's API also forbids `anthropic` and `claude` in `name` and XML tags in `name` and `description` (platform.claude.com Agent Skills overview), and Claude Code skips a skill folder named `synced` (code.claude.com skills docs); the skill passes all three today (checked by grep with a positive control), no test holds it.
 - PRs from forks do not get repository secrets, so their pattern scan reports "did not run" (red). The owner decides the policy for external PRs before launch.
 - `tests/` and `scripts/` are not guarded as a whole (owner decision): a new test module can still disable assertions, and a `tests/json.py` still replaces `json` under `-I` (discover puts `tests/` first on `sys.path`); the project's own gate closes this later.
