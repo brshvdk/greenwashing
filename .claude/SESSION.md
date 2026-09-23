@@ -9,9 +9,10 @@ Step 1, PR 1 - repo skeleton: rules, map, base files, leak check, CI
 - [x] scripts/leak-check and tests/test_leak_check.py
 - [x] .github/workflows/ci.yml
 - [x] own mutation wave (26 mutations, 2 holes found and closed), session leak-check run
-- [ ] fresh-context reviewer findings verified by runs
-- [ ] branch pushed, PR open, CI green on the PR
-(5 of 7 done)
+- [x] fresh-context reviewer findings verified by runs; confirmed ones fixed, 35 mutations, 0 holes
+- [x] branch pushed, PR open
+- [ ] CI green on the latest PR commit
+(7 of 8 done)
 
 ## Decisions made (and why)
 - gitleaks pinned to 8.28.0 with the SHA-256 from its official checksums file - reproducible CI, a swapped download fails the step.
@@ -22,10 +23,12 @@ Step 1, PR 1 - repo skeleton: rules, map, base files, leak check, CI
 - CI installs ruff into a venv with the runner's python3 - no extra setup action.
 - The patch scan covers added and removed lines - removed lines are visible on the public PR page too.
 - Tracked file paths are scanned as well; a matching path is replaced by "tracked file #N (name hidden)" in the output.
+- From the review: patches use `--text`; lines lose a trailing `\r` before matching; a name is hidden when any of its lines matches; a pattern Python warns about (PCRE-only syntax like `[[:digit:]]`) is invalid; a shallow clone or a tracked file missing from the working tree makes the scan "did not run".
 
 ## Where we stopped
-Branch rebased onto the owner's `main` (single `.gitkeep` commit), pushed, PR opened. Next: verify the reviewer's findings by runs, get CI green on the PR. After this PR: the catalog.
+Branch rebased onto the owner's `main` (single `.gitkeep` commit), pushed, PR opened. Reviewer findings fixed and pushed. Next: CI green on the latest commit, then the owner's merge. After this PR: the catalog.
 
 ## Known issues / traps
+- Not fixed, owner to decide: files in UTF-16 or cp1251 are decoded as UTF-8, so non-ASCII stop words in them are not found; an inline `gitleaks:allow` silences gitleaks.
 - PRs from forks do not get repository secrets, so their pattern scan reports "did not run" (red). The owner decides the policy for external PRs before launch.
 - gitleaks honours `.gitleaks.toml`, `.gitleaksignore` and `gitleaks:allow` from the scanned repository; `.github/public-repos.txt` is read from the PR head. A PR touching any of these can weaken the check (see ARCHITECTURE.md traps).
