@@ -46,9 +46,9 @@ Traps:
 
 ### skills/greenwashing/SKILL.md
 
-Purpose: the skill for coding agents that read the Agent Skills format: what to do before reporting "done" and how to report, citing catalog entries by `GW-NN`. Frontmatter `name` (the folder name) and `description`. Meant to be installed with `npx skills add brshvdk/greenwashing`; the install path and the field limits are not yet checked against the format's documentation or a live CLI run (both were unreachable from the session).
+Purpose: the skill for coding agents that read the Agent Skills format: what to do before reporting "done" and how to report, citing catalog entries by `GW-NN`. Frontmatter `name` (the folder name) and `description`. Meant to be installed with `npx skills add brshvdk/greenwashing`: the `skills` CLI looks for `skills/<name>/SKILL.md` (its npm README, 1.7.0), and a live `skills@1.7.0` install from a local copy put the file unchanged into the project's `.claude/skills/greenwashing/SKILL.md`. The field rules follow agentskills.io/specification.
 
-Tests: `tests/test_skill.py` - frontmatter present (LF, CRLF or CR endings, a BOM allowed; one-line values, quotes removed, `~`/`null` read as empty; a block value `>` or `|` is reported, the checker cannot measure it); `name` equals the folder, only lower case letters, digits and hyphens, at most 64 characters; `description` not empty, at most 1024 characters; the skill cites at least one `GW-NN` and every one is an entry heading of `CATALOG.md`; the catalog's entry count does not appear in the skill. Mutants of the real skill must report exactly the rules they break.
+Tests: `tests/test_skill.py` - frontmatter present (LF, CRLF or CR endings, a BOM allowed; one-line values, quotes removed, `~`/`null` read as empty; a block value `>` or `|` is reported, the checker cannot measure it); `name` equals the folder, only lower case letters, digits and hyphens, a hyphen only between letters or digits (none at the start or end, never two in a row), at most 64 characters; `description` not empty, at most 1024 characters; the skill cites at least one `GW-NN` and every one is an entry heading of `CATALOG.md`; the catalog's entry count does not appear in the skill. Mutants of the real skill must report exactly the rules they break.
 
 Depends on: `CATALOG.md` (entry numbers, entry count).
 
