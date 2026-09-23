@@ -18,7 +18,9 @@ import sys
 import traceback
 import urllib.request
 
-GUARDED_FILES = {
+# The one list of guarded files: nowhere else keeps a copy of it.
+# Exact paths from the repository root.
+GUARDED_PATHS = {
     "CLAUDE.md",
     "scripts/leak-check",
     "tests/test_leak_check.py",
@@ -29,7 +31,15 @@ GUARDED_FILES = {
     ".gitleaks.toml",
     ".gitleaksignore",
 }
+# Every file under these directories.
 GUARDED_DIRS = (".github/workflows/",)
+# File names guarded in any folder: tool config that can override ruff.toml or the
+# test run, and Python startup hooks.
+GUARDED_NAMES = {".ruff.toml", "pyproject.toml", "setup.cfg", "tox.ini", "conftest.py", "sitecustomize.py",
+                 "usercustomize.py"}
+GUARDED_EXTENSIONS = (".pth",)
+# Paths guarded in any folder (the project gate will live in Claude Code settings).
+GUARDED_TAILS = (".claude/settings.json", ".claude/settings.local.json")
 PAGE_SIZE = 100
 MAX_PAGES = 30  # the API lists at most 3000 files of a pull request
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -40,7 +50,14 @@ class CheckError(Exception):
 
 
 def is_guarded(path):
-    return path in GUARDED_FILES or path.startswith(GUARDED_DIRS)
+    name = path.rsplit("/", 1)[-1]
+    return (
+        path in GUARDED_PATHS
+        or path.startswith(GUARDED_DIRS)
+        or name in GUARDED_NAMES
+        or name.endswith(GUARDED_EXTENSIONS)
+        or any(path == tail or path.endswith("/" + tail) for tail in GUARDED_TAILS)
+    )
 
 
 def guarded_changes(files):

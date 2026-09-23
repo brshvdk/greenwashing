@@ -36,20 +36,48 @@ def entry(name, status="modified", previous=None):
     return data
 
 
-# Written out here, not taken from the script: a name dropped there must turn a test red.
-GUARDED = [
-    "CLAUDE.md", "scripts/leak-check", "tests/test_leak_check.py", "scripts/safety-net", "tests/test_safety_net.py",
-    ".github/public-repos.txt", "ruff.toml", ".gitleaks.toml", ".gitleaksignore",
-    ".github/workflows/ci.yml", ".github/workflows/safety-net.yml", ".github/workflows/new.yml",
-]
-
-
 class GuardedChangesTest(unittest.TestCase):
-    def test_every_guarded_file_is_caught(self):
-        for name in GUARDED:
+    """One test per rule of the guarded list; the list itself lives only in the script."""
+
+    def assert_guarded(self, *paths):
+        for path in paths:
             for status in ("modified", "added", "removed"):
-                with self.subTest(name=name, status=status):
-                    self.assertEqual(safety_net.guarded_changes([entry("README.md"), entry(name, status)]), [name])
+                with self.subTest(path=path, status=status):
+                    self.assertEqual(safety_net.guarded_changes([entry("README.md"), entry(path, status)]), [path])
+
+    def assert_not_guarded(self, *paths):
+        for path in paths:
+            with self.subTest(path=path):
+                self.assertEqual(safety_net.guarded_changes([entry(path)]), [])
+
+    def test_exact_paths(self):
+        self.assert_guarded("CLAUDE.md", "scripts/leak-check", "tests/test_leak_check.py", "scripts/safety-net",
+                            "tests/test_safety_net.py", ".github/public-repos.txt", "ruff.toml", ".gitleaks.toml",
+                            ".gitleaksignore")
+        self.assert_not_guarded("docs/CLAUDE.md", "my-ruff.toml", "scripts/other", "tests/test_other.py")
+
+    def test_workflows_directory(self):
+        self.assert_guarded(".github/workflows/ci.yml", ".github/workflows/new.yml")
+        self.assert_not_guarded(".github/workflows-notes.md", ".github/ISSUE_TEMPLATE/bug_report.md")
+
+    def test_lint_and_tool_config_in_any_folder(self):
+        for name in (".ruff.toml", "pyproject.toml", "setup.cfg", "tox.ini"):
+            self.assert_guarded(name, f"sub/dir/{name}")
+        self.assert_not_guarded("docs/pyproject.toml.md", "my-tox.ini", "setup.cfg.bak")
+
+    def test_conftest_in_any_folder(self):
+        self.assert_guarded("conftest.py", "tests/conftest.py", "sub/dir/conftest.py")
+        self.assert_not_guarded("tests/conftest_helpers.py", "my_conftest.py")
+
+    def test_python_startup_hooks_in_any_folder(self):
+        self.assert_guarded("sitecustomize.py", "sub/sitecustomize.py", "usercustomize.py", "scripts/usercustomize.py",
+                            "extra.pth", "sub/dir/zz.pth", ".pth")
+        self.assert_not_guarded("docs/pth.md", "notes.pth.txt")
+
+    def test_claude_settings_in_any_folder(self):
+        for name in ("settings.json", "settings.local.json"):
+            self.assert_guarded(f".claude/{name}", f"sub/dir/.claude/{name}")
+        self.assert_not_guarded(".claude/SESSION.md", "settings.json", "sub/claude/settings.json", "x.claude/settings.json")
 
     def test_rename_counts_old_and_new_name(self):
         self.assertEqual(
@@ -60,10 +88,18 @@ class GuardedChangesTest(unittest.TestCase):
             safety_net.guarded_changes([entry(".github/workflows/x.yml", "renamed", previous="CLAUDE.md")]),
             [".github/workflows/x.yml", "CLAUDE.md"])
 
-    def test_unguarded_files_pass(self):
-        files = [entry("README.md"), entry("scripts/other"), entry(".github/ISSUE_TEMPLATE/bug_report.md"),
-                 entry("docs/CLAUDE.md"), entry("my-ruff.toml"), entry(".github/workflows-notes.md")]
-        self.assertEqual(safety_net.guarded_changes(files), [])
+    def test_rename_into_and_out_of_new_guarded_names(self):
+        self.assertEqual(
+            safety_net.guarded_changes([entry("sub/dir/conftest.py", "renamed", previous="sub/dir/helpers.py")]),
+            ["sub/dir/conftest.py"])
+        self.assertEqual(
+            safety_net.guarded_changes([entry("docs/old.toml", "renamed", previous="sub/pyproject.toml")]),
+            ["sub/pyproject.toml"])
+        self.assertEqual(
+            safety_net.guarded_changes([entry("lib/zz.pth", "renamed", previous="lib/zz.txt")]), ["lib/zz.pth"])
+        self.assertEqual(
+            safety_net.guarded_changes([entry("notes.json", "renamed", previous=".claude/settings.local.json")]),
+            [".claude/settings.local.json"])
 
 
 class FakeGitHub(http.server.BaseHTTPRequestHandler):
