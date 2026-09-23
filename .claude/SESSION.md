@@ -1,7 +1,8 @@
 # SESSION
 
 ## Current step
-Step 1, PR 2 follow-up - the catalog test after the fresh-context review. PR 2 itself (#5: `CATALOG.md`, `tests/test_catalog.py`, README line, map) was merged by the owner as squash 9a94c5b at head 28d015e, with `checks`, `leak-check` and "Safety net" all green there (the net's live check: green on a PR that touches no guarded file). The review finished after the merge; its fixes go in a follow-up PR from the same branch, rebased onto 9a94c5b.
+Step 1, PR 2 second follow-up - pin the catalog checker branches the second review found untested, and state the checker's exact limits in the map. The first follow-up (#6, the first review's fixes) was merged as squash 0b06056 at head ef07ce8, with `checks`, `leak-check` and "Safety net" all green there.
+Before that: the catalog test after the fresh-context review. PR 2 itself (#5: `CATALOG.md`, `tests/test_catalog.py`, README line, map) was merged by the owner as squash 9a94c5b at head 28d015e, with `checks`, `leak-check` and "Safety net" all green there (the net's live check: green on a PR that touches no guarded file). The review finished after the merge; its fixes go in a follow-up PR from the same branch, rebased onto 9a94c5b.
 
 ## Progress
 - [x] `CATALOG.md` as given (two independent transcriptions diffed identical; Markdown sanity script: no odd backticks, stray emphasis, trailing spaces or non-ASCII)
@@ -11,9 +12,9 @@ Step 1, PR 2 follow-up - the catalog test after the fresh-context review. PR 2 i
 - [x] fresh-context reviewer: Markdown renders clean (remark), no leaks found; 17 catalog survivors and 5 checker survivors, each re-run and confirmed, then fixed (see decisions)
 - [x] mutation wave 3 on 117aeeb: 37 catalog mutants red, 5 controls green (CRLF, blank line inside an entry, closing `###`, reworded text, unchanged), 36 checker mutants red, 0 did not run; `&nbsp;` as a value stays green (known limit, in the map)
 - [x] PR #5 merged at 28d015e; `checks`, `leak-check` and "Safety net" all green there
-- [x] follow-up PR #6 opened with the review fixes
+- [x] follow-up PR #6 with the review fixes merged at ef07ce8; all three checks green there
 - [x] second fresh-context review of the fixes: no realistic survivor; 14 checker branches untested (e.g. any first line exempt from the markup rule, so an opening `<!--` hid the catalog) - pinned by fixtures in 1fad96a; its 41 checker mutants re-run there: all killed, 0 did not run; own wave on 1fad96a unchanged (37 red, 5 controls green, 36 checker mutants red)
-- [ ] CI green on the latest commit of PR #6
+- [ ] second follow-up PR (pinning fixtures, map); CI green on its latest commit
 (7 of 8 done)
 
 ## Decisions made (and why)
@@ -33,7 +34,7 @@ Step 1, PR 2 follow-up - the catalog test after the fresh-context review. PR 2 i
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-Both reviews' findings fixed or listed, map updated. Next: CI green on the latest commit of PR #6, then the owner's merge.
+Both reviews' findings fixed or listed, map updated, the two new commits rebased onto main 0b06056. Next: CI green on the second follow-up PR, then the owner's merge.
 Next step after this PR: PR 3 - the skill.
 
 ## Known issues / traps
