@@ -1,16 +1,19 @@
 # SESSION
 
 ## Current step
-Step 1, PR 2c - text edits to `CATALOG.md` from the review, exactly as the owner listed them (nine items: intro wording, American spelling in GW-28/54/58, GW-37 and GW-73 rewritten, GW-60 and GW-104 titles, GW-90 "Why it's green"). Structure and entry numbers unchanged; no test, map or guarded file touched.
-PR 2 (the catalog) is closed: #5, #6, #7 merged (squashes 9a94c5b, 0b06056, cc7917a), all three checks green on each.
+Step 1, PR 3 - the skill: `skills/greenwashing/SKILL.md` (text from the owner, verbatim), `tests/test_skill.py`, two American spellings in `CATALOG.md` (GW-13, GW-73), map. PR 2c (#8) merged as 2e14dcd.
 
 ## Progress
-- [x] nine edits applied, each old text found exactly once; `git diff` shows only them
-- [x] tests (catalog 24, all 101) and ruff green; leak-check in the session
-- [ ] PR open; `checks`, `leak-check`, "Safety net" green on the latest commit
-(2 of 3 done)
+- [x] SKILL.md as given; catalog edits (two lines)
+- [x] `tests/test_skill.py`; own mutation wave: 13 file mutants red, 1 control green, 18 checker mutants red, 0 did not run
+- [ ] path `skills/<name>/SKILL.md` and the limits 64 / 1024 checked against the official docs, and a live `npx skills add` run - BLOCKED: the session's network policy denies agentskills.io, skills.sh and registry.npmjs.org (npm 403 on any package, `left-pad` as control)
+- [ ] fresh-context review
+- [ ] PR open; three checks green
+(2 of 5 done)
 
 ## Decisions made (and why)
+- Mutation runs use a fresh bytecode cache per run (`-X pycache_prefix=<new dir>`, works under `-I`): two mutants of the same file size written in the same second reused the previous mutant's `.pyc`, so kills were credited to the wrong test (PR 3 wave). The catalog waves were re-run this way: same result (37 red, 5 controls + 1 known limit green, 36 checker mutants red; the second review's 41 mutants all killed).
+- Skill test limits are literals in the boundary tests (64/65, 1024/1025), not the checker's constants, and each name rule is tested with the folder set to the same name: otherwise the folder check masked the charset and length rules (first wave).
 - Catalog test: one checker `problems(text)` returns (rule, where); the real catalog must give `[]`, and each mutant built from the real text by position (first or last entry, never a named number) must give exactly its one rule (GW-12, GW-13). `SECTIONS` and `FIELDS` are the only fixed facts; the entry count comes from the catalog alone.
 - Entry lines with no `###` heading above them start an entry without a heading ("bad heading"): otherwise a broken heading on the first entry of a section made the entry vanish and the test stayed green (found by the own mutation wave).
 - README line is its own paragraph (blank line before it), otherwise Markdown joins it to the tagline.
@@ -27,8 +30,8 @@ PR 2 (the catalog) is closed: #5, #6, #7 merged (squashes 9a94c5b, 0b06056, cc79
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-Catalog text edits committed. Next: CI green on the PR 2c pull request, then the owner's merge.
-Next step after this PR: PR 3 - the skill (the owner provides the text).
+Skill, test, catalog edits, map committed; branch pushed, no PR yet. Waiting for the owner to allow agentskills.io, skills.sh and registry.npmjs.org (environment network settings), then: check path and limits in the docs, live install from the local copy, review, PR.
+Next step after this PR: PR 4 - the gate: running the tests.
 
 ## Known issues / traps
 - PRs from forks do not get repository secrets, so their pattern scan reports "did not run" (red). The owner decides the policy for external PRs before launch.

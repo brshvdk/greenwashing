@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-Map of the repository: only what exists now. Of the product modules only the catalog is here; the skill and the gate are not here yet.
+Map of the repository: only what exists now. Of the product modules the catalog and the skill are here; the gate is not here yet.
 
 ## Layout
 
@@ -18,6 +18,8 @@ scripts/safety-net            guarded-file check for pull requests (Python 3, st
 tests/test_safety_net.py      tests of the safety net (unittest, local fake of the GitHub API)
 tests/test_ci_steps.py        tests of CI steps (runs them as written in the workflow files)
 tests/test_catalog.py         tests of the catalog structure (unittest)
+skills/greenwashing/SKILL.md  the skill (Agent Skills format)
+tests/test_skill.py           tests of the skill's frontmatter and catalog links (unittest)
 .github/public-repos.txt      allowlist of the owner's public repositories for the leak check
 .github/workflows/ci.yml      CI
 .github/workflows/safety-net.yml   safety net workflow
@@ -33,7 +35,7 @@ Tests: `tests/test_catalog.py` - the structure only, read line by line as Markdo
 
 Depends on: nothing.
 
-Breaks: `tests/test_catalog.py` (the structure is its contract); the link in `README.md`.
+Breaks: `tests/test_catalog.py` (the structure is its contract); `tests/test_skill.py` (the skill cites entry numbers); the link in `README.md` and the link in `skills/greenwashing/SKILL.md`.
 
 Traps:
 - adding a section after H or changing the three lines - change `SECTIONS` or `FIELDS` in `tests/test_catalog.py` in the same PR, otherwise the test goes red.
@@ -41,6 +43,20 @@ Traps:
 - inline HTML or an empty link inside an entry line or title - the test only asks for one ASCII letter or digit, so `&nbsp;`, `<!-- x -->` or `[](url)` passes and renders empty.
 - writing outside entries - the markup rule is conservative: an autolink, inline HTML or `#1` at the start of a line, an indented or nested list, a GitHub alert (`> [!NOTE]`) and `---` turn the test red.
 - touching line splitting in the test - keep CRLF, CR and LF only, otherwise (`str.splitlines`) U+2028, form feed and others split an entry that Markdown renders as one line.
+
+### skills/greenwashing/SKILL.md
+
+Purpose: the skill for coding agents that read the Agent Skills format: what to do before reporting "done" and how to report, citing catalog entries by `GW-NN`. Frontmatter `name` (the folder name) and `description`. Meant to be installed with `npx skills add brshvdk/greenwashing`; the install path and the field limits are not yet checked against the format's documentation or a live CLI run (both were unreachable from the session).
+
+Tests: `tests/test_skill.py` - frontmatter present; `name` equals the folder, only lower case letters, digits and hyphens, at most 64 characters; `description` not empty, at most 1024 characters; every `GW-NN` in the skill is an entry heading of `CATALOG.md`; the catalog's entry count does not appear in the skill. Mutants of the real skill must report exactly the rules they break.
+
+Depends on: `CATALOG.md` (entry numbers, entry count).
+
+Breaks: `tests/test_skill.py` (the frontmatter and cited numbers are its contract).
+
+Traps:
+- removing or renumbering a catalog entry the skill cites - `tests/test_skill.py` goes red; change the skill in the same PR.
+- the skill links to `CATALOG.md` on `main` by URL - renaming or moving the catalog breaks the link, and no test checks it.
 
 ### scripts/leak-check
 
