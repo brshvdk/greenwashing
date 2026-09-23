@@ -24,7 +24,7 @@ tests/test_safety_net.py      tests of the safety net (unittest, local fake of t
 
 ### scripts/leak-check
 
-Purpose: stop leaks before they are published. Three parts, each ends as passed, failed or did not run: (1) gitleaks over the commits in range; (2) references to other repositories of the owner (`brshvdk/<name>`, any case, URLs included), except this repository and the names in `.github/public-repos.txt` read from the base of the range (`BASE_SHA`, else the merge base with `origin/main`; with `--all-history` `origin/main`, else `HEAD`; no base -> part 2 did not run); (3) stop-word patterns from `LEAK_PATTERNS` (one regex per line, pattern #N = line N). Parts 2 and 3 scan tracked files (path and content), every commit in range (author and committer name and email, message, patch) and the PR title and body; a file or patch that is not UTF-8 makes them did not run, image files (`.png .jpg .jpeg .gif .webp .ico`) are not read and are counted as "skipped N image files". gitleaks ignores exclusions from the scanned repository. Range: `BASE_SHA..HEAD_SHA`, else from the merge base with `origin/main`, else every commit reachable from HEAD; `--all-history` scans every ref. Exit 0 all passed, 1 any failed, 2 nothing failed but something did not run. Output: location and pattern number only.
+Purpose: stop leaks before they are published. Three parts, each ends as passed, failed or did not run: (1) gitleaks over the commits in range; (2) references to other repositories of the owner (`brshvdk/<name>`, any case, URLs included), except this repository and the names in `.github/public-repos.txt` read from the base of the range (`BASE_SHA`, else the merge base with `origin/main`; with `--all-history` `origin/main`, else `HEAD`; no base -> part 2 did not run); (3) stop-word patterns from `LEAK_PATTERNS` (one regex per line, pattern #N = line N). Parts 2 and 3 scan tracked files (path and content), every commit in range (author and committer name and email, message, patch) and the PR title and body; a file or patch that is not UTF-8 makes them did not run, image files (`.png .jpg .jpeg .gif .webp .ico` whose bytes start with that format's signature) are not read and are counted as "skipped N image files"; a file with an image name that is not an image is scanned as text and makes all three parts did not run. A commit identity or message, or a file name, that is not UTF-8 also gives did not run. gitleaks ignores exclusions from the scanned repository. Run isolated (`python3 -I`, also in the shebang). Range: `BASE_SHA..HEAD_SHA`, else from the merge base with `origin/main`, else every commit reachable from HEAD; `--all-history` scans every ref. Exit 0 all passed, 1 any failed, 2 nothing failed but something did not run. Output: location and pattern number only.
 
 Inputs: env `LEAK_PATTERNS`, `BASE_SHA`, `HEAD_SHA`, `PR_TITLE`, `PR_BODY`, `GITHUB_EVENT_NAME`; file `.github/public-repos.txt` at the base commit; `git` and `gitleaks` on PATH.
 
@@ -44,11 +44,13 @@ Traps:
 - touching the patch scan - keep `--text`, otherwise content git treats as binary (a NUL byte, `.gitattributes`) is never scanned.
 - touching the gitleaks call - keep the target the git directory, `--ignore-gitleaks-allow`, `--gitleaks-ignore-path` on an empty directory and no `GITLEAKS_CONFIG*` in its env, otherwise `.gitleaks.toml`, `.gitleaksignore` or `gitleaks:allow` in a PR silence a finding (live-proven with gitleaks 8.28.0).
 - changing `.github/public-repos.txt` - it is read from the base, so the change takes effect only after merge; a PR cannot allow a name for itself.
-- adding a file that is neither UTF-8 nor an image (cp1251 text, an archive, a PDF) - parts 2 and 3 report did not run by design; the image list is by extension only.
+- adding a file that is neither UTF-8 nor an image (cp1251 text, an archive, a PDF) - parts 2 and 3 report did not run by design; an image needs both the extension and the file signature.
+- running the script without `-I` - a module a PR adds next to it (`scripts/argparse.py`) replaces the standard library and can fake a pass.
+- `git commit` itself re-encodes a non-UTF-8 message or name as Latin-1, so such text reaches the repository as valid UTF-8 mojibake that the check cannot recognise.
 
 ### safety-net workflow (`.github/workflows/safety-net.yml`, `scripts/safety-net`)
 
-Purpose: make any change to the checks themselves visible as a separate red check "Safety net". Runs on `pull_request_target` (opened, synchronize, reopened), so the workflow and script come from main and a PR cannot switch them off. Reads the PR's changed files through the GitHub API (read-only token; PR number only through `env:`), never checks out or runs PR code. Red when a guarded file is added, changed, removed or renamed (old and new names): `CLAUDE.md`, `scripts/leak-check`, `tests/test_leak_check.py`, `scripts/safety-net`, `tests/test_safety_net.py`, `.github/workflows/*`, `.github/public-repos.txt`, `ruff.toml`, `.gitleaks.toml`, `.gitleaksignore`. Did not run when the file list is incomplete (count differs from the PR's `changed_files`). Output: guarded names only.
+Purpose: make any change to the checks themselves visible as a separate red check "Safety net". Runs on `pull_request_target` (opened, synchronize, reopened, edited - so a PR retargeted to main is checked too), so the workflow and script come from main and a PR cannot switch them off. Reads the PR's changed files through the GitHub API (read-only token; PR number only through `env:`), never checks out or runs PR code. Red when a guarded file is added, changed, removed or renamed (old and new names): `CLAUDE.md`, `scripts/leak-check`, `tests/test_leak_check.py`, `scripts/safety-net`, `tests/test_safety_net.py`, `.github/workflows/*`, `.github/public-repos.txt`, `ruff.toml`, `.gitleaks.toml`, `.gitleaksignore`. Did not run when the file list is empty, has an entry without a name, or is incomplete (count differs from the PR's `changed_files`). Output: guarded names only.
 
 Tests: `tests/test_safety_net.py` - comparison logic directly, the script against a local fake of the GitHub API.
 
@@ -61,10 +63,11 @@ Traps:
 - adding a new file that guards the checks - add it to `GUARDED_FILES` and to the list in `tests/test_safety_net.py`, otherwise it is unguarded.
 - changing the safety net in a PR - the PR itself is still checked by main's version; the change acts only after merge.
 - not yet observed live (it first runs on the PR after the one that adds it).
+- a new unguarded file can still weaken other gates: a test module that disables assertions, or a `.ruff.toml` / `pyproject.toml` that overrides `ruff.toml` (open, owner decision).
 
 ### .github/workflows/ci.yml
 
-Purpose: the gate for every PR. On `pull_request` (opened, synchronize, reopened, edited): ruff, unittest, gitleaks install (official release, pinned version and SHA-256), `scripts/leak-check` on the PR range. On `workflow_dispatch`: the same with `scripts/leak-check --all-history`.
+Purpose: the gate for every PR. On `pull_request` (opened, synchronize, reopened, edited): job `checks` - ruff, unittest; job `leak-check` - gitleaks install (official release, pinned version and SHA-256), `python3 -I scripts/leak-check` on the PR range. On `workflow_dispatch`: the same with `--all-history`.
 
 Depends on: `scripts/leak-check`; `tests/`; `ruff.toml` (ruff 0.15.8); repository secret `LEAK_PATTERNS`; `actions/checkout` pinned by commit.
 
@@ -74,3 +77,4 @@ Traps:
 - touching the leak check step - PR title, body and SHAs only through `env:`, never `${{ }}` inside `run:`, otherwise command injection.
 - no `LEAK_PATTERNS` secret (also every PR from a fork) - the pattern scan did not run, the step is red.
 - touching checkout - keep `fetch-depth: 0`, otherwise the PR range is missing and the leak check did not run.
+- moving the leak check into a job that runs PR tests or tools first - that code can rewrite `GITHUB_ENV` / `GITHUB_PATH` of later steps and fake the leak check; keep it in its own job.
