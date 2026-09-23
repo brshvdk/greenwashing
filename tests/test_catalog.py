@@ -107,7 +107,7 @@ class CatalogTest(unittest.TestCase):
 
 
 class CheckerTest(unittest.TestCase):
-    """Each mutant of the real catalog breaks exactly one rule."""
+    """Each mutant of the real catalog must report exactly the rules it breaks; valid variants report none."""
 
     def setUp(self):
         self.text = read_catalog()
@@ -159,7 +159,8 @@ class CheckerTest(unittest.TestCase):
     def test_bad_heading(self):
         for heading in ("### GW-1 Title", "### GW-01", "### GW-01 ", "### GW-01Title", "### gw-01 Title",
                         "### Title", "**GW-01 Title**", "", "### GW-001 Title", "### GW-\uff10\uff11 Title",
-                        "### GW-0\uff11 Title", "### GW-01 \u200b"):
+                        "### GW-0\uff11 Title", "### GW-1\uff10 Title", "### GW-00 Title", "### GW-01 \u200b",
+                        "### GW-01 \u0422\u0435\u0441\u0442"):
             with self.subTest(heading=heading):
                 lines = self.lines()
                 lines[headings(lines)[0]] = heading
@@ -233,12 +234,37 @@ class CheckerTest(unittest.TestCase):
     def test_markup_that_hides_or_moves_entries(self):
         for markup in (["```text"], ["~~~"], ["<!--"], ["<h2>Notes</h2>"], ["<h3>GW-01 Duplicate</h3>"], ["# Appendix"],
                        ["#### Notes"], ["##\tNotes"], [" ## Notes"], [" ### GW-01 Indented"], ["    indented code"],
-                       ["> ### GW-01 Quoted"], ["Notes", "-----"], ["Notes", "====="]):
+                       ["\t### GW-01 Tabbed"], ["> ### GW-01 Quoted"], ["Notes", "-----"], ["Notes", "--- "],
+                       ["Notes", "====="], ["Notes", "="]):
             with self.subTest(markup=markup):
                 lines = self.lines()
                 top = index(lines, "## C. ") + 1
                 lines[top:top] = ["", *markup, ""]
                 self.assert_breaks(lines, "unexpected markup")
+
+    def test_every_markup_line_is_reported(self):
+        lines = self.lines()
+        top = index(lines, "## C. ") + 1
+        lines[top:top] = ["", "```text", "", "~~~", ""]
+        self.assert_breaks(lines, "unexpected markup", "unexpected markup")
+
+    def test_markup_on_the_title_line(self):
+        # Only the first line may be a heading, and only a `# ` one.
+        for title in (["<!-- The greenwashing catalog"], ["#### The greenwashing catalog"],
+                      ["# The greenwashing catalog", "# Second title"]):
+            with self.subTest(title=title):
+                lines = self.lines()
+                lines[0:1] = title
+                self.assert_breaks(lines, "unexpected markup")
+
+    def test_valid_variants(self):
+        variants = {"title of capitals": ("### ", "### GW-01 CI"), "value of digits": ("- **Catch it:**", "- **Catch it:** 42"),
+                    "whitespace-only line": ("## C. ", "## C. Checking the wrong thing\n   \n\t")}
+        for name, (prefix, replacement) in variants.items():
+            with self.subTest(variant=name):
+                lines = self.lines()
+                lines[index(lines, prefix)] = replacement
+                self.assert_breaks(lines)
 
     def test_line_separators_markdown_does_not_know(self):
         for separator in ("\u2028", "\u2029", "\x85", "\f", "\v", "\x1c", "\x1d", "\x1e"):
