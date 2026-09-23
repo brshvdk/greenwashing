@@ -278,10 +278,14 @@ class LeakCheckTest(unittest.TestCase):
     # --- references to other repositories ---
 
     def test_reference_to_unlisted_repository_fails(self):
-        self.repo.commit({"links.md": f"intro\nsee https://github.com/{REF}zz-unlisted-repo/issues\n"})
+        self.repo.commit({"links.md": (
+            f"intro\nsee https://github.com/{REF}zz-unlisted-repo/issues\n"
+            f"and {OWNER.upper()}/ZZ-Unlisted-Repo\n"
+        )})
         result = self.repo.run(patterns=LATIN_PATTERN)
         parts = self.assert_result(result, 1, repo_references="failed", patterns="passed")
         self.assertIn("  file links.md line 2", parts["repo references"][1])
+        self.assertIn("  file links.md line 3", parts["repo references"][1])
         self.assert_no_echo(result[1])
 
     def test_references_to_listed_and_current_repository_pass(self):
