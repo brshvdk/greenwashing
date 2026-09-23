@@ -1,7 +1,7 @@
 # SESSION
 
 ## Current step
-Step 1, PR 2 - the catalog: `CATALOG.md` (text from the owner, verbatim) and `tests/test_catalog.py` (structure). Guarded files untouched, so "Safety net" must be green on this PR (second half of the live check of the net).
+Step 1, PR 2 follow-up - the catalog test after the fresh-context review. PR 2 itself (#5: `CATALOG.md`, `tests/test_catalog.py`, README line, map) was merged by the owner as squash 9a94c5b at head 28d015e, with `checks`, `leak-check` and "Safety net" all green there (the net's live check: green on a PR that touches no guarded file). The review finished after the merge; its fixes go in a follow-up PR from the same branch, rebased onto 9a94c5b.
 
 ## Progress
 - [x] `CATALOG.md` as given (two independent transcriptions diffed identical; Markdown sanity script: no odd backticks, stray emphasis, trailing spaces or non-ASCII)
@@ -10,8 +10,8 @@ Step 1, PR 2 - the catalog: `CATALOG.md` (text from the owner, verbatim) and `te
 - [x] own mutation wave (worktree): 25 catalog mutants red, 2 controls green, 17 checker mutants red; one survivor found and fixed (a first entry of a section with a `####` heading vanished)
 - [x] fresh-context reviewer: Markdown renders clean (remark), no leaks found; 17 catalog survivors and 5 checker survivors, each re-run and confirmed, then fixed (see decisions)
 - [x] mutation wave 3 on 117aeeb: 37 catalog mutants red, 5 controls green (CRLF, blank line inside an entry, closing `###`, reworded text, unchanged), 36 checker mutants red, 0 did not run; `&nbsp;` as a value stays green (known limit, in the map)
-- [x] PR #5 open; at 28d015e `checks`, `leak-check` and "Safety net" all green
-- [ ] CI green on the latest commit
+- [x] PR #5 merged at 28d015e; `checks`, `leak-check` and "Safety net" all green there
+- [ ] follow-up PR with the review fixes; CI green on its latest commit
 (5 of 6 done)
 
 ## Decisions made (and why)
@@ -30,7 +30,7 @@ Step 1, PR 2 - the catalog: `CATALOG.md` (text from the owner, verbatim) and `te
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-Review findings fixed, map updated. Next: CI green on the latest commit, then the owner's merge.
+Review findings fixed, map updated, commits rebased onto main 9a94c5b. Next: follow-up PR, CI green on its latest commit, then the owner's merge.
 Next step after this PR: PR 3 - the skill.
 
 ## Known issues / traps
