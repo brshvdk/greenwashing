@@ -5,11 +5,11 @@ Step 1, PR 3 - the skill: `skills/greenwashing/SKILL.md` (text from the owner, v
 
 ## Progress
 - [x] SKILL.md as given; catalog edits (two lines)
-- [x] `tests/test_skill.py`; own mutation wave: 13 file mutants red, 1 control green, 18 checker mutants red, 0 did not run
+- [x] `tests/test_skill.py`; own mutation wave (fresh bytecode caches): 13 file mutants red, 1 control green, 25 checker mutants red, 0 did not run
 - [ ] path `skills/<name>/SKILL.md` and the limits 64 / 1024 checked against the official docs, and a live `npx skills add` run - BLOCKED: the session's network policy denies agentskills.io, skills.sh and registry.npmjs.org (npm 403 on any package, `left-pad` as control)
-- [ ] fresh-context review
+- [x] fresh-context review: no leaks; realistic survivors (empty quoted or null description, folded description of any length) and false alarms (quoted name, CRLF, BOM) re-run, confirmed, fixed; map items fixed; adversarial ones listed in the report
 - [ ] PR open; three checks green
-(2 of 5 done)
+(3 of 5 done)
 
 ## Decisions made (and why)
 - Mutation runs use a fresh bytecode cache per run (`-X pycache_prefix=<new dir>`, works under `-I`): two mutants of the same file size written in the same second reused the previous mutant's `.pyc`, so kills were credited to the wrong test (PR 3 wave). The catalog waves were re-run this way: same result (37 red, 5 controls + 1 known limit green, 36 checker mutants red; the second review's 41 mutants all killed).

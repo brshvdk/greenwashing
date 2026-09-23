@@ -48,7 +48,7 @@ Traps:
 
 Purpose: the skill for coding agents that read the Agent Skills format: what to do before reporting "done" and how to report, citing catalog entries by `GW-NN`. Frontmatter `name` (the folder name) and `description`. Meant to be installed with `npx skills add brshvdk/greenwashing`; the install path and the field limits are not yet checked against the format's documentation or a live CLI run (both were unreachable from the session).
 
-Tests: `tests/test_skill.py` - frontmatter present; `name` equals the folder, only lower case letters, digits and hyphens, at most 64 characters; `description` not empty, at most 1024 characters; every `GW-NN` in the skill is an entry heading of `CATALOG.md`; the catalog's entry count does not appear in the skill. Mutants of the real skill must report exactly the rules they break.
+Tests: `tests/test_skill.py` - frontmatter present (LF, CRLF or CR endings, a BOM allowed; one-line values, quotes removed, `~`/`null` read as empty; a block value `>` or `|` is reported, the checker cannot measure it); `name` equals the folder, only lower case letters, digits and hyphens, at most 64 characters; `description` not empty, at most 1024 characters; the skill cites at least one `GW-NN` and every one is an entry heading of `CATALOG.md`; the catalog's entry count does not appear in the skill. Mutants of the real skill must report exactly the rules they break.
 
 Depends on: `CATALOG.md` (entry numbers, entry count).
 
@@ -56,6 +56,7 @@ Breaks: `tests/test_skill.py` (the frontmatter and cited numbers are its contrac
 
 Traps:
 - removing or renumbering a catalog entry the skill cites - `tests/test_skill.py` goes red; change the skill in the same PR.
+- adding or removing a catalog entry - the forbidden number changes, so any bare number in the skill equal to the new count (`0.87`, `line 87`) turns `tests/test_skill.py` red.
 - the skill links to `CATALOG.md` on `main` by URL - renaming or moving the catalog breaks the link, and no test checks it.
 
 ### scripts/leak-check
