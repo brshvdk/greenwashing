@@ -1,19 +1,21 @@
 # SESSION
 
 ## Current step
-Step 1, PR 1d - close three holes from the PR 1c review: tests cannot be faked, the linter cannot be blinded, agent instructions cannot change quietly
+Step 1, PR 2 - the catalog: `CATALOG.md` (text from the owner, verbatim) and `tests/test_catalog.py` (structure). Guarded files untouched, so "Safety net" must be green on this PR (second half of the live check of the net).
 
 ## Progress
-- [x] CI unit tests run isolated (`python3 -I`) and fail on zero tests or no "Ran N tests" line; CLAUDE.md section 7 test commands updated (owner's "add to CLAUDE.md")
-- [x] CI lint runs with `--no-respect-gitignore`; ruff's default excludes still apply
-- [x] safety net guards agent instruction files in any folder and everything in `.claude/` except `.claude/SESSION.md`
-- [x] `tests/test_ci_steps.py` runs CI steps as written under `bash -e`; every new rule and step proven by a mutation
-- [x] PR #4 open: `checks` and `leak-check` green, "Safety net" red listing the four guarded files it changes
-- [x] fresh-context review (4 lenses, each finding checked by 2 refuters): blockers fixed - unit tests went green on failing tests under GitHub's `bash -e` (no pipefail), a root `venv.py` hijacked the tools venv, the safety net itself ran without `-I`
-- [ ] CI green on the latest commit
-(7 of 8 done)
+- [x] `CATALOG.md` as given (two independent transcriptions diffed identical; Markdown sanity script: no odd backticks, stray emphasis, trailing spaces or non-ASCII)
+- [x] `tests/test_catalog.py`: headings, unique and ascending numbers, the three lines in order and not empty, sections A-H with entries, no entry outside them; one mutant of the real catalog per rule
+- [x] README line, ARCHITECTURE.md module `CATALOG.md`
+- [x] own mutation wave (worktree): 25 catalog mutants red, 2 controls green, 17 checker mutants red; one survivor found and fixed (a first entry of a section with a `####` heading vanished)
+- [ ] fresh-context reviewer: structure, Markdown, leaks; own mutations
+- [ ] PR open; `checks`, `leak-check`, "Safety net" green on the latest commit
+(4 of 6 done)
 
 ## Decisions made (and why)
+- Catalog test: one checker `problems(text)` returns (rule, where); the real catalog must give `[]`, and each mutant built from the real text by position (first or last entry, never a named number) must give exactly its one rule (GW-12, GW-13). `SECTIONS` and `FIELDS` are the only fixed facts; the entry count comes from the catalog alone.
+- Entry lines with no `###` heading above them start an entry without a heading ("bad heading"): otherwise a broken heading on the first entry of a section made the entry vanish and the test stayed green (found by the own mutation wave).
+- README line is its own paragraph (blank line before it), otherwise Markdown joins it to the tagline.
 - gitleaks 8.28.0, pinned by SHA-256; positive control: no ERR/FTL line and 0 < "N commits scanned" <= non-merge commits in range (live runs: a bad revision gives an error, "0 commits scanned" and exit 0; only commits that add content count).
 - gitleaks scans the git directory with `--ignore-gitleaks-allow`, an empty `--gitleaks-ignore-path` and no `GITLEAKS_CONFIG*`: exclusions from a PR cannot silence it (live-proven).
 - leak-check runs with `python3 -I` in its own CI job; the allowlist is read from the base; text that is not UTF-8 and fake images make it "did not run".
@@ -25,9 +27,8 @@ Step 1, PR 1d - close three holes from the PR 1c review: tests cannot be faked, 
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-Review findings fixed and pushed. Mutations after the review: 33 plus 5 re-checks; single removals of the venv `-I`, the venv `cd` or the safety-net workflow `-I` are equivalent (the other protection holds), removing both turns a test red.
-Next: CI green on the latest commit, then the owner's merge.
-Next step after this PR: PR 2 - the catalog (the owner provides the catalog text).
+Catalog, test, README, map committed. Next: reviewer findings, push, PR, CI green on the latest commit, then the owner's merge.
+Next step after this PR: PR 3 - the skill.
 
 ## Known issues / traps
 - PRs from forks do not get repository secrets, so their pattern scan reports "did not run" (red). The owner decides the policy for external PRs before launch.
