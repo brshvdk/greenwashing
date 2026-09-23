@@ -1,0 +1,358 @@
+#!/usr/bin/env python3
+"""Leak check for this repository.
+
+Three parts, each ends as passed, failed or did not run:
+  1. gitleaks over the commits in range;
+  2. references to other repositories of the owner (owner/<name>), except
+     this repository and the names in .github/public-repos.txt;
+  3. stop-word patterns from the LEAK_PATTERNS environment variable, one
+     regular expression per line; pattern #N is line N of the variable.
+Parts 2 and 3 scan tracked files (path and content), every commit in range
+(author and committer name and email, message, patch) and the PR title and
+body (PR_TITLE, PR_BODY).
+
+Range: BASE_SHA..HEAD_SHA when BASE_SHA is set; otherwise from the merge
+base with origin/main; otherwise every commit reachable from HEAD.
+--all-history: every commit of every ref.
+
+Exit code: 0 - every part passed; 1 - a part failed; 2 - nothing failed, but
+a part did not run. The output names only a location and a pattern number,
+never the matched text or a pattern: CI logs are public.
+"""
+
+import argparse
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import traceback
+
+OWNER = "brshvdk"
+REPO = "greenwashing"
+ALLOWLIST = ".github/public-repos.txt"
+# Explicit everywhere: with a locale-dependent encoding, Cyrillic patterns
+# silently match nothing.
+ENCODING = "utf-8"
+GITLEAKS_LEAKS_EXIT = 99
+
+PASSED, FAILED, DID_NOT_RUN = "passed", "failed", "did not run"
+EXIT_CODES = {PASSED: 0, FAILED: 1, DID_NOT_RUN: 2}
+
+REF_RE = re.compile(re.escape(OWNER) + r"/([A-Za-z0-9._-]+)", re.IGNORECASE)
+SHA_RE = re.compile(r"[0-9a-fA-F]{7,64}")
+CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+GITLEAKS_SCANNED_RE = re.compile(r"\b(\d+) commits scanned")
+GITLEAKS_ERROR_RE = re.compile(r"\b(ERR|FTL)\b")
+GIT = ["git", "-c", "core.quotepath=off", "-c", "i18n.logOutputEncoding=" + ENCODING]
+PATCH_ARGS = ["--format=", "--patch", "--cc", "--unified=0", "--no-color", "--no-ext-diff", "--no-textconv"]
+
+
+class CheckError(Exception):
+    """Input that could not be collected. The message never carries scanned text."""
+
+
+def decode(data):
+    return data.decode(ENCODING, errors="replace")
+
+
+def env_bytes(name):
+    return os.environb.get(name.encode(ENCODING))
+
+
+def env_text(name):
+    raw = env_bytes(name)
+    return None if raw is None else decode(raw)
+
+
+def git(*args):
+    proc = subprocess.run([*GIT, *args], capture_output=True)
+    if proc.returncode != 0:
+        raise CheckError(f"git {args[0]} exited with {proc.returncode}")
+    return proc.stdout
+
+
+def normalize(name):
+    name = name.strip().lower()
+    if name.endswith(".git"):
+        name = name[: -len(".git")]
+    return name.rstrip(".")
+
+
+def load_allowlist():
+    allowed = {REPO}
+    try:
+        with open(ALLOWLIST, "rb") as f:
+            lines = decode(f.read()).splitlines()
+    except FileNotFoundError:
+        return allowed
+    allowed.update(normalize(line) for line in lines if line.strip() and not line.strip().startswith("#"))
+    return allowed
+
+
+def load_patterns():
+    """Return (patterns, reason): patterns is a list of (number, regex); reason is set when none can be used."""
+    raw = env_bytes("LEAK_PATTERNS")
+    if raw is None or not raw.strip():
+        return [], "patterns not set"
+    try:
+        text = raw.decode(ENCODING)
+    except UnicodeDecodeError:
+        return [], "LEAK_PATTERNS is not valid UTF-8"
+    patterns, invalid = [], []
+    for number, line in enumerate(text.split("\n"), 1):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            patterns.append((number, re.compile(line)))
+        except re.error:
+            invalid.append(number)
+    if invalid:
+        return patterns, "invalid regular expression: " + ", ".join(f"pattern #{n}" for n in invalid)
+    return patterns, None
+
+
+def resolve_range(all_history):
+    """Return (revs for git rev-list and gitleaks --log-opts, human description)."""
+    if all_history:
+        return ["--all"], "every commit of every ref"
+    base, head = env_text("BASE_SHA"), env_text("HEAD_SHA") or "HEAD"
+    for name, value in (("BASE_SHA", base), ("HEAD_SHA", head)):
+        if value and value != "HEAD" and not SHA_RE.fullmatch(value):
+            raise CheckError(f"{name} is not a commit id")
+    if base:
+        return [f"{base}..{head}"], f"{base[:12]}..{head[:12]}"
+    try:
+        merge_base = decode(git("merge-base", head, "origin/main")).strip()
+    except CheckError:
+        return [head], f"every commit reachable from {head[:12]}"
+    return [f"{merge_base}..{head}"], f"origin/main..{head[:12]}"
+
+
+def tracked_items(label):
+    """Items for every tracked file: its path and its content in the working tree."""
+    items = []
+    paths = list(dict.fromkeys(p for p in git("ls-files", "-z").split(b"\0") if p))
+    for index, raw in enumerate(paths, 1):
+        where = label(decode(raw), index)
+        items.append((f"path of {where}", decode(raw), False))
+        if os.path.islink(raw):
+            content = os.readlink(raw)
+        elif os.path.isfile(raw):
+            with open(raw, "rb") as f:
+                content = f.read()
+        else:
+            continue  # a submodule, or deleted in the working tree: no content here
+        items.append((where, decode(content), True))
+    return items, len(paths)
+
+
+def commit_items(revs):
+    """Items for every commit in range: identities, message and patch."""
+    items = []
+    shas = decode(git("rev-list", *revs, "--")).split()
+    for sha in shas:
+        where = f"commit {sha[:12]}"
+        meta = decode(git("show", "-s", "--format=%an%x00%ae%x00%cn%x00%ce%x00%B", sha)).split("\0")
+        author_name, author_email, committer_name, committer_email, message = meta
+        items += [
+            (f"{where} author name", author_name, False),
+            (f"{where} author email", author_email, False),
+            (f"{where} committer name", committer_name, False),
+            (f"{where} committer email", committer_email, False),
+            (f"{where} message", message, True),
+            (f"{where} patch", decode(git("show", *PATCH_ARGS, sha)), True),
+        ]
+    return items, len(shas)
+
+
+def pr_items():
+    items = []
+    title, body = env_text("PR_TITLE"), env_text("PR_BODY")
+    if title:
+        items.append(("PR title", title, False))
+    if body:
+        items.append(("PR body", body, True))
+    return items
+
+
+def pr_context_problem():
+    """On a pull_request run the PR context must be there, or the scan is partial."""
+    if env_text("GITHUB_EVENT_NAME") != "pull_request":
+        return None
+    missing = [n for n in ("BASE_SHA", "HEAD_SHA", "PR_TITLE") if not env_text(n)]
+    if env_bytes("PR_BODY") is None:
+        missing.append("PR_BODY")
+    return f"pull_request run without {', '.join(missing)}" if missing else None
+
+
+def find(items, hits):
+    findings = []
+    for where, text, numbered in items:
+        for lineno, line in enumerate(text.split("\n"), 1):
+            for tag in hits(line):
+                findings.append((where, lineno if numbered else None, tag))
+    return list(dict.fromkeys(findings))
+
+
+def show(where, lineno, tag):
+    line = f"  {where}"
+    if lineno is not None:
+        line += f" line {lineno}"
+    if tag is not None:
+        line += f" pattern #{tag}"
+    return line
+
+
+def scan_part(items, hits, scanned, problems):
+    findings = find(items, hits)
+    lines = [show(*f) for f in findings]
+    if findings:
+        return FAILED, f"{len(findings)} finding(s)", lines
+    if problems:
+        return DID_NOT_RUN, "; ".join(problems), lines
+    if not scanned:
+        return DID_NOT_RUN, "nothing to scan", lines
+    return PASSED, scanned, lines
+
+
+def gitleaks_part(revs, label, shown):
+    exe = shutil.which("gitleaks")
+    if exe is None:
+        return DID_NOT_RUN, "gitleaks not installed", []
+    # gitleaks skips merge commits; its own count is the positive control.
+    expected = int(decode(git("rev-list", "--count", "--no-merges", *revs, "--")).strip())
+    if expected == 0:
+        return DID_NOT_RUN, "no non-merge commits in range", []
+    with tempfile.TemporaryDirectory() as tmp:
+        report = os.path.join(tmp, "report.json")
+        proc = subprocess.run(
+            [exe, "git", "--no-banner", "--no-color", "--redact", "--exit-code", str(GITLEAKS_LEAKS_EXIT),
+             "--report-format", "json", "--report-path", report, "--log-opts=" + " ".join(revs), "."],
+            capture_output=True,
+        )
+        # Never print gitleaks' own log: only facts parsed from it.
+        log = decode(proc.stdout + proc.stderr)
+        if proc.returncode not in (0, GITLEAKS_LEAKS_EXIT):
+            return DID_NOT_RUN, f"gitleaks exited with {proc.returncode}", []
+        if GITLEAKS_ERROR_RE.search(log):
+            return DID_NOT_RUN, "gitleaks logged an error", []
+        counts = GITLEAKS_SCANNED_RE.findall(log)
+        if counts != [str(expected)]:
+            return DID_NOT_RUN, f"gitleaks scanned {counts or 'no'} commits, expected {expected}", []
+        try:
+            with open(report, "rb") as f:
+                leaks = json.loads(decode(f.read()))
+        except (OSError, ValueError):
+            return DID_NOT_RUN, "gitleaks wrote no readable report", []
+    if proc.returncode == 0 and not leaks:
+        return PASSED, f"{expected} commits scanned", []
+    if proc.returncode == GITLEAKS_LEAKS_EXIT and leaks:
+        lines = [
+            f"  commit {str(leak['Commit'])[:12]} {label(str(leak['File']))} line {leak['StartLine']}"
+            f" rule {shown(str(leak['RuleID'])) or '(hidden)'}"
+            for leak in leaks
+        ]
+        return FAILED, f"{len(leaks)} finding(s)", lines
+    return DID_NOT_RUN, "gitleaks exit code and report disagree", []
+
+
+def parse_args(argv):
+    parser = argparse.ArgumentParser(description="Leak check: gitleaks, repository references, stop-word patterns.")
+    parser.add_argument("--all-history", action="store_true", help="scan every commit of every ref instead of the PR range")
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    sys.stdout.reconfigure(encoding=ENCODING, errors="replace")
+    args = parse_args(argv)
+    os.chdir(decode(git("rev-parse", "--show-toplevel")).strip())
+
+    patterns, patterns_problem = load_patterns()
+    allowed = load_allowlist()
+
+    def ref_hits(line):
+        names = (normalize(m.group(1)) for m in REF_RE.finditer(line))
+        return [None for name in names if name and name not in allowed]
+
+    def pattern_hits(line):
+        return [number for number, regex in patterns if regex.search(line)]
+
+    def shown(text):
+        """Text safe to print, or None when it matches a check itself."""
+        if ref_hits(text) or pattern_hits(text):
+            return None
+        return CONTROL_RE.sub("?", text)
+
+    def label(path, index=None):
+        name = shown(path)
+        if name is not None:
+            return f"file {name}"
+        return f"tracked file #{index} (name hidden: it matches a check)" if index else "a file (name hidden: it matches a check)"
+
+    problems, items, facts = [], [], []
+    try:
+        file_items, file_count = tracked_items(label)
+        items += file_items
+        facts.append(f"{file_count} tracked files")
+    except CheckError as exc:
+        problems.append(str(exc))
+
+    revs = None
+    try:
+        revs, description = resolve_range(args.all_history)
+        commit_list, commit_count = commit_items(revs)
+        items += commit_list
+        facts.append(f"{commit_count} commits ({description})")
+    except CheckError as exc:
+        revs = None
+        problems.append(str(exc))
+
+    context_problem = pr_context_problem()
+    if context_problem:
+        problems.append(context_problem)
+    pr_list = pr_items()
+    items += pr_list
+    if pr_list:
+        facts.append("PR " + " and ".join(where.split()[1] for where, _, _ in pr_list))
+
+    scanned = ", ".join(facts) if items else ""
+    if revs is None:
+        gitleaks = (DID_NOT_RUN, "commit range unavailable", [])
+    else:
+        gitleaks = gitleaks_part(revs, label, shown)
+    refs = scan_part(items, ref_hits, scanned, problems)
+    if patterns:
+        pattern_problems = problems + ([patterns_problem] if patterns_problem else [])
+        stop_words = scan_part(items, pattern_hits, scanned, pattern_problems)
+    else:
+        stop_words = (DID_NOT_RUN, patterns_problem, [])
+
+    print(f"leak-check: {scanned or 'nothing collected'}")
+    parts = [("gitleaks", gitleaks), ("repo references", refs), ("patterns", stop_words)]
+    for name, (status, detail, lines) in parts:
+        print(f"[{status}] {name} - {detail}")
+        for line in lines:
+            print(line)
+    if any(" patch line " in line for _, (_, _, lines) in parts for line in lines):
+        print("  (patch line N is line N of: git -c core.quotepath=off show " + " ".join(PATCH_ARGS) + " <commit>)")
+
+    statuses = [status for _, (status, _, _) in parts]
+    overall = FAILED if FAILED in statuses else DID_NOT_RUN if DID_NOT_RUN in statuses else PASSED
+    print(f"leak-check: {overall} (exit {EXIT_CODES[overall]})")
+    return EXIT_CODES[overall]
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except CheckError as exc:
+        print(f"leak-check: {exc} - did not run (exit 2)")
+        sys.exit(EXIT_CODES[DID_NOT_RUN])
+    except Exception as exc:  # a crash must never read as a verdict, and its message may carry scanned text
+        frame = traceback.extract_tb(exc.__traceback__)[-1]
+        print(f"leak-check: internal error {type(exc).__name__} at line {frame.lineno} - did not run (exit 2)")
+        sys.exit(EXIT_CODES[DID_NOT_RUN])
