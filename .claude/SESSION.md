@@ -1,36 +1,30 @@
 # SESSION
 
 ## Current step
-Step 1, PR 1b - harden the leak check: a PR cannot weaken the checks for itself; the safety net shows changes to them
+Step 1, PR 1c - extend the safety net's guarded list and see the safety net live
 
 ## Progress
-- [x] allowlist read from the base of the range, not from the PR
-- [x] gitleaks ignores `.gitleaks.toml`, `.gitleaksignore` and `gitleaks:allow` from the scanned repository (live-proven)
-- [x] non-UTF-8 file or patch -> parts 2 and 3 did not run; images skipped and counted
-- [x] safety net: `scripts/safety-net`, its tests, `.github/workflows/safety-net.yml`
-- [x] `actions/checkout` pinned by commit, `.gitkeep` removed, map updated
-- [x] mutation wave: 51 mutations, 0 holes; session leak-check run (exit 2 as expected)
-- [x] fresh-context review: every finding reproduced by a run; F1, F3-F8 fixed with tests and mutations
-- [ ] CI green on the latest PR commit; owner decision on F2
-(7 of 8 done)
+- [x] guarded list extended with tool config, Python startup hooks and Claude Code settings in any folder (the list itself: `scripts/safety-net` only)
+- [x] a test per rule (nested folders, renames into and out of guarded names); every rule proven by a mutation
+- [x] PR open: `checks` and `leak-check` green, "Safety net" red on it, listing exactly the two guarded files it changes
+- [x] fresh-context review verified by runs: nested `ruff.toml` now guarded, SESSION.md list copy removed, `.pth` dot pinned by a test; two findings outside the owner's list left to the owner (below)
+(4 of 4 done)
 
 ## Decisions made (and why)
-- gitleaks 8.28.0, pinned with the SHA-256 from its official checksums file; positive control: no ERR/FTL line and 0 < "N commits scanned" <= non-merge commits in range (live runs: a bad revision logs an error, "0 commits scanned" and exits 0; only commits that add content are counted).
-- gitleaks runs against the git directory with `--ignore-gitleaks-allow`, `--gitleaks-ignore-path <empty dir>` and no `GITLEAKS_CONFIG*` env. From `gitleaks --help`: the config comes from `--config`, `GITLEAKS_CONFIG`, `GITLEAKS_CONFIG_TOML`, then `(target path)/.gitleaks.toml`, else the built-in default; the git directory has no `.gitleaks.toml`. Live runs: each of the three exclusions silences a planted fake token in a plain run and not in the hardened run; controls without each measure show it is needed.
-- Tests replace gitleaks with a stub (hermetic); the real gitleaks runs in CI and in session runs.
-- Tests run leak-check under the C locale with Python UTF-8 mode off, so UTF-8 mutations can go red.
-- ruff.toml includes the extensionless scripts by name (ruff skips them otherwise).
-- The safety net reads the PR's files through the API and compares their count with the PR's `changed_files`; guarded names are written out again in its test, so dropping one from the script turns a test red.
-- `scripts/safety-net` and `tests/test_safety_net.py` are guarded too (not in the owner's list): the goal is that any change to the checks is visible.
-- From the review: leak-check runs with `python3 -I` (a PR's `scripts/argparse.py` faked a pass) in its own CI job (PR tests run earlier in the same job could rewrite GITHUB_ENV/GITHUB_PATH); an image needs its file signature, a fake one is scanned as text and makes all parts did not run; non-UTF-8 identity, message or file name -> did not run; the safety net also runs on `edited` and treats an empty or nameless file list as did not run.
+- gitleaks 8.28.0, pinned by SHA-256; positive control: no ERR/FTL line and 0 < "N commits scanned" <= non-merge commits in range (live runs: a bad revision gives an error, "0 commits scanned" and exit 0; only commits that add content count).
+- gitleaks scans the git directory with `--ignore-gitleaks-allow`, an empty `--gitleaks-ignore-path` and no `GITLEAKS_CONFIG*`: exclusions from a PR cannot silence it (live-proven).
+- leak-check runs with `python3 -I` in its own CI job; the allowlist is read from the base; text that is not UTF-8 and fake images make it "did not run".
+- Tests replace gitleaks with a stub; the real gitleaks runs in CI and in session runs. leak-check tests run under the C locale with Python UTF-8 mode off.
+- The guarded list lives only in `scripts/safety-net`; its tests name examples per rule (a behaviour spec), so dropping a rule turns a test red.
+- `scripts/safety-net` and `tests/test_safety_net.py` are guarded too: any change to the checks must be visible.
 
 ## Where we stopped
-PR 2 open; review findings fixed and pushed. Next: CI green on the latest commit, owner decision on F2.
-Safety net: not yet observed live.
-Next step after this PR: a live check of the safety net - a test PR that changes a comment in `ruff.toml` must give a red "Safety net"; that PR is closed without merge. Then PR 2 - the catalog.
+safety net observed live: red on PR #3 (https://github.com/brshvdk/greenwashing/actions/runs/35870693126/job/107213675854) - it listed `scripts/safety-net` and `tests/test_safety_net.py`, the two guarded files among the four the PR changes. This red is expected; the owner merges knowing it.
+Next: the owner's merge, then PR 2 - the catalog (the owner provides the catalog text).
+Next step after this PR: PR 2 - the catalog (the owner provides the catalog text).
 
 ## Known issues / traps
 - PRs from forks do not get repository secrets, so their pattern scan reports "did not run" (red). The owner decides the policy for external PRs before launch.
-- The safety net itself is checked only by main's version; its first live run is on the PR after the one that adds it.
-- Open, owner decision (review F2): an unguarded new file can weaken other gates - a test module that turns assertions into no-ops (proven: 38 failures -> OK), or a `.ruff.toml` that overrides `ruff.toml` (proven). Options: guard `tests/**`, `scripts/**`, `.ruff.toml`, `pyproject.toml`; or keep the list and review such files by hand.
+- `tests/` and `scripts/` are not guarded as a whole (owner decision): a new test module can still disable assertions; the project's own gate closes this later.
+- Open, owner decision (review 1c, proven by runs): a root `unittest/` package makes `python3 -m unittest discover` print OK without running tests; a `.ignore` or `.gitignore` in any folder hides files from ruff. Neither is guarded.
 - gitleaks skips files by image name in its default config; a fake image is reported as did not run instead.
