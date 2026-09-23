@@ -1,2 +1,2 @@
-# Lint config. scripts/leak-check has no .py extension, so it is included by name.
-extend-include = ["scripts/leak-check"]
+# Lint config. The scripts have no .py extension, so they are included by name.
+extend-include = ["scripts/leak-check", "scripts/safety-net"]

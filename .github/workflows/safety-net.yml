@@ -1,0 +1,30 @@
+name: Safety net
+
+# pull_request_target runs this file as it is on main, so a pull request cannot
+# switch this check off or weaken it. Never check out or run the PR's code here:
+# the checkout below is main, and the PR is read only through the API.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  safety-net:
+    name: Safety net
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out main (not the pull request)
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+
+      # The PR number reaches the script only through env, never through ${{ }} inside run:.
+      - name: Fail when a guarded file is touched
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: scripts/safety-net
