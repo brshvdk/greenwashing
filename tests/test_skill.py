@@ -15,8 +15,9 @@ CATALOG = os.path.join(ROOT, "CATALOG.md")
 # Limits of the Agent Skills format for the name and description fields.
 NAME_MAX = 64
 DESCRIPTION_MAX = 1024
-# Hyphens only between letters or digits: none at the start or end, never two in a row.
-NAME_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+# Lower case letters, digits and hyphens, one class for every position;
+# no hyphen at the start or end, never two in a row.
+NAME_RE = re.compile(r"(?!-)(?!.*--)[a-z0-9-]+(?<!-)")
 FIELD_RE = re.compile(r"([A-Za-z_-]+):(.*)")
 ID_RE = re.compile(r"\bGW-(\d+)\b")
 CATALOG_ID_RE = re.compile(r"^### GW-(\d+) ", re.M)
