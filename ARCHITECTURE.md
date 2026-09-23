@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-Map of the repository: only what exists now. The product modules (catalog, skill, gate) are not here yet.
+Map of the repository: only what exists now. Of the product modules only the catalog is here; the skill and the gate are not here yet.
 
 ## Layout
 
@@ -9,6 +9,7 @@ CLAUDE.md                     rules for Claude Code (changed only on the owner's
 .claude/SESSION.md            working memory between sessions
 ARCHITECTURE.md               this map
 README.md, LICENSE, CONTRIBUTING.md, .github/ISSUE_TEMPLATE/   base files
+CATALOG.md                    the public catalog (data, Markdown)
 .gitignore
 ruff.toml                     lint config
 scripts/leak-check            leak check (Python 3, standard library only)
@@ -16,12 +17,27 @@ tests/test_leak_check.py      tests of the leak check (unittest)
 scripts/safety-net            guarded-file check for pull requests (Python 3, standard library only)
 tests/test_safety_net.py      tests of the safety net (unittest, local fake of the GitHub API)
 tests/test_ci_steps.py        tests of CI steps (runs them as written in the workflow files)
+tests/test_catalog.py         tests of the catalog structure (unittest)
 .github/public-repos.txt      allowlist of the owner's public repositories for the leak check
 .github/workflows/ci.yml      CI
 .github/workflows/safety-net.yml   safety net workflow
 ```
 
 ## Modules
+
+### CATALOG.md
+
+Purpose: the public catalog - the ways a test suite goes green without the code being right. Data, not code. Sections `## A.` to `## H.`; each entry is a `### GW-NN Title` heading followed by exactly three lines in order: `**Looks like:**`, `**Why it's green:**`, `**Catch it:**`. IDs are stable and never renumbered; gaps between sections are on purpose. The catalog is the only source of its entries: nothing else counts them or lists their numbers.
+
+Tests: `tests/test_catalog.py` - the structure only: entry headings, numbers unique and ascending, the three lines in order and not empty, sections A-H in order and none empty, no entry outside them; each rule has a mutant of the real catalog that must report exactly that rule.
+
+Depends on: nothing.
+
+Breaks: `tests/test_catalog.py` (the structure is its contract); the link in `README.md`.
+
+Traps:
+- adding a section after H or changing the three lines - change `SECTIONS` or `FIELDS` in `tests/test_catalog.py` in the same PR, otherwise the test goes red.
+- renumbering an entry - the test checks that numbers are unique and ascending, not that they stay the same, so a renumbering passes it.
 
 ### scripts/leak-check
 
