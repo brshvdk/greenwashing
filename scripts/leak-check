@@ -29,6 +29,7 @@ import subprocess
 import sys
 import tempfile
 import traceback
+import warnings
 
 OWNER = "brshvdk"
 REPO = "greenwashing"
@@ -47,7 +48,8 @@ CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
 GITLEAKS_SCANNED_RE = re.compile(r"\b(\d+) commits scanned")
 GITLEAKS_ERROR_RE = re.compile(r"\b(ERR|FTL)\b")
 GIT = ["git", "-c", "core.quotepath=off", "-c", "i18n.logOutputEncoding=" + ENCODING]
-PATCH_ARGS = ["--format=", "--patch", "--cc", "--unified=0", "--no-color", "--no-ext-diff", "--no-textconv"]
+# --text: content git treats as binary (a NUL byte, .gitattributes) is scanned too.
+PATCH_ARGS = ["--format=", "--patch", "--cc", "--unified=0", "--text", "--no-color", "--no-ext-diff", "--no-textconv"]
 
 
 class CheckError(Exception):
@@ -107,8 +109,11 @@ def load_patterns():
         if not line:
             continue
         try:
-            patterns.append((number, re.compile(line)))
-        except re.error:
+            # Python warns on PCRE-only syntax such as [[:digit:]] that would silently match nothing.
+            with warnings.catch_warnings():
+                warnings.simplefilter("error")
+                patterns.append((number, re.compile(line)))
+        except (re.error, Warning):
             invalid.append(number)
     if invalid:
         return patterns, "invalid regular expression: " + ", ".join(f"pattern #{n}" for n in invalid)
@@ -117,6 +122,8 @@ def load_patterns():
 
 def resolve_range(all_history):
     """Return (revs for git rev-list and gitleaks --log-opts, human description)."""
+    if decode(git("rev-parse", "--is-shallow-repository")).strip() == "true":
+        raise CheckError("shallow clone: history is incomplete")
     if all_history:
         return ["--all"], "every commit of every ref"
     base, head = env_text("BASE_SHA"), env_text("HEAD_SHA") or "HEAD"
@@ -133,8 +140,8 @@ def resolve_range(all_history):
 
 
 def tracked_items(label):
-    """Items for every tracked file: its path and its content in the working tree."""
-    items = []
+    """Items for every tracked file (its path and its content in the working tree), and the missing count."""
+    items, missing = [], 0
     paths = list(dict.fromkeys(p for p in git("ls-files", "-z").split(b"\0") if p))
     for index, raw in enumerate(paths, 1):
         where = label(decode(raw), index)
@@ -144,10 +151,13 @@ def tracked_items(label):
         elif os.path.isfile(raw):
             with open(raw, "rb") as f:
                 content = f.read()
+        elif os.path.isdir(raw):
+            continue  # a submodule: no content here
         else:
-            continue  # a submodule, or deleted in the working tree: no content here
+            missing += 1
+            continue
         items.append((where, decode(content), True))
-    return items, len(paths)
+    return items, len(paths), missing
 
 
 def commit_items(revs):
@@ -193,7 +203,7 @@ def find(items, hits):
     findings = []
     for where, text, numbered in items:
         for lineno, line in enumerate(text.split("\n"), 1):
-            for tag in hits(line):
+            for tag in hits(line.removesuffix("\r")):
                 findings.append((where, lineno if numbered else None, tag))
     return list(dict.fromkeys(findings))
 
@@ -284,8 +294,8 @@ def main(argv=None):
         return [number for number, regex in patterns if regex.search(line)]
 
     def shown(text):
-        """Text safe to print, or None when it matches a check itself."""
-        if ref_hits(text) or pattern_hits(text):
+        """Text safe to print, or None when it or any of its lines matches a check."""
+        if any(ref_hits(piece) or pattern_hits(piece) for piece in [text, *CONTROL_RE.split(text)]):
             return None
         return CONTROL_RE.sub("?", text)
 
@@ -297,9 +307,11 @@ def main(argv=None):
 
     problems, items, facts = [], [], []
     try:
-        file_items, file_count = tracked_items(label)
+        file_items, file_count, missing = tracked_items(label)
         items += file_items
         facts.append(f"{file_count} tracked files")
+        if missing:
+            problems.append(f"{missing} tracked files missing from the working tree")
     except CheckError as exc:
         problems.append(str(exc))
 

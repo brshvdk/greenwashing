@@ -150,7 +150,9 @@ class Repo:
             return json.load(f)
 
 
-class LeakCheckTest(unittest.TestCase):
+class LeakCheckCase(unittest.TestCase):
+    """Shared helpers: a fresh repository per test and result assertions."""
+
     def setUp(self):
         self.repo = Repo(self)
 
@@ -163,8 +165,13 @@ class LeakCheckTest(unittest.TestCase):
         return parts
 
     def assert_no_echo(self, out):
+        # Any 5-character piece counts: a partly masked match still leaks it.
         for text in SECRETS:
-            self.assertNotIn(text.lower(), out.lower(), out)
+            for i in range(len(text) - 4):
+                self.assertNotIn(text[i:i + 5].lower(), out.lower(), out)
+
+
+class LeakCheckTest(LeakCheckCase):
 
     # --- harness control ---
 
@@ -375,6 +382,77 @@ class LeakCheckTest(unittest.TestCase):
         exit_code, out = self.repo.run(patterns=LATIN_PATTERN, pr=False, cwd=elsewhere)
         self.assertEqual(exit_code, 2, out)
         self.assertIn("did not run", out)
+
+
+class ReviewFindingsTest(LeakCheckCase):
+    """Cases found by the fresh-context review of this branch."""
+
+    def test_binary_content_removed_later_in_the_pr_fails(self):
+        self.repo.commit({"blob.dat": f"\x00\x01{LATIN_WORD}\x00\n"})
+        self.repo.commit({"blob.dat": "\x00\x01clean\x00\n"})
+        result = self.repo.run(patterns=LATIN_PATTERN)
+        parts = self.assert_result(result, 1, patterns="failed")
+        self.assertTrue(any(" patch line " in line for line in parts["patterns"][1]), result[1])
+        self.assert_no_echo(result[1])
+
+    def test_merge_commit_message_fails(self):
+        self.repo.git("checkout", "-q", "-b", "side")
+        self.repo.commit({"side.txt": "side\n"})
+        self.repo.git("checkout", "-q", "main")
+        self.repo.commit({"main.txt": "main\n"})
+        self.repo.git("merge", "-q", "--no-ff", "-m", f"Merge side: {LATIN_WORD}", "side")
+        merge = self.repo.git("rev-parse", "HEAD")
+        result = self.repo.run(patterns=LATIN_PATTERN)
+        parts = self.assert_result(result, 1, patterns="failed")
+        self.assertEqual(parts["patterns"][1], [f"  commit {merge[:12]} message line 1 pattern #1"])
+
+    def test_shallow_clone_did_not_run(self):
+        self.repo.commit({"notes.txt": "nothing to see\n"})
+        clone = os.path.join(self.repo.tmp, "clone")
+        subprocess.run(["git", "clone", "-q", "--depth", "1", "file://" + self.repo.path, clone],
+                       check=True, capture_output=True, env=dict(os.environ, **GIT_ISOLATION))
+        for args in ([], ["--all-history"]):
+            with self.subTest(args=args):
+                result = self.repo.run(*args, patterns=LATIN_PATTERN, pr=False, cwd=clone)
+                self.assert_result(result, 2, gitleaks="did not run", repo_references="did not run",
+                                   patterns="did not run")
+
+    def test_malformed_gitleaks_report_did_not_run(self):
+        head = self.repo.commit({"notes.txt": "nothing to see\n"})
+        exit_code, out = self.repo.run(patterns=LATIN_PATTERN, leaks=[{"Commit": head}])
+        self.assertEqual(exit_code, 2, out)
+        self.assertIn("internal error", out)
+
+    def test_failed_wins_over_did_not_run(self):
+        self.repo.commit({"notes.txt": f"{LATIN_WORD}\n"})
+        self.assert_result(self.repo.run(patterns=LATIN_PATTERN, gitleaks=False), 1,
+                           gitleaks="did not run", patterns="failed")
+
+    def test_file_name_with_newline_is_hidden(self):
+        self.repo.commit({f"notes\n{LATIN_WORD}": "clean\n"})
+        result = self.repo.run(patterns=f"(?i)^{LATIN_WORD}$")
+        parts = self.assert_result(result, 1, patterns="failed")
+        self.assertIn("  path of tracked file #2 (name hidden: it matches a check) pattern #1",
+                      parts["patterns"][1])
+        self.assert_no_echo(result[1])
+
+    def test_crlf_line_matches_anchored_pattern(self):
+        self.repo.commit({"notes.txt": f"first\r\n{LATIN_WORD}\r\n"})
+        result = self.repo.run(patterns=f"(?i)^{LATIN_WORD}$")
+        parts = self.assert_result(result, 1, patterns="failed")
+        self.assertIn("  file notes.txt line 2 pattern #1", parts["patterns"][1])
+
+    def test_pcre_only_class_did_not_run(self):
+        self.repo.commit({"notes.txt": "nothing 123\n"})
+        result = self.repo.run(patterns="(?i)[[:digit:]]{3}")
+        self.assert_result(result, 2, patterns="did not run")
+        self.assertIn("pattern #1", result[1])
+
+    def test_tracked_file_missing_from_working_tree_did_not_run(self):
+        self.repo.commit({"notes.txt": "nothing to see\n"})
+        os.remove(os.path.join(self.repo.path, "notes.txt"))
+        result = self.repo.run(patterns=LATIN_PATTERN)
+        self.assert_result(result, 2, repo_references="did not run", patterns="did not run")
 
 
 if __name__ == "__main__":
