@@ -9,8 +9,9 @@ Step 1, PR 1b - harden the leak check: a PR cannot weaken the checks for itself;
 - [x] non-UTF-8 file or patch -> parts 2 and 3 did not run; images skipped and counted
 - [x] safety net: `scripts/safety-net`, its tests, `.github/workflows/safety-net.yml`
 - [x] `actions/checkout` pinned by commit, `.gitkeep` removed, map updated
-- [ ] mutation wave, fresh-context review, CI green on the PR
-(5 of 6 done)
+- [x] mutation wave: 51 mutations, 0 holes; session leak-check run (exit 2 as expected)
+- [ ] fresh-context review verified by runs, CI green on the PR
+(6 of 7 done)
 
 ## Decisions made (and why)
 - gitleaks 8.28.0, pinned with the SHA-256 from its official checksums file; positive control: no ERR/FTL line and 0 < "N commits scanned" <= non-merge commits in range (live runs: a bad revision logs an error, "0 commits scanned" and exits 0; only commits that add content are counted).
@@ -22,7 +23,7 @@ Step 1, PR 1b - harden the leak check: a PR cannot weaken the checks for itself;
 - `scripts/safety-net` and `tests/test_safety_net.py` are guarded too (not in the owner's list): the goal is that any change to the checks is visible.
 
 ## Where we stopped
-All items written, tests and ruff green locally. Next: mutation wave, reviewer, push, PR, CI.
+Pushed and PR opened. Next: verify the reviewer's findings by runs, CI green on the PR.
 Safety net: not yet observed live.
 Next step after this PR: a live check of the safety net - a test PR that changes a comment in `ruff.toml` must give a red "Safety net"; that PR is closed without merge. Then PR 2 - the catalog.
 
