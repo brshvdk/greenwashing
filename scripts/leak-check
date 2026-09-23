@@ -4,16 +4,19 @@
 Three parts, each ends as passed, failed or did not run:
   1. gitleaks over the commits in range;
   2. references to other repositories of the owner (owner/<name>), except
-     this repository and the names in .github/public-repos.txt;
+     this repository and the names in .github/public-repos.txt as it is at the
+     base of the range (a PR cannot allow a name for itself);
   3. stop-word patterns from the LEAK_PATTERNS environment variable, one
      regular expression per line; pattern #N is line N of the variable.
 Parts 2 and 3 scan tracked files (path and content), every commit in range
 (author and committer name and email, message, patch) and the PR title and
-body (PR_TITLE, PR_BODY).
+body (PR_TITLE, PR_BODY). Text that is not UTF-8 makes parts 2 and 3 "did not
+run"; image files (by extension) are not read, only counted as skipped.
 
 Range: BASE_SHA..HEAD_SHA when BASE_SHA is set; otherwise from the merge
 base with origin/main; otherwise every commit reachable from HEAD.
---all-history: every commit of every ref.
+--all-history: every commit of every ref; the allowlist then comes from
+origin/main, or from HEAD without it.
 
 Exit code: 0 - every part passed; 1 - a part failed; 2 - nothing failed, but
 a part did not run. The output names only a location and a pattern number,
@@ -38,6 +41,9 @@ ALLOWLIST = ".github/public-repos.txt"
 # silently match nothing.
 ENCODING = "utf-8"
 GITLEAKS_LEAKS_EXIT = 99
+IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico")
+# Patches leave image files out: their bytes are not text.
+IMAGE_PATHSPECS = [f":(exclude,icase,glob)**/*{ext}" for ext in IMAGE_EXTENSIONS]
 
 PASSED, FAILED, DID_NOT_RUN = "passed", "failed", "did not run"
 EXIT_CODES = {PASSED: 0, FAILED: 1, DID_NOT_RUN: 2}
@@ -58,6 +64,14 @@ class CheckError(Exception):
 
 def decode(data):
     return data.decode(ENCODING, errors="replace")
+
+
+def decode_strict(data):
+    """Scanned text: None when it is not UTF-8, so it is reported instead of silently mangled."""
+    try:
+        return data.decode(ENCODING)
+    except UnicodeDecodeError:
+        return None
 
 
 def env_bytes(name):
@@ -83,13 +97,12 @@ def normalize(name):
     return name.rstrip(".")
 
 
-def load_allowlist():
+def load_allowlist(rev):
+    """Allowed names from the allowlist as it is in commit rev; only this repository when the file is not there."""
     allowed = {REPO}
-    try:
-        with open(ALLOWLIST, "rb") as f:
-            lines = decode(f.read()).splitlines()
-    except FileNotFoundError:
+    if not git("ls-tree", "--name-only", rev, "--", ALLOWLIST).strip():
         return allowed
+    lines = decode(git("show", f"{rev}:{ALLOWLIST}")).splitlines()
     allowed.update(normalize(line) for line in lines if line.strip() and not line.strip().startswith("#"))
     return allowed
 
@@ -120,32 +133,43 @@ def load_patterns():
     return patterns, None
 
 
+def commit_exists(rev):
+    return subprocess.run([*GIT, "cat-file", "-e", f"{rev}^{{commit}}"], capture_output=True).returncode == 0
+
+
 def resolve_range(all_history):
-    """Return (revs for git rev-list and gitleaks --log-opts, human description)."""
+    """Return (revs for git rev-list and gitleaks --log-opts, description, commit to read the allowlist from or None)."""
     if decode(git("rev-parse", "--is-shallow-repository")).strip() == "true":
         raise CheckError("shallow clone: history is incomplete")
     if all_history:
-        return ["--all"], "every commit of every ref"
+        return ["--all"], "every commit of every ref", "origin/main" if commit_exists("origin/main") else "HEAD"
     base, head = env_text("BASE_SHA"), env_text("HEAD_SHA") or "HEAD"
     for name, value in (("BASE_SHA", base), ("HEAD_SHA", head)):
         if value and value != "HEAD" and not SHA_RE.fullmatch(value):
             raise CheckError(f"{name} is not a commit id")
     if base:
-        return [f"{base}..{head}"], f"{base[:12]}..{head[:12]}"
+        return [f"{base}..{head}"], f"{base[:12]}..{head[:12]}", base
     try:
         merge_base = decode(git("merge-base", head, "origin/main")).strip()
     except CheckError:
-        return [head], f"every commit reachable from {head[:12]}"
-    return [f"{merge_base}..{head}"], f"origin/main..{head[:12]}"
+        return [head], f"every commit reachable from {head[:12]}", None
+    return [f"{merge_base}..{head}"], f"origin/main..{head[:12]}", merge_base
 
 
-def tracked_items(label):
-    """Items for every tracked file (its path and its content in the working tree), and the missing count."""
-    items, missing = [], 0
+def is_image(path):
+    return path.lower().endswith(IMAGE_EXTENSIONS)
+
+
+def tracked_items(label, problems):
+    """Items for every tracked file: its path and its content in the working tree. Return (items, count, images)."""
+    items, missing, images = [], 0, set()
     paths = list(dict.fromkeys(p for p in git("ls-files", "-z").split(b"\0") if p))
     for index, raw in enumerate(paths, 1):
         where = label(decode(raw), index)
         items.append((f"path of {where}", decode(raw), False))
+        if is_image(decode(raw)):
+            images.add(decode(raw))
+            continue
         if os.path.islink(raw):
             content = os.readlink(raw)
         elif os.path.isfile(raw):
@@ -156,14 +180,22 @@ def tracked_items(label):
         else:
             missing += 1
             continue
-        items.append((where, decode(content), True))
-    return items, len(paths), missing
+        text = decode_strict(content)
+        if text is None:
+            problems.append(f"{where} is not UTF-8")
+            continue
+        items.append((where, text, True))
+    if missing:
+        problems.append(f"{missing} tracked files missing from the working tree")
+    return items, len(paths), images
 
 
-def commit_items(revs):
-    """Items for every commit in range: identities, message and patch."""
+def commit_items(revs, problems):
+    """Items for every commit in range: identities, message and patch. Return (items, count, images)."""
     items = []
     shas = decode(git("rev-list", *revs, "--")).split()
+    names = decode(git("log", "--format=", "--name-only", "-z", *revs, "--")).split("\0")
+    images = {name.strip("\n") for name in names if is_image(name.strip("\n"))}
     for sha in shas:
         where = f"commit {sha[:12]}"
         meta = decode(git("show", "-s", "--format=%an%x00%ae%x00%cn%x00%ce%x00%B", sha)).split("\0")
@@ -174,9 +206,13 @@ def commit_items(revs):
             (f"{where} committer name", committer_name, False),
             (f"{where} committer email", committer_email, False),
             (f"{where} message", message, True),
-            (f"{where} patch", decode(git("show", *PATCH_ARGS, sha)), True),
         ]
-    return items, len(shas)
+        patch = decode_strict(git("show", *PATCH_ARGS, sha, "--", ".", *IMAGE_PATHSPECS))
+        if patch is None:
+            problems.append(f"{where} patch is not UTF-8")
+        else:
+            items.append((f"{where} patch", patch, True))
+    return items, len(shas), images
 
 
 def pr_items():
@@ -236,12 +272,21 @@ def gitleaks_part(revs, label, shown):
     most = int(decode(git("rev-list", "--count", "--no-merges", *revs, "--")).strip())
     if most == 0:
         return DID_NOT_RUN, "no non-merge commits in range", []
+    # Exclusions from the scanned repository are ignored, so a PR cannot silence a finding:
+    # the target is the git directory (it has no .gitleaks.toml), --ignore-gitleaks-allow
+    # drops gitleaks:allow comments, the ignore path is an empty directory (no
+    # .gitleaksignore), and no GITLEAKS_CONFIG* variable reaches gitleaks.
+    git_dir = decode(git("rev-parse", "--absolute-git-dir")).strip()
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GITLEAKS_CONFIG")}
     with tempfile.TemporaryDirectory() as tmp:
         report = os.path.join(tmp, "report.json")
+        empty = os.path.join(tmp, "no-ignore-file")
+        os.mkdir(empty)
         proc = subprocess.run(
             [exe, "git", "--no-banner", "--no-color", "--redact", "--exit-code", str(GITLEAKS_LEAKS_EXIT),
-             "--report-format", "json", "--report-path", report, "--log-opts=" + " ".join(revs), "."],
-            capture_output=True,
+             "--ignore-gitleaks-allow", "--gitleaks-ignore-path", empty,
+             "--report-format", "json", "--report-path", report, "--log-opts=" + " ".join(revs), git_dir],
+            capture_output=True, env=env,
         )
         # Never print gitleaks' own log: only facts parsed from it.
         log = decode(proc.stdout + proc.stderr)
@@ -284,7 +329,18 @@ def main(argv=None):
     os.chdir(decode(git("rev-parse", "--show-toplevel")).strip())
 
     patterns, patterns_problem = load_patterns()
-    allowed = load_allowlist()
+    problems, refs_problems, items, facts = [], [], [], []
+
+    revs = allow_rev = None
+    try:
+        revs, description, allow_rev = resolve_range(args.all_history)
+    except CheckError as exc:
+        problems.append(str(exc))
+    allowed = {REPO}
+    if allow_rev is None:
+        refs_problems.append("no base to read the allowlist from")
+    else:
+        allowed = load_allowlist(allow_rev)
 
     def ref_hits(line):
         names = (normalize(m.group(1)) for m in REF_RE.finditer(line))
@@ -305,25 +361,24 @@ def main(argv=None):
             return f"file {name}"
         return f"tracked file #{index} (name hidden: it matches a check)" if index else "a file (name hidden: it matches a check)"
 
-    problems, items, facts = [], [], []
+    images = set()
     try:
-        file_items, file_count, missing = tracked_items(label)
+        file_items, file_count, file_images = tracked_items(label, problems)
         items += file_items
+        images |= file_images
         facts.append(f"{file_count} tracked files")
-        if missing:
-            problems.append(f"{missing} tracked files missing from the working tree")
     except CheckError as exc:
         problems.append(str(exc))
 
-    revs = None
-    try:
-        revs, description = resolve_range(args.all_history)
-        commit_list, commit_count = commit_items(revs)
-        items += commit_list
-        facts.append(f"{commit_count} commits ({description})")
-    except CheckError as exc:
-        revs = None
-        problems.append(str(exc))
+    if revs is not None:
+        try:
+            commit_list, commit_count, commit_images = commit_items(revs, problems)
+            items += commit_list
+            images |= commit_images
+            facts.append(f"{commit_count} commits ({description})")
+        except CheckError as exc:
+            revs = None
+            problems.append(str(exc))
 
     context_problem = pr_context_problem()
     if context_problem:
@@ -338,7 +393,7 @@ def main(argv=None):
         gitleaks = (DID_NOT_RUN, "commit range unavailable", [])
     else:
         gitleaks = gitleaks_part(revs, label, shown)
-    refs = scan_part(items, ref_hits, scanned, problems)
+    refs = scan_part(items, ref_hits, scanned, problems + refs_problems)
     if patterns:
         pattern_problems = problems + ([patterns_problem] if patterns_problem else [])
         stop_words = scan_part(items, pattern_hits, scanned, pattern_problems)
@@ -346,6 +401,8 @@ def main(argv=None):
         stop_words = (DID_NOT_RUN, patterns_problem, [])
 
     print(f"leak-check: {scanned or 'nothing collected'}")
+    if images:
+        print(f"leak-check: skipped {len(images)} image files")
     parts = [("gitleaks", gitleaks), ("repo references", refs), ("patterns", stop_words)]
     for name, (status, detail, lines) in parts:
         print(f"[{status}] {name} - {detail}")

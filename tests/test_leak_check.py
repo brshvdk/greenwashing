@@ -46,8 +46,10 @@ IDENTITY = {
 GITLEAKS_STUB = """#!{python}
 import json, os, subprocess, sys
 args = sys.argv[1:]
+ignore_dir = args[args.index("--gitleaks-ignore-path") + 1] if "--gitleaks-ignore-path" in args else "."
 with open(os.environ["STUB_ARGS_FILE"], "w") as f:
-    json.dump(args, f)
+    json.dump({{"args": args, "config_env": sorted(k for k in os.environ if k.startswith("GITLEAKS_CONFIG")),
+               "ignore_dir_files": sorted(os.listdir(ignore_dir))}}, f)
 revs = [a.split("=", 1)[1] for a in args if a.startswith("--log-opts=")][0].split()
 counted = subprocess.run(["git", "rev-list", "--count", "--no-merges", *revs, "--"], capture_output=True, text=True)
 print(os.environ.get("STUB_EXTRA_LOG", ""), file=sys.stderr)
@@ -99,8 +101,8 @@ class Repo:
         for name, text in files.items():
             full = os.path.join(self.path, name)
             os.makedirs(os.path.dirname(full), exist_ok=True)
-            with open(full, "w", encoding="utf-8") as f:
-                f.write(text)
+            with open(full, "wb") as f:
+                f.write(text if isinstance(text, bytes) else text.encode("utf-8"))
             self.git("add", "--", name)
         self.git("commit", "-q", "--allow-empty", "-m", message, **identity)
         return self.git("rev-parse", "HEAD")
@@ -145,9 +147,12 @@ class Repo:
         )
         return proc.returncode, (proc.stdout + proc.stderr).decode("utf-8", errors="replace")
 
-    def stub_args(self):
+    def stub_call(self):
         with open(os.path.join(self.tmp, "stub-args.json"), encoding="utf-8") as f:
             return json.load(f)
+
+    def stub_args(self):
+        return self.stub_call()["args"]
 
 
 class LeakCheckCase(unittest.TestCase):
@@ -303,8 +308,8 @@ class LeakCheckTest(LeakCheckCase):
         self.assert_no_echo(result[1])
 
     def test_references_to_listed_and_current_repository_pass(self):
+        self.repo.base = self.repo.commit({".github/public-repos.txt": "# one name per line\nzz-listed-repo\n"})
         self.repo.commit({
-            ".github/public-repos.txt": "# one name per line\nzz-listed-repo\n",
             "links.md": (
                 f"https://github.com/{REF}ZZ-Listed-Repo.git\n"
                 f"{REF}greenwashing\n"
@@ -453,6 +458,87 @@ class ReviewFindingsTest(LeakCheckCase):
         os.remove(os.path.join(self.repo.path, "notes.txt"))
         result = self.repo.run(patterns=LATIN_PATTERN)
         self.assert_result(result, 2, repo_references="did not run", patterns="did not run")
+
+
+class HardeningTest(LeakCheckCase):
+    """A PR cannot weaken the check for itself; text that cannot be read is never a silent pass."""
+
+    LISTED = "zz-listed-repo"
+
+    def listed_links(self):
+        return f"github.com/{REF}{self.LISTED}\n{REF}greenwashing\n"
+
+    # --- allowlist comes from the base, not from the PR ---
+
+    def test_pr_cannot_allow_a_name_for_itself(self):
+        self.repo.commit({".github/public-repos.txt": f"{self.LISTED}\n", "links.md": self.listed_links()})
+        result = self.repo.run(patterns=LATIN_PATTERN)
+        parts = self.assert_result(result, 1, repo_references="failed")
+        self.assertIn("  file links.md line 1", parts["repo references"][1])
+        self.assertNotIn("  file links.md line 2", parts["repo references"][1])
+
+    def test_allowlist_removed_in_pr_still_allows_base_names(self):
+        self.repo.base = self.repo.commit({".github/public-repos.txt": f"{self.LISTED}\n"})
+        self.repo.git("rm", "-q", ".github/public-repos.txt")
+        self.repo.commit({"links.md": self.listed_links()})
+        self.assert_result(self.repo.run(patterns=LATIN_PATTERN), 0, repo_references="passed")
+
+    def test_no_base_for_allowlist_did_not_run(self):
+        self.repo.commit({"links.md": "nothing here\n"})
+        result = self.repo.run(patterns=LATIN_PATTERN, pr=False)
+        self.assert_result(result, 2, repo_references="did not run", patterns="passed")
+        self.assertIn("no base to read the allowlist from", result[1])
+
+    def test_all_history_reads_allowlist_from_origin_main_or_head(self):
+        self.repo.git("update-ref", "refs/remotes/origin/main", self.repo.base)
+        self.repo.commit({".github/public-repos.txt": f"{self.LISTED}\n", "links.md": self.listed_links()})
+        result = self.repo.run("--all-history", patterns=LATIN_PATTERN, pr=False)
+        self.assert_result(result, 1, repo_references="failed")
+        self.repo.git("update-ref", "-d", "refs/remotes/origin/main")
+        result = self.repo.run("--all-history", patterns=LATIN_PATTERN, pr=False)
+        self.assert_result(result, 0, repo_references="passed")
+
+    # --- gitleaks ignores exclusions from the scanned repository ---
+
+    def test_gitleaks_ignores_repository_exclusions(self):
+        self.repo.commit({
+            ".gitleaks.toml": "[[rules]]\nid = 'nothing'\nregex = 'zzzz'\n",
+            ".gitleaksignore": "0000000:cfg.py:generic-api-key:1\n",
+        })
+        self.repo.run(patterns=LATIN_PATTERN, extra={"GITLEAKS_CONFIG": "/x.toml", "GITLEAKS_CONFIG_TOML": "x"})
+        call = self.repo.stub_call()
+        self.assertIn("--ignore-gitleaks-allow", call["args"])
+        self.assertEqual(call["args"][-1], os.path.join(os.path.realpath(self.repo.path), ".git"))
+        self.assertIn("--gitleaks-ignore-path", call["args"])
+        self.assertEqual(call["ignore_dir_files"], [])
+        self.assertEqual(call["config_env"], [])
+
+    # --- text that is not UTF-8 ---
+
+    CP1251 = f"тут {CYRILLIC_WORD}\n".encode("cp1251")
+
+    def test_tracked_file_not_utf8_did_not_run(self):
+        self.repo.commit({"notes.txt": self.CP1251})
+        result = self.repo.run(patterns=CYRILLIC_PATTERN)
+        self.assert_result(result, 2, gitleaks="passed", repo_references="did not run", patterns="did not run")
+        self.assertIn("file notes.txt is not UTF-8", result[1])
+        self.assert_no_echo(result[1])
+
+    def test_patch_not_utf8_did_not_run(self):
+        added = self.repo.commit({"notes.txt": self.CP1251})
+        self.repo.git("rm", "-q", "notes.txt")
+        self.repo.commit({})
+        result = self.repo.run(patterns=CYRILLIC_PATTERN)
+        self.assert_result(result, 2, repo_references="did not run", patterns="did not run")
+        self.assertIn(f"commit {added[:12]} patch is not UTF-8", result[1])
+
+    def test_images_are_skipped_and_counted(self):
+        png = b"\x89PNG\r\n\x1a\n\xff\xfe" + CYRILLIC_WORD.encode("cp1251")
+        self.repo.commit({"logo.png": png, "docs/Icon.ICO": png})
+        self.repo.commit({"logo.png": png + b"\xff"})
+        result = self.repo.run(patterns=CYRILLIC_PATTERN)
+        self.assert_result(result, 0, repo_references="passed", patterns="passed")
+        self.assertIn("leak-check: skipped 2 image files", result[1].splitlines())
 
 
 if __name__ == "__main__":
