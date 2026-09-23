@@ -9,8 +9,10 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import unittest
 
@@ -51,10 +53,10 @@ class GuardedChangesTest(unittest.TestCase):
                 self.assertEqual(safety_net.guarded_changes([entry(path)]), [])
 
     def test_exact_paths(self):
-        self.assert_guarded("CLAUDE.md", "scripts/leak-check", "tests/test_leak_check.py", "scripts/safety-net",
-                            "tests/test_safety_net.py", ".github/public-repos.txt", "ruff.toml", ".gitleaks.toml",
-                            ".gitleaksignore")
-        self.assert_not_guarded("docs/CLAUDE.md", "my-ruff.toml", "scripts/other", "tests/test_other.py")
+        self.assert_guarded("scripts/leak-check", "tests/test_leak_check.py", "scripts/safety-net",
+                            "tests/test_safety_net.py", "tests/test_ci_steps.py", ".github/public-repos.txt", "ruff.toml",
+                            ".gitleaks.toml", ".gitleaksignore")
+        self.assert_not_guarded("my-ruff.toml", "scripts/other", "tests/test_other.py", "docs/leak-check")
 
     def test_workflows_directory(self):
         self.assert_guarded(".github/workflows/ci.yml", ".github/workflows/new.yml")
@@ -79,6 +81,25 @@ class GuardedChangesTest(unittest.TestCase):
             self.assert_guarded(f".claude/{name}", f"sub/dir/.claude/{name}")
         self.assert_not_guarded(".claude/SESSION.md", "settings.json", "sub/claude/settings.json", "x.claude/settings.json")
 
+    def test_agent_instructions_in_any_folder(self):
+        for name in ("CLAUDE.md", "CLAUDE.local.md", ".mcp.json", "AGENTS.md"):
+            self.assert_guarded(name, f"sub/dir/{name}")
+        self.assert_not_guarded("docs/CLAUDE.md.bak", "MY-AGENTS.md", "mcp.json", "notes/claude.txt", "README.md")
+
+    def test_claude_directory_in_any_folder_except_session_memory(self):
+        self.assert_guarded(".claude/commands/review.md", ".claude/agents/helper.md", ".claude/skills/x/SKILL.md",
+                            ".claude/hooks/pre-tool.sh", ".claude/new-file.txt", "sub/dir/.claude/commands/x.md",
+                            "sub/.claude/SESSION.md", ".claude", ".claude/session-start.sh", ".claude/SESSION.md.bak",
+                            ".claude/sessions/hooks.json")
+        self.assert_not_guarded(".claude/SESSION.md", "claude/commands/x.md", "docs/.claude-notes.md",
+                                "x.claude/commands/y.md")
+
+    def test_names_ignore_case(self):
+        # On a case-insensitive file system (the macOS default) claude.md is read as CLAUDE.md.
+        self.assert_guarded("sub/claude.md", "Agents.md", ".MCP.json", ".Claude/commands/x.md", "PyProject.toml",
+                            "lib/EXTRA.PTH", ".GitHub/Workflows/x.yml", "Scripts/Leak-Check", "AGENT\u017f.md")
+        self.assert_not_guarded(".claude/session.md")
+
     def test_rename_counts_old_and_new_name(self):
         self.assertEqual(
             safety_net.guarded_changes([entry("docs/old-ruff.toml", "renamed", previous="ruff.toml")]), ["ruff.toml"])
@@ -100,6 +121,34 @@ class GuardedChangesTest(unittest.TestCase):
         self.assertEqual(
             safety_net.guarded_changes([entry("notes.json", "renamed", previous=".claude/settings.local.json")]),
             [".claude/settings.local.json"])
+
+    def test_rename_into_and_out_of_agent_instructions(self):
+        self.assertEqual(
+            safety_net.guarded_changes([entry("sub/AGENTS.md", "renamed", previous="docs/notes.md")]), ["sub/AGENTS.md"])
+        self.assertEqual(
+            safety_net.guarded_changes([entry("docs/x.md", "renamed", previous=".claude/commands/x.md")]),
+            [".claude/commands/x.md"])
+        self.assertEqual(
+            safety_net.guarded_changes([entry(".claude/notes.md", "renamed", previous=".claude/SESSION.md")]),
+            [".claude/notes.md"])
+        self.assertEqual(
+            safety_net.guarded_changes([entry("old/CLAUDE.md", "renamed", previous="old/rules.md")]), ["old/CLAUDE.md"])
+
+
+class ShebangTest(unittest.TestCase):
+    def test_shadow_module_next_to_the_script_is_ignored(self):
+        tmp = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tmp)
+        os.makedirs(os.path.join(tmp, "scripts"))
+        shutil.copy(SCRIPT, os.path.join(tmp, "scripts"))
+        with open(os.path.join(tmp, "scripts", "json.py"), "w", encoding="utf-8") as f:
+            f.write("import sys\nprint('[passed] safety net - fake')\nsys.exit(0)\n")
+        os.makedirs(os.path.join(tmp, "bin"))
+        os.symlink(sys.executable, os.path.join(tmp, "bin", "python3"))
+        proc = subprocess.run([os.path.join(tmp, "scripts", "safety-net")], capture_output=True, text=True,
+                              env={"PATH": os.path.join(tmp, "bin")})
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertNotIn("fake", proc.stdout)
 
 
 class FakeGitHub(http.server.BaseHTTPRequestHandler):

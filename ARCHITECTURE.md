@@ -15,6 +15,7 @@ scripts/leak-check            leak check (Python 3, standard library only)
 tests/test_leak_check.py      tests of the leak check (unittest)
 scripts/safety-net            guarded-file check for pull requests (Python 3, standard library only)
 tests/test_safety_net.py      tests of the safety net (unittest, local fake of the GitHub API)
+tests/test_ci_steps.py        tests of CI steps (runs them as written in the workflow files)
 .github/public-repos.txt      allowlist of the owner's public repositories for the leak check
 .github/workflows/ci.yml      CI
 .github/workflows/safety-net.yml   safety net workflow
@@ -50,7 +51,7 @@ Traps:
 
 ### safety-net workflow (`.github/workflows/safety-net.yml`, `scripts/safety-net`)
 
-Purpose: make any change to the checks themselves visible as a separate red check "Safety net". Runs on `pull_request_target` (opened, synchronize, reopened, edited - so a PR retargeted to main is checked too), so the workflow and script come from main and a PR cannot switch them off. Reads the PR's changed files through the GitHub API (read-only token; PR number only through `env:`), never checks out or runs PR code. Red when a guarded file is added, changed, removed or renamed (old and new names). The guarded list lives only in `scripts/safety-net` (exact paths, the workflows directory, tool config and Python startup hook names in any folder, Claude Code settings in any folder). Did not run when the file list is empty, has an entry without a name, or is incomplete (count differs from the PR's `changed_files`). Output: guarded names only.
+Purpose: make any change to the checks themselves visible as a separate red check "Safety net". Runs on `pull_request_target` (opened, synchronize, reopened, edited - so a PR retargeted to main is checked too), so the workflow and script come from main and a PR cannot switch them off. Reads the PR's changed files through the GitHub API (read-only token; PR number only through `env:`), never checks out or runs PR code. Red when a guarded file is added, changed, removed or renamed (old and new names). The guarded list and its one exemption live only in `scripts/safety-net` (categories: exact paths, the workflows directory; in any folder, agent instruction file names, tool config and Python startup hook names, and `.claude/` folders; compared ignoring case). Runs as `python3 -I scripts/safety-net`. Did not run when the file list is empty, has an entry without a name, or is incomplete (count differs from the PR's `changed_files`). Output: guarded names only.
 
 Tests: `tests/test_safety_net.py` - comparison logic directly, the script against a local fake of the GitHub API.
 
@@ -62,18 +63,28 @@ Traps:
 - touching the workflow - never add a checkout of the PR ref or run PR code: `pull_request_target` runs with the base repository's token.
 - adding a file that guards the checks - add a rule to the list in `scripts/safety-net` (the only copy) and a test for that rule in `tests/test_safety_net.py`, otherwise it is unguarded.
 - changing the safety net in a PR - the PR itself is still checked by main's version; the change acts only after merge.
+- running the script without `-I` - a module merged next to it (`scripts/json.py`) replaces the standard library and prints a fake pass for every later PR.
+- touching the comparison - keep it case-insensitive, otherwise a `claude.md` (read as `CLAUDE.md` on the case-insensitive macOS default file system) slips through.
 - `tests/` and `scripts/` are not guarded as a whole (owner decision: otherwise every PR with new tests is red and red stops meaning anything) - a new test module can still disable assertions; the project's own gate closes this later.
 
 ### .github/workflows/ci.yml
 
-Purpose: the gate for every PR. On `pull_request` (opened, synchronize, reopened, edited): job `checks` - ruff, unittest; job `leak-check` - gitleaks install (official release, pinned version and SHA-256), `python3 -I scripts/leak-check` on the PR range. On `workflow_dispatch`: the same with `--all-history`.
+Purpose: the gate for every PR. On `pull_request` (opened, synchronize, reopened, edited): job `checks` - `ruff check --no-respect-gitignore .`, `python3 -I -m unittest discover -s tests -v` (red on zero tests or no "Ran N tests" line); job `leak-check` - gitleaks install (official release, pinned version and SHA-256), `python3 -I scripts/leak-check` on the PR range. On `workflow_dispatch`: the same with `--all-history`.
+
+Tests: `tests/test_ci_steps.py` - runs the tools venv, Lint and Unit tests `run:` blocks (and the safety-net step) as written, under `bash -e`, in throwaway directories; rejects step keys other than name, env, run.
 
 Depends on: `scripts/leak-check`; `tests/`; `ruff.toml` (ruff 0.15.8); repository secret `LEAK_PATTERNS`; `actions/checkout` pinned by commit.
 
-Breaks: acceptance of every PR (the owner merges on green).
+Breaks: acceptance of every PR (the owner merges on green); `tests/test_ci_steps.py` (finds the steps by name).
 
 Traps:
 - touching the leak check step - PR title, body and SHAs only through `env:`, never `${{ }}` inside `run:`, otherwise command injection.
 - no `LEAK_PATTERNS` secret (also every PR from a fork) - the pattern scan did not run, the step is red.
 - touching checkout - keep `fetch-depth: 0`, otherwise the PR range is missing and the leak check did not run.
+- touching the Lint step - keep `--no-respect-gitignore`, otherwise a `.gitignore` or `.ignore` added in any folder hides files from ruff.
+- touching the Unit tests step - keep `-I` and the "Ran N tests" check, otherwise a root package named like the standard library (`unittest/`) prints a fake OK, or a run of zero tests passes.
+- piping a command in a step - GitHub runs steps without a `shell:` key as `bash -e` without pipefail, so `cmd | tee` takes the exit status of `tee` and a failing run goes green.
+- touching the tools venv step - keep `python3 -I -m venv` run outside the checkout, otherwise a `venv.py` in the PR builds the environment whose `bin/` (fake `ruff`, `python3`) comes first on PATH for Lint and Unit tests.
+- `-I` does not cover `tests/` itself: `unittest discover` puts `tests/` first on `sys.path`, so a `tests/json.py` still replaces `json` (the same open risk as an unguarded test module).
+- a `# ruff: noqa` or `# flake8: noqa` comment, or a `# ruff: disable[...]` range, still hides code from ruff (open, owner decision; `--ignore-noqa` closes all three - checked by a run).
 - moving the leak check into a job that runs PR tests or tools first - that code can rewrite `GITHUB_ENV` / `GITHUB_PATH` of later steps and fake the leak check; keep it in its own job.

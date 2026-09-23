@@ -24,8 +24,10 @@ jobs:
           persist-credentials: false
 
       # The PR number reaches the script only through env, never through ${{ }} inside run:.
+      # -I: a module merged next to the script (scripts/json.py) cannot replace the
+      # standard library and print a fake pass.
       - name: Fail when a guarded file is touched
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_TOKEN: ${{ github.token }}
-        run: scripts/safety-net
+        run: python3 -I scripts/safety-net

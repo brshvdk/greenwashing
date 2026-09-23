@@ -20,19 +20,43 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
+      # -I and a directory outside the checkout: a venv.py or venv/ in the pull request
+      # cannot replace the standard library module that builds the tools' environment
+      # (its bin/ goes first on PATH for every later step).
+      - name: Create a virtual environment for tools
+        run: |
+          cd "$RUNNER_TEMP"
+          python3 -I -m venv venv
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
       - name: Install ruff
         env:
           RUFF_VERSION: "0.15.8"
         run: |
-          python3 -m venv "$RUNNER_TEMP/venv"
-          "$RUNNER_TEMP/venv/bin/pip" install --quiet "ruff==$RUFF_VERSION"
-          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+          cd "$RUNNER_TEMP"
+          venv/bin/pip install --quiet "ruff==$RUFF_VERSION"
 
+      # --no-respect-gitignore: a .gitignore or .ignore added in any folder must not
+      # hide files from the linter; ruff's default excludes (.git, .venv, venv) still apply.
       - name: Lint
-        run: ruff check .
+        run: ruff check --no-respect-gitignore .
 
+      # -I: a module at the repository root (a unittest/ package) cannot replace the
+      # standard library and print a fake OK. Zero tests, or no "Ran N tests" line,
+      # fails the step. No pipe: GitHub runs this as `bash -e` without pipefail, so
+      # the exit status is taken from python3 itself. tests/test_ci_steps.py runs
+      # this block as written.
       - name: Unit tests
-        run: python3 -m unittest discover -s tests -v
+        run: |
+          status=0
+          python3 -I -m unittest discover -s tests -v > "$RUNNER_TEMP/unit-tests.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/unit-tests.log"
+          ran=$(sed -n 's/^Ran \([0-9][0-9]*\) tests\{0,1\} in .*/\1/p' "$RUNNER_TEMP/unit-tests.log" | tail -n 1)
+          if [ -z "$ran" ] || [ "$ran" -eq 0 ]; then
+            echo "unit tests did not run: ${ran:-no} tests ran"
+            exit 1
+          fi
+          exit "$status"
 
   # A separate job: no test or tool from the PR runs before the leak check, so
   # nothing can rewrite its environment (GITHUB_ENV, GITHUB_PATH) first.
