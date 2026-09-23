@@ -19,6 +19,8 @@ NAME_RE = re.compile(r"[a-z0-9-]+")
 FIELD_RE = re.compile(r"([A-Za-z_-]+):(.*)")
 ID_RE = re.compile(r"\bGW-(\d+)\b")
 CATALOG_ID_RE = re.compile(r"^### GW-(\d+) ", re.M)
+# A YAML block scalar (`>`, `|-` ...): its text is on later lines, which this checker does not read.
+BLOCK_RE = re.compile(r"[>|][-+]?")
 
 
 def read(path):
@@ -28,7 +30,7 @@ def read(path):
 
 def frontmatter(text):
     """Fields of the `---` block that opens the file, or None when there is none."""
-    lines = text.split("\n")
+    lines = re.split(r"\r\n|\r|\n", text.removeprefix("\ufeff"))
     end = next((i for i, line in enumerate(lines) if i and line == "---"), None)
     if lines[0] != "---" or end is None:
         return None
@@ -36,8 +38,16 @@ def frontmatter(text):
     for line in lines[1:end]:
         match = FIELD_RE.fullmatch(line)
         if match:
-            fields[match.group(1)] = match.group(2).strip()
+            fields[match.group(1)] = value(match.group(2))
     return fields
+
+
+def value(raw):
+    """A plain one-line YAML value: surrounding quotes removed, `~` and `null` read as empty."""
+    raw = raw.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "'\"":
+        return raw[1:-1]
+    return "" if raw in ("~", "null") else raw
 
 
 def problems(skill, catalog, folder):
@@ -47,6 +57,10 @@ def problems(skill, catalog, folder):
     if fields is None:
         found.append(("no frontmatter", ""))
         fields = {}
+    for key in ("name", "description"):
+        if BLOCK_RE.fullmatch(fields.get(key, "")):
+            found.append(("unreadable value", key))
+            fields.pop(key)
     name, description = fields.get("name"), fields.get("description")
     if name is None:
         found.append(("no name", ""))
@@ -100,7 +114,8 @@ class CheckerTest(unittest.TestCase):
 
     def test_bad_name(self):
         # The folder carries the same name, so only the name's own rules can fail.
-        for name in ("Greenwashing", "green_washing", "green washing", "green.washing", "g" * 65, ""):
+        for name in ("Greenwashing", "green_washing", "green washing", "green.washing", "gr\u00eben", "green/washing",
+                     "g" * 65):
             with self.subTest(name=name):
                 self.assert_breaks(self.replace("name: greenwashing\n", f"name: {name}\n"), "bad name", folder=name or "-")
 
@@ -115,10 +130,28 @@ class CheckerTest(unittest.TestCase):
 
     def test_no_description(self):
         line = next(line for line in self.skill.split("\n") if line.startswith("description:"))
-        for replacement in ("", "description:", "description:   "):
+        for replacement in ("", "description:", "description:   ", "description: ''", 'description: ""',
+                            "description: ~", "description: null"):
             with self.subTest(line=replacement):
                 self.assert_breaks(self.replace(line + "\n", replacement + "\n" if replacement else ""),
                                    "no description")
+
+    def test_block_scalar(self):
+        line = next(line for line in self.skill.split("\n") if line.startswith("description:"))
+        for marker in (">", "|", ">-", "|+"):
+            with self.subTest(marker=marker):
+                long = f"description: {marker}\n  " + "x" * 2000
+                self.assert_breaks(self.replace(line, long), "unreadable value", "no description")
+
+    def test_valid_variants(self):
+        line = next(line for line in self.skill.split("\n") if line.startswith("description:"))
+        variants = {"CRLF": self.skill.replace("\n", "\r\n"), "BOM": "\ufeff" + self.skill,
+                    "quoted name": self.replace("name: greenwashing", 'name: "greenwashing"'),
+                    "quoted description": self.replace(line, 'description: "' + line[len("description: "):] + '"'),
+                    "quoted 1024 characters": self.replace(line, "description: '" + "x" * 1024 + "'")}
+        for name, text in variants.items():
+            with self.subTest(variant=name):
+                self.assert_breaks(text)
 
     def test_description_length(self):
         line = next(line for line in self.skill.split("\n") if line.startswith("description:"))
