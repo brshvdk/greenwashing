@@ -206,10 +206,8 @@ class SafetyNetStepTest(StepCase):
         threading.Thread(target=server.serve_forever, daemon=True).start()
         self.addCleanup(server.server_close)
         self.addCleanup(server.shutdown)
-        path = self.make_dir({
-            "scripts/safety-net": read(os.path.join(ROOT, "scripts", "safety-net")),
-            "scripts/json.py": "import sys\nprint('[passed] safety net - fake')\nsys.exit(0)\n",
-        })
+        path = self.make_dir({"scripts/json.py": "import sys\nprint('[passed] safety net - fake')\nsys.exit(0)\n"})
+        shutil.copy(os.path.join(ROOT, "scripts", "safety-net"), os.path.join(path, "scripts"))  # keeps the exec bit
         env = dict(PR_NUMBER="7", GITHUB_REPOSITORY="o/r", GITHUB_TOKEN="fake-token",
                    GITHUB_API_URL=f"http://127.0.0.1:{server.server_port}")
         # Control: without -I the planted json module takes over.
