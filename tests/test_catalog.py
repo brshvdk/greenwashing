@@ -29,7 +29,9 @@ def problems(text):
 
     A `## ` heading starts a section (lettered like `## A. Title`, or not) and
     ends the entry above it; a `### ` heading starts an entry; every other
-    non-blank line up to the next heading is a line of that entry.
+    non-blank line up to the next heading is a line of that entry. An entry
+    line with no entry above it starts an entry without a heading, so a broken
+    heading cannot make an entry vanish.
     """
     letters, entries, section, entry = [], [], None, None
     for line in text.splitlines():
@@ -44,6 +46,9 @@ def problems(text):
             entries.append(entry)
         elif entry is not None and line.strip():
             entry[2].append(line)
+        elif any(line.startswith(f"- **{field}:**") for field in FIELDS):
+            entry = (section, None, [line])
+            entries.append(entry)
 
     found = []
     if letters != list(SECTIONS):
@@ -53,9 +58,9 @@ def problems(text):
             found.append(("empty section", letter))
     numbers = []
     for section, heading, body in entries:
-        match = ENTRY_RE.fullmatch(heading)
+        match = heading and ENTRY_RE.fullmatch(heading)
         if not match:
-            found.append(("bad heading", heading))
+            found.append(("bad heading", heading or body[0]))
             continue
         if section is None:
             found.append(("outside a section", heading))
@@ -126,7 +131,7 @@ class CheckerTest(unittest.TestCase):
     def test_bad_heading(self):
         first = self.index("### ")
         for heading in ("### GW-1 Title", "### GW-01", "### GW-01 ", "### GW-01Title", "### gw-01 Title",
-                        "### Title"):
+                        "### Title", "#### GW-01 Title", "###GW-01 Title", "**GW-01 Title**", ""):
             with self.subTest(heading=heading):
                 self.lines[first] = heading
                 self.assert_breaks("bad heading")
