@@ -1,21 +1,14 @@
 # SESSION
 
 ## Current step
-Step 1, PR 2 second follow-up - pin the catalog checker branches the second review found untested, and state the checker's exact limits in the map. The first follow-up (#6, the first review's fixes) was merged as squash 0b06056 at head ef07ce8, with `checks`, `leak-check` and "Safety net" all green there.
-Before that: the catalog test after the fresh-context review. PR 2 itself (#5: `CATALOG.md`, `tests/test_catalog.py`, README line, map) was merged by the owner as squash 9a94c5b at head 28d015e, with `checks`, `leak-check` and "Safety net" all green there (the net's live check: green on a PR that touches no guarded file). The review finished after the merge; its fixes go in a follow-up PR from the same branch, rebased onto 9a94c5b.
+Step 1, PR 2c - text edits to `CATALOG.md` from the review, exactly as the owner listed them (nine items: intro wording, American spelling in GW-28/54/58, GW-37 and GW-73 rewritten, GW-60 and GW-104 titles, GW-90 "Why it's green"). Structure and entry numbers unchanged; no test, map or guarded file touched.
+PR 2 (the catalog) is closed: #5, #6, #7 merged (squashes 9a94c5b, 0b06056, cc7917a), all three checks green on each.
 
 ## Progress
-- [x] `CATALOG.md` as given (two independent transcriptions diffed identical; Markdown sanity script: no odd backticks, stray emphasis, trailing spaces or non-ASCII)
-- [x] `tests/test_catalog.py`: headings, unique and ascending numbers, the three lines in order and not empty, sections A-H with entries, no entry outside them; one mutant of the real catalog per rule
-- [x] README line, ARCHITECTURE.md module `CATALOG.md`
-- [x] own mutation wave (worktree): 25 catalog mutants red, 2 controls green, 17 checker mutants red; one survivor found and fixed (a first entry of a section with a `####` heading vanished)
-- [x] fresh-context reviewer: Markdown renders clean (remark), no leaks found; 17 catalog survivors and 5 checker survivors, each re-run and confirmed, then fixed (see decisions)
-- [x] mutation wave 3 on 117aeeb: 37 catalog mutants red, 5 controls green (CRLF, blank line inside an entry, closing `###`, reworded text, unchanged), 36 checker mutants red, 0 did not run; `&nbsp;` as a value stays green (known limit, in the map)
-- [x] PR #5 merged at 28d015e; `checks`, `leak-check` and "Safety net" all green there
-- [x] follow-up PR #6 with the review fixes merged at ef07ce8; all three checks green there
-- [x] second fresh-context review of the fixes: no realistic survivor; 14 checker branches untested (e.g. any first line exempt from the markup rule, so an opening `<!--` hid the catalog) - pinned by fixtures in 1fad96a; its 41 checker mutants re-run there: all killed, 0 did not run; own wave on 1fad96a unchanged (37 red, 5 controls green, 36 checker mutants red)
-- [ ] second follow-up PR (pinning fixtures, map); CI green on its latest commit
-(7 of 8 done)
+- [x] nine edits applied, each old text found exactly once; `git diff` shows only them
+- [x] tests (catalog 24, all 101) and ruff green; leak-check in the session
+- [ ] PR open; `checks`, `leak-check`, "Safety net" green on the latest commit
+(2 of 3 done)
 
 ## Decisions made (and why)
 - Catalog test: one checker `problems(text)` returns (rule, where); the real catalog must give `[]`, and each mutant built from the real text by position (first or last entry, never a named number) must give exactly its one rule (GW-12, GW-13). `SECTIONS` and `FIELDS` are the only fixed facts; the entry count comes from the catalog alone.
@@ -34,8 +27,8 @@ Before that: the catalog test after the fresh-context review. PR 2 itself (#5: `
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-Both reviews' findings fixed or listed, map updated, the two new commits rebased onto main 0b06056. Next: CI green on the second follow-up PR, then the owner's merge.
-Next step after this PR: PR 3 - the skill.
+Catalog text edits committed. Next: CI green on the PR 2c pull request, then the owner's merge.
+Next step after this PR: PR 3 - the skill (the owner provides the text).
 
 ## Known issues / traps
 - PRs from forks do not get repository secrets, so their pattern scan reports "did not run" (red). The owner decides the policy for external PRs before launch.
