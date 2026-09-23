@@ -8,9 +8,10 @@ Step 1, PR 1 - repo skeleton: rules, map, base files, leak check, CI
 - [x] base files: README, LICENSE, CONTRIBUTING, issue templates, .github/public-repos.txt, .gitignore, ruff.toml
 - [x] scripts/leak-check and tests/test_leak_check.py
 - [x] .github/workflows/ci.yml
-- [ ] mutation wave, fresh-context review, session leak-check run
+- [x] own mutation wave (26 mutations, 2 holes found and closed), session leak-check run
+- [ ] fresh-context reviewer findings verified by runs
 - [ ] branch pushed, PR open, CI green on the PR
-(4 of 6 done)
+(5 of 7 done)
 
 ## Decisions made (and why)
 - gitleaks pinned to 8.28.0 with the SHA-256 from its official checksums file - reproducible CI, a swapped download fails the step.
@@ -23,7 +24,7 @@ Step 1, PR 1 - repo skeleton: rules, map, base files, leak check, CI
 - Tracked file paths are scanned as well; a matching path is replaced by "tracked file #N (name hidden)" in the output.
 
 ## Where we stopped
-Files written, tests and ruff green locally. Next: commit, mutation wave, reviewer, session leak-check run, push, PR.
+Branch rebased onto the owner's `main` (single `.gitkeep` commit), pushed, PR opened. Next: verify the reviewer's findings by runs, get CI green on the PR. After this PR: the catalog.
 
 ## Known issues / traps
 - PRs from forks do not get repository secrets, so their pattern scan reports "did not run" (red). The owner decides the policy for external PRs before launch.
