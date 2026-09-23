@@ -6,12 +6,20 @@ Step 1, PR 3 - the skill: `skills/greenwashing/SKILL.md` (text from the owner, v
 ## Progress
 - [x] SKILL.md as given; catalog edits (two lines)
 - [x] `tests/test_skill.py`; own mutation wave (fresh bytecode caches): 13 file mutants red, 1 control green, 25 checker mutants red, 0 did not run
-- [ ] path `skills/<name>/SKILL.md` and the limits 64 / 1024 checked against the official docs, and a live `npx skills add` run - BLOCKED: the session's network policy denies agentskills.io, skills.sh and registry.npmjs.org (npm 403 on any package, `left-pad` as control)
+- [x] path and limits checked against the docs (fetched 2026-09-23): `skills` npm README 1.7.0, "Skill Discovery" lists `skills/` (flat layout `skills/<name>/SKILL.md`); agentskills.io/specification: name 1-64, `a-z0-9-`, no hyphen at the start or end, no `--`, equals the folder; description 1-1024, non-empty; platform.claude.com Agent Skills overview: 64 / 1024. skills.sh unreadable: every path redirects (308) to www.skills.sh, which the proxy denies (403, example.com as control)
+- [x] the spec's hyphen rules for `name` added to the checker; own wave (fresh bytecode caches): 12 pattern mutants red, 1 control green
+- [x] live install, `DISABLE_TELEMETRY=1 npx -y skills@1.7.0 add <clean copy of 440f071> --skill greenwashing -a claude-code -y` in an empty project: "Found 1 skill", copied to `.claude/skills/greenwashing/SKILL.md` (`cmp`: identical) plus `skills-lock.json` (`sourceType: local`); nothing installed globally
 - [x] fresh-context review: no leaks; realistic survivors (empty quoted or null description, folded description of any length) and false alarms (quoted name, CRLF, BOM) re-run, confirmed, fixed; map items fixed; adversarial ones listed in the report
-- [ ] PR open; three checks green
-(3 of 5 done)
+- [ ] second fresh-context review (hyphen rules, doc claims, own mutations): running; its report is accepted only by re-running it
+- [ ] PR to main; three checks green
+(5 of 7 done)
 
 ## Decisions made (and why)
+- Owner: the three adversarial cases from the first PR 3 review (a number written another way, a number in words, a repeated frontmatter key) stay unfixed.
+- Owner: skills.sh cannot be read from the session, so the install path is checked by the `skills` npm README and a live run instead.
+- Owner: gitleaks is not run in this session (its release binary lives in another repository, CLAUDE.md section 1); the CI leak-check job runs gitleaks 8.28.0.
+- Live runs of the `skills` CLI use `DISABLE_TELEMETRY=1`: the repository is not public yet.
+- The name charset stays ASCII `a-z0-9-`, although the spec's text says "unicode lowercase alphanumeric characters (`a-z`, `0-9`)": stricter can only give a false alarm here, never a false pass.
 - Mutation runs use a fresh bytecode cache per run (`-X pycache_prefix=<new dir>`, works under `-I`): two mutants of the same file size written in the same second reused the previous mutant's `.pyc`, so kills were credited to the wrong test (PR 3 wave). The catalog waves were re-run this way: same result (37 red, 5 controls + 1 known limit green, 36 checker mutants red; the second review's 41 mutants all killed).
 - Skill test limits are literals in the boundary tests (64/65, 1024/1025), not the checker's constants, and each name rule is tested with the folder set to the same name: otherwise the folder check masked the charset and length rules (first wave).
 - Catalog test: one checker `problems(text)` returns (rule, where); the real catalog must give `[]`, and each mutant built from the real text by position (first or last entry, never a named number) must give exactly its one rule (GW-12, GW-13). `SECTIONS` and `FIELDS` are the only fixed facts; the entry count comes from the catalog alone.
@@ -30,10 +38,11 @@ Step 1, PR 3 - the skill: `skills/greenwashing/SKILL.md` (text from the owner, v
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-Skill, test, catalog edits, map committed; branch pushed, no PR yet. Waiting for the owner to allow agentskills.io, skills.sh and registry.npmjs.org (environment network settings), then: check path and limits in the docs, live install from the local copy, review, PR.
+All PR 3 work is committed on `claude/hopeful-pascal-i0o22j` (the first session's six commits on `claude/kind-albattani-304252` plus this session's); the PR to main comes from it. Waiting for CI and the owner's merge.
 Next step after this PR: PR 4 - the gate: running the tests.
 
 ## Known issues / traps
+- Open, owner decision: the skill test checks the Agent Skills spec only. Claude's API also forbids `anthropic` and `claude` in `name` and XML tags in `name` and `description` (platform.claude.com Agent Skills overview), and Claude Code skips a skill folder named `synced` (code.claude.com skills docs); the skill passes all three today (checked by grep with a positive control), no test holds it.
 - PRs from forks do not get repository secrets, so their pattern scan reports "did not run" (red). The owner decides the policy for external PRs before launch.
 - `tests/` and `scripts/` are not guarded as a whole (owner decision): a new test module can still disable assertions, and a `tests/json.py` still replaces `json` under `-I` (discover puts `tests/` first on `sys.path`); the project's own gate closes this later.
 - Open, owner decision: `# ruff: noqa`, `# flake8: noqa` and a `# ruff: disable[...]` range hide code from ruff (proven by runs); `--ignore-noqa` in CI closes all three (the repo has no `noqa` today).
