@@ -8,14 +8,17 @@ Step 1, PR 2 - the catalog: `CATALOG.md` (text from the owner, verbatim) and `te
 - [x] `tests/test_catalog.py`: headings, unique and ascending numbers, the three lines in order and not empty, sections A-H with entries, no entry outside them; one mutant of the real catalog per rule
 - [x] README line, ARCHITECTURE.md module `CATALOG.md`
 - [x] own mutation wave (worktree): 25 catalog mutants red, 2 controls green, 17 checker mutants red; one survivor found and fixed (a first entry of a section with a `####` heading vanished)
-- [ ] fresh-context reviewer: structure, Markdown, leaks; own mutations
-- [ ] PR open; `checks`, `leak-check`, "Safety net" green on the latest commit
-(4 of 6 done)
+- [x] fresh-context reviewer: Markdown renders clean (remark), no leaks found; 17 catalog survivors and 5 checker survivors, each re-run and confirmed, then fixed (see decisions)
+- [x] mutation wave 3 on 117aeeb: 37 catalog mutants red, 5 controls green (CRLF, blank line inside an entry, closing `###`, reworded text, unchanged), 36 checker mutants red, 0 did not run; `&nbsp;` as a value stays green (known limit, in the map)
+- [x] PR #5 open; at 28d015e `checks`, `leak-check` and "Safety net" all green
+- [ ] CI green on the latest commit
+(5 of 6 done)
 
 ## Decisions made (and why)
 - Catalog test: one checker `problems(text)` returns (rule, where); the real catalog must give `[]`, and each mutant built from the real text by position (first or last entry, never a named number) must give exactly its one rule (GW-12, GW-13). `SECTIONS` and `FIELDS` are the only fixed facts; the entry count comes from the catalog alone.
 - Entry lines with no `###` heading above them start an entry without a heading ("bad heading"): otherwise a broken heading on the first entry of a section made the entry vanish and the test stayed green (found by the own mutation wave).
 - README line is its own paragraph (blank line before it), otherwise Markdown joins it to the tagline.
+- After the review, the checker follows Markdown, not Python: lines end only at CRLF, CR, LF (`str.splitlines` also splits on U+2028, U+0085, form feed); outside entries, markup that hides or moves entries once rendered is reported (indented or quoted lines, HTML, fences, other headings, setext underlines); numbers are ASCII in one form (`\d` took fullwidth digits, `GW-0016` passed); a title or line needs an ASCII letter or digit (a zero-width space or `<!-- -->` passed). Inline HTML such as `&nbsp;` still passes: a full renderer would be a dependency.
 - gitleaks 8.28.0, pinned by SHA-256; positive control: no ERR/FTL line and 0 < "N commits scanned" <= non-merge commits in range (live runs: a bad revision gives an error, "0 commits scanned" and exit 0; only commits that add content count).
 - gitleaks scans the git directory with `--ignore-gitleaks-allow`, an empty `--gitleaks-ignore-path` and no `GITLEAKS_CONFIG*`: exclusions from a PR cannot silence it (live-proven).
 - leak-check runs with `python3 -I` in its own CI job; the allowlist is read from the base; text that is not UTF-8 and fake images make it "did not run".
@@ -27,7 +30,7 @@ Step 1, PR 2 - the catalog: `CATALOG.md` (text from the owner, verbatim) and `te
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-Catalog, test, README, map committed. Next: reviewer findings, push, PR, CI green on the latest commit, then the owner's merge.
+Review findings fixed, map updated. Next: CI green on the latest commit, then the owner's merge.
 Next step after this PR: PR 3 - the skill.
 
 ## Known issues / traps
