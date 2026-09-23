@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out with full history
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Install ruff
+        env:
+          RUFF_VERSION: "0.15.8"
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet "ruff==$RUFF_VERSION"
+          echo "$RUNNER_TEMP/venv/bin" >> "$GITHUB_PATH"
+
+      - name: Lint
+        run: ruff check .
+
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+
+      - name: Install gitleaks (official release, checksum pinned)
+        env:
+          GITLEAKS_VERSION: "8.28.0"
+          GITLEAKS_SHA256: "a65b5253807a68ac0cafa4414031fd740aeb55f54fb7e55f386acb52e6a840eb"
+        run: |
+          mkdir -p "$RUNNER_TEMP/gitleaks"
+          curl -sSfL -o "$RUNNER_TEMP/gitleaks.tar.gz" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          echo "${GITLEAKS_SHA256}  $RUNNER_TEMP/gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/gitleaks.tar.gz" -C "$RUNNER_TEMP/gitleaks" gitleaks
+          echo "$RUNNER_TEMP/gitleaks" >> "$GITHUB_PATH"
+
+      # PR title, body and SHAs reach the script only through env, never
+      # through ${{ }} inside run: (that would allow command injection).
+      # A missing LEAK_PATTERNS secret makes the pattern scan "did not run",
+      # which exits 2 and fails this step.
+      - name: Leak check
+        env:
+          LEAK_PATTERNS: ${{ secrets.LEAK_PATTERNS }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            scripts/leak-check --all-history
+          else
+            scripts/leak-check
+          fi
