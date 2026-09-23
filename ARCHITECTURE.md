@@ -35,7 +35,8 @@ Traps:
 - touching any text decoding - keep UTF-8 explicit (env, files, git output, stdout), otherwise Cyrillic patterns silently match nothing.
 - touching output - never print matched text, a pattern, a matching file name or gitleaks' own log, otherwise public CI logs leak them.
 - writing the owner's name, a slash and a repository name anywhere (tests and docs included) - build it at runtime or use a placeholder like `<name>`, otherwise the repository's own leak check goes red.
-- touching the gitleaks call - gitleaks 8.28.0 exits 0 with "0 commits scanned" on a bad revision; keep the check that its count equals `git rev-list --count --no-merges`, otherwise "not scanned" reads as "clean".
+- touching the gitleaks call - gitleaks 8.28.0 on a bad revision logs an ERR line and "0 commits scanned" and exits 0; keep the checks (no ERR/FTL line, 0 < scanned <= non-merge commits in range), otherwise "not scanned" reads as "clean".
+- a PR whose commits add no content (only deletions, renames, mode changes) - gitleaks 8.28.0 counts 0 commits, so the gitleaks part is "did not run" by design.
 - gitleaks honours `.gitleaks.toml`, `.gitleaksignore` and `gitleaks:allow` comments from the scanned repository - a PR adding any of them weakens the check.
 - `.github/public-repos.txt` is read from the PR head - a PR can allow a name for itself; review changes to it as security changes.
 

@@ -14,7 +14,7 @@ Step 1, PR 1 - repo skeleton: rules, map, base files, leak check, CI
 
 ## Decisions made (and why)
 - gitleaks pinned to 8.28.0 with the SHA-256 from its official checksums file - reproducible CI, a swapped download fails the step.
-- The leak check compares gitleaks' "N commits scanned" with `git rev-list --count --no-merges` - a live run showed gitleaks 8.28.0 exits 0 with "0 commits scanned" on a bad revision.
+- gitleaks positive control: no ERR/FTL line and 0 < "N commits scanned" <= non-merge commits in range - live runs of gitleaks 8.28.0: a bad revision gives an ERR line, "0 commits scanned" and exit 0; only commits that add content are counted (an empty, delete-only, rename-only or mode-only commit counts 0), so an exact count match would give false reds.
 - Tests replace gitleaks with a stub - they stay hermetic; the real gitleaks runs in the CI leak check step and in the session run.
 - Tests run the script under the C locale with Python UTF-8 mode off - on a UTF-8 machine the "remove explicit UTF-8" mutation could not go red otherwise.
 - ruff.toml includes scripts/leak-check by name - ruff skips files without `.py` (proven: without it an unused import passed).

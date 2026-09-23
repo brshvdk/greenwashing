@@ -2,9 +2,10 @@
 
 Every test builds a throwaway git repository and runs the script as a
 subprocess under a hostile locale (C locale, Python UTF-8 mode off), with
-made-up patterns only. gitleaks is replaced by a stub that counts commits the
-way gitleaks 8.28.0 does (non-merge commits of --log-opts) and writes a
-chosen report; the real gitleaks runs in CI on this repository.
+made-up patterns only. gitleaks is replaced by a stub that reports every
+non-merge commit of --log-opts as scanned (every test commit adds content,
+which is what gitleaks 8.28.0 counts) and writes a chosen report; the real
+gitleaks runs in CI on this repository.
 """
 
 import json
@@ -49,7 +50,10 @@ with open(os.environ["STUB_ARGS_FILE"], "w") as f:
     json.dump(args, f)
 revs = [a.split("=", 1)[1] for a in args if a.startswith("--log-opts=")][0].split()
 counted = subprocess.run(["git", "rev-list", "--count", "--no-merges", *revs, "--"], capture_output=True, text=True)
-print("1:00AM INF " + os.environ.get("STUB_SCANNED", counted.stdout.strip()) + " commits scanned.", file=sys.stderr)
+print(os.environ.get("STUB_EXTRA_LOG", ""), file=sys.stderr)
+scanned = os.environ.get("STUB_SCANNED", counted.stdout.strip())
+if scanned != "no count line":
+    print("1:00AM INF " + scanned + " commits scanned.", file=sys.stderr)
 leaks = json.loads(os.environ["STUB_LEAKS"])
 with open(args[args.index("--report-path") + 1], "w") as f:
     json.dump(leaks, f)
@@ -101,7 +105,8 @@ class Repo:
         self.git("commit", "-q", "--allow-empty", "-m", message, **identity)
         return self.git("rev-parse", "HEAD")
 
-    def run(self, *args, patterns=None, pr=True, gitleaks=True, leaks=(), scanned=None, extra=None, cwd=None):
+    def run(self, *args, patterns=None, pr=True, gitleaks=True, leaks=(), scanned=None, gitleaks_log=None, extra=None,
+            cwd=None):
         """Run the script; return (exit code, output). extra values of None remove a variable."""
         stub = os.path.join(self.bin, "gitleaks")
         if gitleaks:
@@ -115,6 +120,8 @@ class Repo:
         env["STUB_LEAKS"] = json.dumps(list(leaks))
         if scanned is not None:
             env["STUB_SCANNED"] = scanned
+        if gitleaks_log is not None:
+            env["STUB_EXTRA_LOG"] = gitleaks_log
         if pr:
             env.update(
                 GITHUB_EVENT_NAME="pull_request",
@@ -341,10 +348,18 @@ class LeakCheckTest(unittest.TestCase):
         self.assertIn(f"--log-opts={self.repo.base}..{head}", args)
         self.assertIn("--redact", args)
 
-    def test_gitleaks_scanning_fewer_commits_than_range_did_not_run(self):
+    def test_gitleaks_scanning_zero_too_many_or_unknown_commits_did_not_run(self):
         # gitleaks 8.28.0 on a bad revision logs "0 commits scanned", "no leaks found" and exits 0.
         self.repo.commit({"notes.txt": "nothing to see\n"})
-        result = self.repo.run(patterns=LATIN_PATTERN, scanned="0")
+        for scanned in ("0", "2", "no count line"):
+            with self.subTest(scanned=scanned):
+                result = self.repo.run(patterns=LATIN_PATTERN, scanned=scanned)
+                self.assert_result(result, 2, gitleaks="did not run", patterns="passed")
+
+    def test_gitleaks_logging_an_error_did_not_run(self):
+        # Seen live with gitleaks 8.28.0: "ERR [git] fatal: ..." and exit 0.
+        self.repo.commit({"notes.txt": "nothing to see\n"})
+        result = self.repo.run(patterns=LATIN_PATTERN, gitleaks_log="1:00AM ERR [git] fatal: bad revision")
         self.assert_result(result, 2, gitleaks="did not run", patterns="passed")
 
     # --- incomplete input ---

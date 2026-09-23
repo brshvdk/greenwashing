@@ -223,9 +223,8 @@ def gitleaks_part(revs, label, shown):
     exe = shutil.which("gitleaks")
     if exe is None:
         return DID_NOT_RUN, "gitleaks not installed", []
-    # gitleaks skips merge commits; its own count is the positive control.
-    expected = int(decode(git("rev-list", "--count", "--no-merges", *revs, "--")).strip())
-    if expected == 0:
+    most = int(decode(git("rev-list", "--count", "--no-merges", *revs, "--")).strip())
+    if most == 0:
         return DID_NOT_RUN, "no non-merge commits in range", []
     with tempfile.TemporaryDirectory() as tmp:
         report = os.path.join(tmp, "report.json")
@@ -240,16 +239,19 @@ def gitleaks_part(revs, label, shown):
             return DID_NOT_RUN, f"gitleaks exited with {proc.returncode}", []
         if GITLEAKS_ERROR_RE.search(log):
             return DID_NOT_RUN, "gitleaks logged an error", []
-        counts = GITLEAKS_SCANNED_RE.findall(log)
-        if counts != [str(expected)]:
-            return DID_NOT_RUN, f"gitleaks scanned {counts or 'no'} commits, expected {expected}", []
+        # Positive control. gitleaks 8.28.0 counts only commits that add content
+        # (no merges, deletions, renames or mode changes), and on a bad revision
+        # it logs an error, "0 commits scanned" and exits 0.
+        counts = [int(n) for n in GITLEAKS_SCANNED_RE.findall(log)]
+        if len(counts) != 1 or not 0 < counts[0] <= most:
+            return DID_NOT_RUN, f"gitleaks reported {counts or 'no'} commits scanned, range has {most} non-merge", []
         try:
             with open(report, "rb") as f:
                 leaks = json.loads(decode(f.read()))
         except (OSError, ValueError):
             return DID_NOT_RUN, "gitleaks wrote no readable report", []
     if proc.returncode == 0 and not leaks:
-        return PASSED, f"{expected} commits scanned", []
+        return PASSED, f"{counts[0]} commits scanned ({most} non-merge in range)", []
     if proc.returncode == GITLEAKS_LEAKS_EXIT and leaks:
         lines = [
             f"  commit {str(leak['Commit'])[:12]} {label(str(leak['File']))} line {leak['StartLine']}"
