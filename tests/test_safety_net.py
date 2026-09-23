@@ -51,10 +51,10 @@ class GuardedChangesTest(unittest.TestCase):
                 self.assertEqual(safety_net.guarded_changes([entry(path)]), [])
 
     def test_exact_paths(self):
-        self.assert_guarded("CLAUDE.md", "scripts/leak-check", "tests/test_leak_check.py", "scripts/safety-net",
+        self.assert_guarded("scripts/leak-check", "tests/test_leak_check.py", "scripts/safety-net",
                             "tests/test_safety_net.py", ".github/public-repos.txt", "ruff.toml", ".gitleaks.toml",
                             ".gitleaksignore")
-        self.assert_not_guarded("docs/CLAUDE.md", "my-ruff.toml", "scripts/other", "tests/test_other.py")
+        self.assert_not_guarded("my-ruff.toml", "scripts/other", "tests/test_other.py", "docs/leak-check")
 
     def test_workflows_directory(self):
         self.assert_guarded(".github/workflows/ci.yml", ".github/workflows/new.yml")
@@ -79,6 +79,24 @@ class GuardedChangesTest(unittest.TestCase):
             self.assert_guarded(f".claude/{name}", f"sub/dir/.claude/{name}")
         self.assert_not_guarded(".claude/SESSION.md", "settings.json", "sub/claude/settings.json", "x.claude/settings.json")
 
+    def test_agent_instructions_in_any_folder(self):
+        for name in ("CLAUDE.md", "CLAUDE.local.md", ".mcp.json", "AGENTS.md"):
+            self.assert_guarded(name, f"sub/dir/{name}")
+        self.assert_not_guarded("docs/CLAUDE.md.bak", "MY-AGENTS.md", "mcp.json", "notes/claude.txt", "README.md")
+
+    def test_claude_directory_in_any_folder_except_session_memory(self):
+        self.assert_guarded(".claude/commands/review.md", ".claude/agents/helper.md", ".claude/skills/x/SKILL.md",
+                            ".claude/hooks/pre-tool.sh", ".claude/new-file.txt", "sub/dir/.claude/commands/x.md",
+                            "sub/.claude/SESSION.md", ".claude")
+        self.assert_not_guarded(".claude/SESSION.md", "claude/commands/x.md", "docs/.claude-notes.md",
+                                "x.claude/commands/y.md")
+
+    def test_names_ignore_case(self):
+        # On a case-insensitive file system (the macOS default) claude.md is read as CLAUDE.md.
+        self.assert_guarded("sub/claude.md", "Agents.md", ".MCP.json", ".Claude/commands/x.md", "PyProject.toml",
+                            "lib/EXTRA.PTH", ".GitHub/Workflows/x.yml", "Scripts/Leak-Check")
+        self.assert_not_guarded(".claude/session.md")
+
     def test_rename_counts_old_and_new_name(self):
         self.assertEqual(
             safety_net.guarded_changes([entry("docs/old-ruff.toml", "renamed", previous="ruff.toml")]), ["ruff.toml"])
@@ -100,6 +118,18 @@ class GuardedChangesTest(unittest.TestCase):
         self.assertEqual(
             safety_net.guarded_changes([entry("notes.json", "renamed", previous=".claude/settings.local.json")]),
             [".claude/settings.local.json"])
+
+    def test_rename_into_and_out_of_agent_instructions(self):
+        self.assertEqual(
+            safety_net.guarded_changes([entry("sub/AGENTS.md", "renamed", previous="docs/notes.md")]), ["sub/AGENTS.md"])
+        self.assertEqual(
+            safety_net.guarded_changes([entry("docs/x.md", "renamed", previous=".claude/commands/x.md")]),
+            [".claude/commands/x.md"])
+        self.assertEqual(
+            safety_net.guarded_changes([entry(".claude/notes.md", "renamed", previous=".claude/SESSION.md")]),
+            [".claude/notes.md"])
+        self.assertEqual(
+            safety_net.guarded_changes([entry("old/CLAUDE.md", "renamed", previous="old/rules.md")]), ["old/CLAUDE.md"])
 
 
 class FakeGitHub(http.server.BaseHTTPRequestHandler):

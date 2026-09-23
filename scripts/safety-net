@@ -18,10 +18,11 @@ import sys
 import traceback
 import urllib.request
 
-# The one list of guarded files: nowhere else keeps a copy of it.
+# The one list of guarded files: nowhere else keeps a copy of it. Paths are
+# compared ignoring case: on a case-insensitive file system (the macOS default)
+# claude.md is read as CLAUDE.md.
 # Exact paths from the repository root.
 GUARDED_PATHS = {
-    "CLAUDE.md",
     "scripts/leak-check",
     "tests/test_leak_check.py",
     "scripts/safety-net",
@@ -33,13 +34,16 @@ GUARDED_PATHS = {
 }
 # Every file under these directories.
 GUARDED_DIRS = (".github/workflows/",)
-# File names guarded in any folder: tool config that can override ruff.toml or the
-# test run, and Python startup hooks.
-GUARDED_NAMES = {"ruff.toml", ".ruff.toml", "pyproject.toml", "setup.cfg", "tox.ini", "conftest.py", "sitecustomize.py",
-                 "usercustomize.py"}
+# File names guarded in any folder: instructions for coding agents, tool config
+# that can override ruff.toml or the test run, and Python startup hooks.
+GUARDED_NAMES = {"CLAUDE.md", "CLAUDE.local.md", ".mcp.json", "AGENTS.md", "ruff.toml", ".ruff.toml", "pyproject.toml",
+                 "setup.cfg", "tox.ini", "conftest.py", "sitecustomize.py", "usercustomize.py"}
 GUARDED_EXTENSIONS = (".pth",)
-# Paths guarded in any folder (the project gate will live in Claude Code settings).
-GUARDED_TAILS = (".claude/settings.json", ".claude/settings.local.json")
+# Directories guarded in any folder, with everything in them (Claude Code settings,
+# hooks, commands, agents, skills)...
+GUARDED_DIR_NAMES = {".claude"}
+# ...except the session memory, which every pull request updates.
+UNGUARDED_PATHS = {".claude/SESSION.md"}
 PAGE_SIZE = 100
 MAX_PAGES = 30  # the API lists at most 3000 files of a pull request
 CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -49,14 +53,21 @@ class CheckError(Exception):
     """The file list could not be read completely."""
 
 
+def folded(names):
+    return {name.casefold() for name in names}
+
+
 def is_guarded(path):
-    name = path.rsplit("/", 1)[-1]
+    path = path.casefold()
+    parts = path.split("/")
+    if path in folded(UNGUARDED_PATHS):
+        return False
     return (
-        path in GUARDED_PATHS
-        or path.startswith(GUARDED_DIRS)
-        or name in GUARDED_NAMES
-        or name.endswith(GUARDED_EXTENSIONS)
-        or any(path == tail or path.endswith("/" + tail) for tail in GUARDED_TAILS)
+        path in folded(GUARDED_PATHS)
+        or path.startswith(tuple(folded(GUARDED_DIRS)))
+        or parts[-1] in folded(GUARDED_NAMES)
+        or parts[-1].endswith(tuple(folded(GUARDED_EXTENSIONS)))
+        or not folded(GUARDED_DIR_NAMES).isdisjoint(parts)
     )
 
 
