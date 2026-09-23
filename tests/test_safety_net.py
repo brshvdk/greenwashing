@@ -61,7 +61,7 @@ class GuardedChangesTest(unittest.TestCase):
         self.assert_not_guarded(".github/workflows-notes.md", ".github/ISSUE_TEMPLATE/bug_report.md")
 
     def test_lint_and_tool_config_in_any_folder(self):
-        for name in (".ruff.toml", "pyproject.toml", "setup.cfg", "tox.ini"):
+        for name in ("ruff.toml", ".ruff.toml", "pyproject.toml", "setup.cfg", "tox.ini"):
             self.assert_guarded(name, f"sub/dir/{name}")
         self.assert_not_guarded("docs/pyproject.toml.md", "my-tox.ini", "setup.cfg.bak")
 
@@ -72,7 +72,7 @@ class GuardedChangesTest(unittest.TestCase):
     def test_python_startup_hooks_in_any_folder(self):
         self.assert_guarded("sitecustomize.py", "sub/sitecustomize.py", "usercustomize.py", "scripts/usercustomize.py",
                             "extra.pth", "sub/dir/zz.pth", ".pth")
-        self.assert_not_guarded("docs/pth.md", "notes.pth.txt")
+        self.assert_not_guarded("docs/pth.md", "notes.pth.txt", "docs/depth", "notes/graph-depth")
 
     def test_claude_settings_in_any_folder(self):
         for name in ("settings.json", "settings.local.json"):

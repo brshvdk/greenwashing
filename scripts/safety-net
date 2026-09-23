@@ -35,7 +35,7 @@ GUARDED_PATHS = {
 GUARDED_DIRS = (".github/workflows/",)
 # File names guarded in any folder: tool config that can override ruff.toml or the
 # test run, and Python startup hooks.
-GUARDED_NAMES = {".ruff.toml", "pyproject.toml", "setup.cfg", "tox.ini", "conftest.py", "sitecustomize.py",
+GUARDED_NAMES = {"ruff.toml", ".ruff.toml", "pyproject.toml", "setup.cfg", "tox.ini", "conftest.py", "sitecustomize.py",
                  "usercustomize.py"}
 GUARDED_EXTENSIONS = (".pth",)
 # Paths guarded in any folder (the project gate will live in Claude Code settings).
