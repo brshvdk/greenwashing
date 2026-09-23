@@ -6,8 +6,9 @@ Step 1, PR 1c - extend the safety net's guarded list and see the safety net live
 ## Progress
 - [x] guarded list extended: `.ruff.toml`, `pyproject.toml`, `setup.cfg`, `tox.ini`, `conftest.py`, `sitecustomize.py`, `usercustomize.py`, `*.pth`, `.claude/settings.json`, `.claude/settings.local.json` in any folder
 - [x] a test per rule (nested folders, renames into and out of guarded names); every rule proven by a mutation
-- [ ] review, PR open, `checks` and `leak-check` green, "Safety net" red on this PR
-(2 of 3 done)
+- [x] PR open: `checks` and `leak-check` green, "Safety net" red on it, listing exactly the two guarded files it changes
+- [ ] fresh-context review verified by runs
+(3 of 4 done)
 
 ## Decisions made (and why)
 - gitleaks 8.28.0, pinned by SHA-256; positive control: no ERR/FTL line and 0 < "N commits scanned" <= non-merge commits in range (live runs: a bad revision gives an error, "0 commits scanned" and exit 0; only commits that add content count).
@@ -18,7 +19,8 @@ Step 1, PR 1c - extend the safety net's guarded list and see the safety net live
 - `scripts/safety-net` and `tests/test_safety_net.py` are guarded too: any change to the checks must be visible.
 
 ## Where we stopped
-Rules and tests written, green locally. Next: review, push, PR; this PR changes `scripts/safety-net`, so "Safety net" must be red on it.
+safety net observed live: red on PR #3 (https://github.com/brshvdk/greenwashing/actions/runs/35870693126/job/107213675854) - it listed `scripts/safety-net` and `tests/test_safety_net.py`, the two guarded files among the four the PR changes. This red is expected; the owner merges knowing it.
+Next: verify the reviewer's findings by runs.
 Next step after this PR: PR 2 - the catalog (the owner provides the catalog text).
 
 ## Known issues / traps
