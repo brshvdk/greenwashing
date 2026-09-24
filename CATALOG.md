@@ -85,7 +85,7 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 
 ### GW-13 A check run in one direction only
 - **Looks like:** "I ran it on the broken version and it failed, so it works."
-- **Why it's green:** that proves it can go red, not that it goes green on correct code, or the other way round.
+- **Why it's green:** that proves it can go red, not that it goes green on correct code, or the other way around.
 - **Catch it:** run every check on a known-good and a known-bad input.
 
 ### GW-14 A substring the tool prints on its own
@@ -297,7 +297,7 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 - **Catch it:** count events, not state.
 
 ### GW-73 A signal read as more than it proves
-- **Looks like:** the log says "job cancelled", so the job counts as stopped.
+- **Looks like:** the log says "job canceled", so the job counts as stopped.
 - **Why it's green:** the line proves a cancel was sent, not that the job stopped. Only a status check proves it is gone.
 - **Catch it:** state what each signal actually proves.
 
