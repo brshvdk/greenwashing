@@ -11,7 +11,8 @@ const CONFIG_KEYS = ['testCommand', 'timeoutSeconds', 'checks'];
 // reports; a project turns one off with "checks": {"skips": false}.
 const CHECKS = { skips: 'GW-17', assertions: 'GW-18', selfComparisons: 'GW-01' };
 const CHECK_NAMES = Object.keys(CHECKS);
-const HOW_TO = `add {"testCommand": "<the command that runs your tests>"} to ${CONFIG_FILE} in the project root`;
+// Said to the agent too, which must not change the settings during a turn (GW-114).
+const HOW_TO = `a human adds {"testCommand": "<the command that runs your tests>"} to ${CONFIG_FILE} in the project root, between turns`;
 // What `npm init` writes when there are no tests.
 const NPM_PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
 const PYTEST_FILES = ['pytest.ini', 'pytest.toml', '.pytest.toml', 'conftest.py', 'tests/conftest.py', 'test/conftest.py'];

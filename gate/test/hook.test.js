@@ -309,7 +309,7 @@ test('no way to find a test command: blocked, and the reason says how to set one
   write(dir, { 'main.go': 'package main\n\nfunc main() {}\n' });
   const { json } = gate.stop();
   assert.equal(json.decision, 'block');
-  assert.match(json.reason, /add \{"testCommand": "<the command that runs your tests>"\} to \.greenwashing\.json in the project root/);
+  assert.match(json.reason, /a human adds \{"testCommand": "<the command that runs your tests>"\} to \.greenwashing\.json in the project root, between turns/);
 });
 
 test('input that is not JSON: the stop is blocked, the prompt is never blocked', (t) => {

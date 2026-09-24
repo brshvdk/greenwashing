@@ -214,7 +214,10 @@ test('the quick checks: findings block with file, line and entry, at most twenty
   assert.match(decide([run({})], [RED], { blocks: 3 }, true).message, /^greenwashing: TESTS DID NOT PASS/);
   // Checks that could not run are did not run, like tests.
   const notRun = { kind: 'checks', command: 'greenwashing checks', source: 'the checks', configError: 'python3 was not found on PATH' };
-  assert.match(blockReason(notRun, verdict(notRun)), /^greenwashing gate: the checks of the changed tests did not run - you cannot finish yet\./);
+  const notRunReason = blockReason(notRun, verdict(notRun));
+  assert.match(notRunReason, /^greenwashing gate: the checks of the changed tests did not run - you cannot finish yet\./);
+  // No command of the project ran, so there is no output to speak of.
+  assert.match(notRunReason, /\nResult: did not run - python3 was not found on PATH\nSee GW-50 in \S+$/);
 });
 
 test('the block reason stays short when a line of output is huge', () => {

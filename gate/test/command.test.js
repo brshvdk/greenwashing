@@ -32,7 +32,7 @@ test('a package.json test script next to Python tests or Python test settings ne
   for (const [present, hasTests] of both) {
     const choice = pick(present, hasTests);
     assert.equal(choice.command, undefined, JSON.stringify(present));
-    assert.match(choice.error, /package\.json has a test script and the project also has Python tests.*add \{"testCommand"/, JSON.stringify(present));
+    assert.match(choice.error, /package\.json has a test script and the project also has Python tests.*a human adds \{"testCommand"/, JSON.stringify(present));
     assert.equal(choice.none, undefined);
   }
 });
@@ -62,7 +62,7 @@ test('a byte order mark before the JSON is ignored', () => {
 
 test('a package.json without a test script falls through to Python', () => {
   assert.equal(pick({ 'package.json': '{"scripts": {"build": "tsc"}}' }, true).command, 'python3 -m unittest discover');
-  assert.equal(pick({ 'package.json': '{"name": "x"}' }).error, 'no test command found; add {"testCommand": "<the command that runs your tests>"} to .greenwashing.json in the project root');
+  assert.equal(pick({ 'package.json': '{"name": "x"}' }).error, 'no test command found; a human adds {"testCommand": "<the command that runs your tests>"} to .greenwashing.json in the project root, between turns');
 });
 
 test('pytest runs when the project configures it', () => {
@@ -110,7 +110,7 @@ test('an explicit timeout also applies to a command found on its own', () => {
 test('nothing to run: the reason says how to set the command', () => {
   const choice = pick({});
   assert.equal(choice.none, true);
-  assert.match(choice.error, /no test command found; add \{"testCommand": .*\} to \.greenwashing\.json in the project root/);
+  assert.match(choice.error, /no test command found; a human adds \{"testCommand": .*\} to \.greenwashing\.json in the project root, between turns/);
   assert.equal(choice.command, undefined);
 });
 

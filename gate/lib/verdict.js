@@ -108,6 +108,8 @@ function blockReason(run, result) {
   parts.push(`Result: ${result.outcome}${result.why ? ` - ${result.why}` : ''}`);
   if (result.counts) parts.push(`Counts: ${countsText(result.counts)}`);
   if (result.gw) parts.push(`See ${result.gw} in ${CATALOG}`);
+  // The gate's own checks print nothing: only a command of the project has output to show.
+  if (run.kind) return parts.join('\n');
   const names = failedNames(run.output || '');
   if (names) parts.push(names);
   const last = tail(run.output || '');
