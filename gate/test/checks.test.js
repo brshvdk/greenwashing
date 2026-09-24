@@ -140,6 +140,8 @@ test('GW-18: a name that only starts like expect or assert, or an assertion that
     "test('saves', () => { const expected = build(); save(expected.user); });", "test('logs', () => { const assertions = []; assertions.push(run()); });",
     "test('a', () => { save(u); assert(true); });", "test('a', () => { save(u); assert.ok(1); });", "test('a', () => { save(u); expect(true).toBeTruthy(); });",
     "test('a', () => { save(u); expect('saved').toBeDefined(); });",
+    // console.assert only logs: the test passes whatever it finds.
+    "test('a', () => { console.assert(total(x) === 6); });",
   ]) {
     assert.deepEqual(fresh(source), [[1, 'GW-18']], source);
   }
@@ -388,6 +390,8 @@ test('Python GW-01: a check whose two sides are the same is red; different sides
 
 test('Python GW-18: an assertion on a constant that is always true is no assertion; assert False is one', () => {
   assert.deepEqual(python(null, 'def test_a():\n    save(u)\n    assert True\n'), [[1, 'GW-18']]);
+  // A tuple with a message inside the brackets is always true (pytest only warns).
+  assert.deepEqual(python(null, 'def test_a():\n    assert (total(x) == 6, "total")\n'), [[1, 'GW-18']]);
   assert.deepEqual(python(null, 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        save(u)\n        self.assertTrue(1)\n'), [[5, 'GW-18']]);
   assert.deepEqual(python(null, 'def test_a():\n    try:\n        save(u)\n    except ValueError:\n        assert False, "raised"\n'), []);
   assert.deepEqual(python(null, 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertTrue(save(u))\n'), []);

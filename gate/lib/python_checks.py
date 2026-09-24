@@ -274,6 +274,12 @@ def asserts(function, names):
 
 
 def truthy_constant(node):
+    """A value that is always true, written out: a constant, or a non-empty tuple, list, set or dict
+    (assert (x == 6, "message") checks nothing)."""
+    if isinstance(node, (ast.Tuple, ast.List, ast.Set)):
+        return bool(node.elts)
+    if isinstance(node, ast.Dict):
+        return bool(node.keys)
     return isinstance(node, ast.Constant) and bool(node.value)
 
 

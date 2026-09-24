@@ -462,7 +462,7 @@ function checkJs(source, changes, checks) {
     const contexts = ['t', ...(param && param !== 't' ? [escape(param)] : [])].join('|');
     const imported = [...imports.calls.keys(), ...imports.spaces].map(escape).join('|');
     const re = new RegExp([
-      `(?<![\\w$])(expect|assert)\\s*${GENERIC}([.(])`,
+      `(?<![\\w$])(?<!console\\s*\\.\\s*)(expect|assert)\\s*${GENERIC}([.(])`,
       `(?<![\\w$])((?:expect|assert)[\\w$]+)\\s*${GENERIC}\\(`,
       '\\.\\s*(should)\\b',
       `(?<![\\w$.])(${contexts})\\s*\\.\\s*([A-Za-z_$][\\w$]*)`,
