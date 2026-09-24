@@ -361,6 +361,26 @@ function options(code, list) {
   return found;
 }
 
+// The end of a declaration's initializer that starts at from: a ; or a closing bracket at its own
+// depth, or a line break that neither the line before (ending in an operator: ? : = , < > | & + -
+// * /) nor the line after (starting with ? : . || && ??) continues.
+function initializerEnd(code, from) {
+  let depth = 0;
+  let last = '';
+  for (let i = from; i < code.length; i += 1) {
+    const c = code[i];
+    if ('([{'.includes(c)) depth += 1;
+    else if (')]}'.includes(c)) {
+      if (depth === 0) return i;
+      depth -= 1;
+    } else if (depth === 0 && c === ';') return i;
+    else if (depth === 0 && c === '\n' && !'?:=,<>|&+-*/'.includes(last)
+      && !/^\s*(?:[?:.]|\|\||&&|\?\?)/.test(code.slice(i + 1, i + 80))) return i;
+    if (!/\s/.test(c)) last = c;
+  }
+  return code.length;
+}
+
 // The name of a function's first parameter when it is a plain name: (t) => ..., function (t) {...}.
 function firstParam(text) {
   const match = /^\s*(?:async\b\s*)?(?:function\b\s*\*?\s*[\w$]*\s*)?(\()?\s*([A-Za-z_$][\w$]*)/.exec(text);
@@ -484,11 +504,13 @@ function checkJs(source, changes, checks) {
       const end = call && call.condEnd !== null ? call.condEnd + 1 : found.chainEnd;
       if (added(found.start, end)) report(CHECKS.skips, found.start, `${found.name}.${found.marker} - ${MARKERS[found.marker]}`);
     }
-    // A name given to a marker: const pending = ci ? it.skip : it; ... pending('name', fn).
-    for (const m of code.matchAll(/(?<![\w$.])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=[^;\n]*/g)) {
-      const inside = markers.find((found) => found.start > m.index && found.start < m.index + m[0].length);
+    // A name given to a marker: const pending = ci ? it.skip : it; ... pending('name', fn), also
+    // pending.each(...)(...).
+    for (const m of code.matchAll(/(?<![\w$.])(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=/g)) {
+      const end = initializerEnd(code, m.index + m[0].length);
+      const inside = markers.find((found) => found.start > m.index && found.start < end);
       if (!inside) continue;
-      for (const use of code.matchAll(new RegExp(`(?<![\\w$.])${escape(m[1])}\\s*\\(`, 'g'))) {
+      for (const use of code.matchAll(new RegExp(`(?<![\\w$.])${escape(m[1])}\\s*[.(]`, 'g'))) {
         if (added(use.index, use.index + 1)) report(CHECKS.skips, use.index, `${m[1]} (${inside.name}.${inside.marker}) - ${MARKERS[inside.marker]}`);
       }
     }
@@ -517,6 +539,18 @@ function checkJs(source, changes, checks) {
     // mocha: this.skip() also in a hook skips the tests it runs for.
     for (const m of code.matchAll(/(?<![\w$.])this\s*\.\s*skip\s*\(/g)) {
       if (added(m.index, m.index + 1)) report(CHECKS.skips, m.index, 'this.skip() - the test stops as skipped');
+    }
+    // vitest and node:test: a before hook that skips through its context, beforeEach((ctx) => ctx.skip()).
+    for (const m of code.matchAll(/(?<![\w$.])(?:beforeEach|beforeAll|before)\s*\(/g)) {
+      const open = m.index + m[0].length - 1;
+      const close = closing(code, open);
+      const fn = close === -1 ? null : args(code, open, close).find(([a, b]) => /^(?:async\b|function\b)/.test(code.slice(a, b).trim()) || topLevelArrow(code, a, b));
+      const param = fn && firstParam(code.slice(fn[0], Math.min(fn[1], fn[0] + 200)));
+      if (!param) continue;
+      for (const skip of code.slice(fn[0], fn[1]).matchAll(new RegExp(`(?<![\\w$.])${escape(param)}\\s*\\.\\s*skip\\s*\\(`, 'g'))) {
+        const at = fn[0] + skip.index;
+        if (added(at, at + 1)) report(CHECKS.skips, at, `${param}.skip() in a hook - the tests stop as skipped`);
+      }
     }
     for (const comment of comments) {
       // A block comment whose /* or */ is new comments out the old lines inside it too.

@@ -219,6 +219,24 @@ test('GW-17: a marker that is named instead of called, and every use of that nam
   const old = `const itWithSandbox = process.env.SANDBOX ? it : it.skip;\n${OK}\n`;
   assert.deepEqual(edited(old, `${old}itWithSandbox('pays', () => { expect(pay()).toBe(true); });\n`), [[3, 'GW-17']]);
   assert.deepEqual(edited(old, `${old}${OK}\n`), []);
+  // Old uses of the name stay old.
+  const used = `${old}itWithSandbox('pays', () => { expect(pay()).toBe(true); });\n`;
+  assert.deepEqual(edited(used, `${used}${OK}\n`), []);
+  // A declaration over several lines, and a use through a member (.each).
+  const lines = `const itWithDatabase = process.env.DATABASE_URL\n  ? it\n  : it.skip;\n${OK}\n`;
+  assert.deepEqual(edited(lines, `${lines}itWithDatabase('loads', () => { expect(load()).toBe(1); });\n`), [[5, 'GW-17']]);
+  assert.deepEqual(edited(old, `${old}itWithSandbox.each([1])('pays %i', (n) => { expect(pay(n)).toBe(true); });\n`), [[3, 'GW-17']]);
+  // A name that holds no marker is no marker, whatever comes after its declaration.
+  const plain = `const setup = makeDb();\nit.skip('old', () => {});\n${OK}\n`;
+  assert.deepEqual(edited(plain, `${plain}test('b', () => { setup(); expect(f()).toBe(1); });\n`), []);
+});
+
+test('GW-17: a hook that skips through its context skips the tests it runs for', () => {
+  assert.deepEqual(fresh(`beforeEach((ctx) => {\n  if (process.env.CI) ctx.skip();\n});\n${OK}`), [[2, 'GW-17']]);
+  assert.deepEqual(fresh(`beforeEach((t) => t.skip());\n${OK}`), [[1, 'GW-17']]);
+  assert.deepEqual(fresh(`beforeEach((ctx) => {\n  ctx.db = connect();\n});\n${OK}`), []);
+  const old = `beforeEach((ctx) => {\n  if (process.env.CI) ctx.skip();\n});\n${OK}\n`;
+  assert.deepEqual(edited(old, `${old}${OK}\n`), []);
 });
 
 test('GW-17: vitest fails and node:test shorthand options; nested keys and false values are not options', () => {
