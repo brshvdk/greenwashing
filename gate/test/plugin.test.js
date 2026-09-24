@@ -22,12 +22,13 @@ test('the marketplace has one plugin, greenwashing, whose root is the repository
 
 test('the repository holds exactly one skill file: the plugin loads skills/greenwashing/SKILL.md', () => {
   const found = [];
+  // A folder with its own .git (a worktree, a nested checkout) is another copy, not this repository.
   const walk = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       if (entry.name === '.git' || entry.name === 'node_modules') continue;
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.name.toLowerCase() === 'skill.md') found.push(path.relative(ROOT, full));
+      if (entry.isDirectory() && !fs.existsSync(path.join(full, '.git'))) walk(full);
+      else if (entry.isFile() && entry.name.toLowerCase() === 'skill.md') found.push(path.relative(ROOT, full));
     }
   };
   walk(ROOT);
