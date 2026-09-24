@@ -4,15 +4,25 @@
 Step 1, PR 4 - the gate: a Claude Code Stop hook that runs the project's tests when the turn changed code, and blocks the end of the turn when they fail or did not really run; packaged as a plugin (marketplace in this repository, with the skill); the gate on this repository. PR 3 (#9, the skill) merged as 30881e9.
 
 ## Progress
-- [ ] hook and plugin formats checked against code.claude.com
-- [ ] gate code and `node --test` tests, each rule proven by mutation
-- [ ] plugin and marketplace; gate wired into `.claude/settings.json`; `.greenwashing.json`
-- [ ] `.greenwashing.json` guarded by Safety net; Node test step in CI
-- [ ] live gate runs on temporary projects; fresh-context reviews
-- [ ] map, PR; `checks` and `leak-check` green, Safety net red by design
-(0 of 6 done)
+- [x] hook and plugin formats checked against code.claude.com (hooks, hooks-guide, plugins, plugins-reference, plugin-marketplaces, settings, settings-reference; fetched 2026-09-24; a fresh-context critic re-checked all 365 quotes verbatim)
+- [x] gate code (`gate/`) and `node --test` tests; fixtures = real output of pytest 9.1.1, unittest (3.11, 3.12), jest 30.5.2, vitest 5.0.1, node --test (20, 22)
+- [x] plugin and marketplace (`.claude-plugin/`, `hooks/hooks.json`); the gate wired into `.claude/settings.json`; `.greenwashing.json`
+- [x] `.greenwashing.json` guarded by Safety net; "Gate tests" step in CI
+- [x] own mutation wave (88 mutants at 269cd1e, 4 worktrees): 82 red; survivors R1m, R3e, R3f, R5h closed by new tests (each re-run red); C6 stricter (a skipped-only suite), C7 equivalent (TAP is the default off a terminal); live gate runs on temporary projects; real plugin install in an isolated CLAUDE_CONFIG_DIR
+- [ ] fresh-context reviews (test holes, false passes, leaks) accepted by re-running
+- [ ] PR; `checks` and `leak-check` green, Safety net red by design
+(5 of 7 done)
+gate on this repo: not yet observed live
 
 ## Decisions made (and why)
+- Owner (PR 4): the contradictions and silences the docs critic found (which shell runs a hook, an unquoted placeholder example, Stop on timeout, exit 2 with continue:false, trust for plugin hooks and cloud sessions) do not change the hook format; continue.
+- Stop hook timeout 3660 s, test timeout at most 3600 s (default 600): Claude Code cancels a hook at its timeout, discards its output and the stop goes through (hooks.md: "cancels ... discarding the hook's output").
+- Block count: the gate's own counter (3) under Claude Code's cap (8 consecutive blocks); it restarts on a new prompt and when `stop_hook_active` is false.
+- Changes are content hashes since the prompt, committed or not; no recorded start or no git repository -> the tests run (never skip on "unknown").
+- Did not run also covers: a non-zero exit with no failed test, a test file that could not run (jest "Test Suites: N failed", vitest "Test Files N failed"), a skipped-only run (zero tests ran, GW-08), a broken `.greenwashing.json`, the gate itself failing.
+- Failed tests name no catalog entry: the owner named GW-50 (did not run) and GW-08 (zero tests) only.
+- Plugin root = repository root (`source: "./"`), so the skill ships without a copy; no `version`, so users get each commit (commit-SHA version).
+- The install was checked for real: `claude plugin marketplace add` from a smart-HTTP git clone of this branch (the CLI refuses file:// and git://; plain HTTP refuses shallow clones) and `claude plugin install greenwashing@greenwashing` in an isolated CLAUDE_CONFIG_DIR: 1 skill, 2 hooks; the cached hook ran.
 - Owner: the three adversarial cases from the first PR 3 review (a number written another way, a number in words, a repeated frontmatter key) stay unfixed.
 - Owner: skills.sh cannot be read from the session, so the install path is checked by the `skills` npm README and a live run instead.
 - Owner: gitleaks is not run in this session (its release binary lives in another repository, CLAUDE.md section 1); the CI leak-check job runs gitleaks 8.28.0.
@@ -37,9 +47,14 @@ Step 1, PR 4 - the gate: a Claude Code Stop hook that runs the project's tests w
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-PR 4 started from main at 30881e9.
+PR 4 is on `claude/hopeful-pascal-i0o22j`; the PR to main comes from it. Next steps:
+1. First thing in the next session: break one test, try to end the turn, check that the gate blocks it, restore the test (the gate on this repo has not been observed live).
+2. Then PR 5: fast checks for JS/TS and Python.
 
 ## Known issues / traps
+- Gate limits (also in the map): `node --test` counts a test file with no tests as one passing test; a test that prints a summary-like line adds counts; an agent can edit `.greenwashing.json` or `gate/` during the turn (Safety net guards only at PR level); a gate that cannot start (no `node` on PATH) fails open in Claude Code; `CATALOG.md` and `SKILL.md` count as documentation.
+- Subagent worktrees (`.claude/worktrees/`) are untracked copies of the repository: the gate on this repo hashes them at each prompt, and tree walks must skip folders with their own `.git`.
+- The CI "Gate tests" step, like the unit tests step, passes a suite whose tests are all skipped (mutant C6 survives as the stricter variant); PR 5.
 - Open, owner decision (second review): a block value in `name` (`name: >`) is not tested; with the name dropped from the block check the skill still fails, only the reported rule changes to "bad name". Stricter patterns that need a letter somewhere or allow at most N hyphens also stay green (false alarms only).
 - Open, owner decision: the skill test checks the Agent Skills spec only. Claude's API also forbids `anthropic` and `claude` in `name` and XML tags in `name` and `description` (platform.claude.com Agent Skills overview), and Claude Code skips a skill folder named `synced` (code.claude.com skills docs); the skill passes all three today (checked by grep with a positive control), no test holds it.
 - PRs from forks do not get repository secrets, so their pattern scan reports "did not run" (red). The owner decides the policy for external PRs before launch.
