@@ -422,6 +422,11 @@ test('Python: a BOM, a CR-only file and a NUL byte', () => {
   assert.match(error.error, /^Python could not read it \((SyntaxError|ValueError)/);
 });
 
+test('Python GW-18: a method named test_* of a class no runner collects is not a test; one a Test class inherits is', () => {
+  assert.deepEqual(python(null, 'class FakeDatabase:\n    def test_connection(self):\n        return True\n'), []);
+  assert.deepEqual(python(null, 'class Base:\n    def test_a(self):\n        run()\n\n\nclass TestChild(Base):\n    pass\n'), [[2, 'GW-18']]);
+});
+
 test('Python GW-18: a pytest fixture named test_* is not a test; a helper named _assert... is an assertion', () => {
   assert.deepEqual(python(null, 'import pytest\n\n\n@pytest.fixture\ndef test_cart():\n    return Cart()\n'), []);
   assert.deepEqual(python(null, 'from pytest import fixture\n\n\n@fixture(scope="module")\ndef test_user():\n    return make()\n'), []);

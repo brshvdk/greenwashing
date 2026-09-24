@@ -218,7 +218,7 @@ def test_functions(tree, names, marker):
     classes. suite is (what, node, marker) when a marker on its class, in the class's or the module's
     pytestmark, keeps every test in it from running as written whatever the environment (not a
     condition, CONDITIONAL); node is where that marker is written. pytest fixtures named test_* are
-    not tests."""
+    not tests, nor methods of a class no runner collects."""
     def suite_mark(nodes):
         # Decorators, or pytestmark values and the items of their lists; not marks deeper inside, such
         # as pytest.param(..., marks=pytest.mark.skip) for one case of a parametrize.
@@ -230,12 +230,18 @@ def test_functions(tree, names, marker):
                 and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in s.targets)]
 
     module = suite_mark(pytestmark(tree.body))
+    # A class no runner collects: not Test*, no base (unittest.TestCase), and no Test class of the
+    # module inherits it (pytest collects test_* methods a Test class inherits).
+    inherited = {base.id for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
+                 for base in node.bases if isinstance(base, ast.Name)}
     found = []
     bodies = [(tree.body, module and (f"a module marked {marker(module)}", module, marker(module)))]
     while bodies:
         body, suite = bodies.pop()
         for node in body:
             if isinstance(node, ast.ClassDef):
+                if not node.name.startswith("Test") and not node.bases and node.name not in inherited:
+                    continue
                 mark = suite_mark(node.decorator_list + pytestmark(node.body))
                 bodies.append((node.body, suite or (mark and (f"a class marked {marker(mark)}", mark, marker(mark)))))
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and TEST_NAME.match(node.name):
