@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { candidatePaths, changedPaths, classify } = require('./lib/changes');
-const { chooseCommand, ROOT_FILES } = require('./lib/command');
+const { chooseCommand, readConfig, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS } = require('./lib/command');
 const { verdict, decide } = require('./lib/verdict');
 
 const OUTPUT_LIMIT = 64 * 1024 * 1024;
@@ -20,9 +20,10 @@ const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
 
 // One file per session and project in a per-user folder of the temp directory. starts: the start of
 // the turn in every git tree the turn has seen - a snapshot, or null for a tree the agent entered
-// after the start; heads: the commit every worktree of the repository had at the start; blocks: how
-// many times in a row the gate has sent the agent back; judged: a Stop has allowed or released the turn.
-const NO_STATE = { starts: {}, heads: {}, blocks: 0, judged: false };
+// after the start; known: the commits the worktrees and branches of the repository pointed at when
+// the turn started; blocks: how many times in a row the gate has sent the agent back; judged: a Stop
+// has allowed or released the turn.
+const NO_STATE = { starts: {}, known: [], blocks: 0, judged: false };
 
 function stateFile(input, dir) {
   const key = crypto.createHash('sha256').update(`${input.session_id || 'no-session'}\0${dir}`).digest('hex');
@@ -34,10 +35,10 @@ function loadState(file) {
   try {
     const state = JSON.parse(fs.readFileSync(file, 'utf8'));
     const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-    if (!isObject(state.starts) || !isObject(state.heads)) return NO_STATE;
+    if (!isObject(state.starts) || !Array.isArray(state.known)) return NO_STATE;
     return {
       starts: state.starts,
-      heads: state.heads,
+      known: state.known,
       blocks: Number.isInteger(state.blocks) ? state.blocks : 0,
       judged: state.judged === true,
     };
@@ -201,6 +202,7 @@ function runTests(dir, choice) {
     const timer = setTimeout(() => finish({ timedOut: true }), choice.timeoutSeconds * 1000);
     child.on('error', (error) => finish({ startError: error.message }));
     child.on('exit', (code, signal) => {
+      if (done) return;
       run.exitCode = code !== null ? code : 128 + (os.constants.signals[signal] || 0);
       // Something the tests started may keep the output pipes open after the command ended.
       grace = setTimeout(() => finish({}), GRACE_MS);
@@ -226,19 +228,18 @@ function commonDir(root) {
   }
 }
 
-// The commit every worktree of the repository has checked out, by folder.
-function worktreeHeads(root) {
-  const heads = {};
+// The commits the worktrees and the branches of the repository point at: content that existed
+// before the turn.
+function knownCommits(root) {
   try {
-    let tree = null;
-    for (const line of nulList(git(root, ['worktree', 'list', '--porcelain', '-z']))) {
-      if (line.startsWith('worktree ')) tree = realpath(line.slice('worktree '.length));
-      else if (line.startsWith('HEAD ') && tree !== null) heads[tree] = line.slice('HEAD '.length);
-    }
+    const heads = nulList(git(root, ['worktree', 'list', '--porcelain', '-z']))
+      .filter((line) => line.startsWith('HEAD ')).map((line) => line.slice('HEAD '.length));
+    const tips = git(root, ['for-each-ref', '--format=%(objectname)', 'refs/heads']).toString('utf8').split('\n').filter(Boolean);
+    return [...new Set([...heads, ...tips])];
   } catch {
-    // No heads: a worktree the agent enters later counts as changed.
+    // None known: a worktree the agent enters later counts as changed.
+    return [];
   }
-  return heads;
 }
 
 // project: the folder the session started in (CLAUDE_PROJECT_DIR). home: its git tree. here: the
@@ -260,42 +261,48 @@ function entered(starts, trees) {
 
 // The files of one tree whose content differs from the start of the turn, or null when that cannot
 // be told. A tree the agent entered after the start counts as unchanged only while it is clean and
-// on the commit it had at the start.
-function changesIn(tree, start, heads) {
+// on a commit a worktree or a branch pointed at when the turn started.
+function changesIn(tree, start, known) {
   try {
     if (start) return changedSince(start);
-    return heads[tree] && heads[tree] === headCommit(tree) && dirtyPaths(tree).length === 0 ? [] : null;
+    return known.includes(headCommit(tree)) && dirtyPaths(tree).length === 0 ? [] : null;
   } catch {
     return null;
   }
 }
 
-// A .git at or above the folder: it is in a git checkout even when git cannot read it.
+// A .git at or above the folder - a file pointing to a repository, or a folder with a HEAD: it is
+// in a git checkout even when git cannot read it.
 function inCheckout(dir) {
   for (let at = dir; ; at = path.dirname(at)) {
-    if (fs.existsSync(path.join(at, '.git'))) return true;
+    const dotGit = path.join(at, '.git');
+    try {
+      if (fs.statSync(dotGit).isFile() || fs.existsSync(path.join(dotGit, 'HEAD'))) return true;
+    } catch {
+      // No .git here.
+    }
     if (path.dirname(at) === at) return false;
   }
 }
 
-// Runs the tests in each folder in turn and stops at the first result that is not green. The runs
-// share the first run's timeout, so one Stop never spends more than MAX_TIMEOUT_SECONDS on tests
-// (the Stop hook's own timeout is 60 s above it).
-async function runAll(dirs, project) {
+// Runs the tests in each folder in turn and stops at the first result that is not green. All runs
+// of one Stop share the project's timeout (and each keeps its own), so a Stop never spends more
+// than MAX_TIMEOUT_SECONDS on tests - the Stop hook's own timeout is 60 s above it.
+async function runAll(dirs, project, budgetSeconds) {
   const runs = [];
-  let deadline = null;
+  const deadline = Date.now() + budgetSeconds * 1000;
   for (const dir of dirs) {
     const where = path.relative(project, dir);
-    const choice = chooseCommand(readRootFiles(dir), hasPythonFiles(dir));
+    const none = (fields) => ({ command: '(none)', source: 'no test command', where, timeoutSeconds: 0, output: '', ...fields });
     let run;
-    if (choice.error) {
-      run = { command: '(none)', source: 'no test command', where, timeoutSeconds: choice.timeoutSeconds, configError: choice.error, output: '' };
+    if (!fs.existsSync(dir)) {
+      run = none({ configError: `the project's folder ${where} does not exist in this tree` });
     } else {
-      if (deadline === null) deadline = Date.now() + choice.timeoutSeconds * 1000;
-      const timeoutSeconds = Math.min(choice.timeoutSeconds, Math.floor((deadline - Date.now()) / 1000));
-      run = timeoutSeconds > 0
-        ? { ...(await runTests(dir, { ...choice, timeoutSeconds })), where }
-        : { command: choice.command, source: choice.source, where, timeoutSeconds: 0, configError: 'no time was left for these tests: the runs before them used the whole timeout', output: '' };
+      const choice = chooseCommand(readRootFiles(dir), hasPythonFiles(dir));
+      const timeoutSeconds = Math.min(choice.timeoutSeconds, Math.ceil((deadline - Date.now()) / 1000));
+      if (choice.error) run = none({ configError: choice.error });
+      else if (timeoutSeconds < 1) run = { ...none({ configError: 'no time was left for these tests: the runs before them used the whole timeout' }), command: choice.command, source: choice.source };
+      else run = { ...(await runTests(dir, { ...choice, timeoutSeconds })), where };
     }
     runs.push(run);
     if (verdict(run).outcome !== 'passed') break;
@@ -317,7 +324,7 @@ async function onStop(input) {
   if (!home) {
     // Outside git nothing tells what changed, so the tests run whenever there are any.
     const choice = chooseCommand(readRootFiles(project), hasPythonFiles(project));
-    if (!choice.none) return settle(file, state, await runAll([project], project), active);
+    if (!choice.none) return settle(file, state, await runAll([project], project, choice.timeoutSeconds), active);
     if (!inCheckout(project)) return allow(file, state, 'greenwashing: not a git repository and no test command - tests not run');
     const configError = 'git cannot read the repository this folder is in, so the gate cannot tell what changed (run git status here to see why)';
     return settle(file, state, [{ command: '(none)', source: 'git', timeoutSeconds: 0, configError, output: '' }], active);
@@ -332,7 +339,7 @@ async function onStop(input) {
       delete starts[tree];
       continue;
     }
-    const changed = changesIn(tree, start, state.heads);
+    const changed = changesIn(tree, start, state.known);
     const split = changed === null ? null : classify(changed);
     if (split === null || split.code.length > 0) pending.push(tree);
     else docs += split.docs.length;
@@ -342,8 +349,11 @@ async function onStop(input) {
     return allow(file, next, docs === 0 ? 'greenwashing: no files changed this turn - tests not run'
       : `greenwashing: only documentation changed (${docs} file${docs === 1 ? '' : 's'}) - tests not run`);
   }
-  // The tests run at the project's place in each tree (the project can be a subfolder of its repository).
-  return settle(file, next, await runAll(pending.map((tree) => path.join(tree, path.relative(home, project))), project), active);
+  // The tests run at the project's place in each tree (the project can be a subfolder of its
+  // repository), within the timeout the project sets.
+  const budget = readConfig(readRootFiles(project)[CONFIG_FILE]).timeoutSeconds || DEFAULT_TIMEOUT_SECONDS;
+  const dirs = pending.map((tree) => path.join(tree, path.relative(home, project)));
+  return settle(file, next, await runAll(dirs, project, budget), active);
 }
 
 function settle(file, state, runs, stopHookActive) {
@@ -368,7 +378,7 @@ function onPrompt(input) {
   saveState(file, NO_STATE);
   const starts = {};
   for (const tree of [home, here]) if (tree) starts[tree] = snapshot(tree);
-  saveState(file, { starts, heads: home ? worktreeHeads(home) : {}, blocks: 0, judged: false });
+  saveState(file, { starts, known: home ? knownCommits(home) : [], blocks: 0, judged: false });
 }
 
 function readStdin() {
