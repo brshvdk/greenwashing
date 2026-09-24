@@ -133,28 +133,43 @@ const RED = { outcome: 'did not run', why: 'zero tests ran (jest)', gw: 'GW-08',
 const GREEN = { outcome: 'passed', why: '', gw: null, counts: { passed: 5, failed: 0, skipped: 1, brokenFiles: 0 } };
 
 test('green lets the agent stop with one line for the user', () => {
-  const decision = decide(run({}), GREEN, { blocks: 2 }, true);
+  const decision = decide([run({})], [GREEN], { blocks: 2 }, true);
   assert.equal(decision.action, 'allow');
   assert.equal(decision.message, 'greenwashing: tests passed - npm test: 5 passed, 0 failed, 1 skipped');
   assert.deepEqual(decision.state, { blocks: 0 });
 });
 
 test('red sends the agent back and counts the block', () => {
-  assert.deepEqual([decide(run({}), RED, { blocks: 0 }, false).action, decide(run({}), RED, { blocks: 0 }, false).state], ['block', { blocks: 1 }]);
-  assert.deepEqual(decide(run({}), RED, { blocks: 1 }, true).state, { blocks: 2 });
-  assert.deepEqual(decide(run({}), RED, { blocks: 2 }, true).state, { blocks: 3 });
+  assert.deepEqual([decide([run({})], [RED], { blocks: 0 }, false).action, decide([run({})], [RED], { blocks: 0 }, false).state], ['block', { blocks: 1 }]);
+  assert.deepEqual(decide([run({})], [RED], { blocks: 1 }, true).state, { blocks: 2 });
+  assert.deepEqual(decide([run({})], [RED], { blocks: 2 }, true).state, { blocks: 3 });
 });
 
 test('the fourth red stop after three blocks in a row is let go with a red message', () => {
-  const decision = decide(run({}), RED, { blocks: 3 }, true);
+  const decision = decide([run({})], [RED], { blocks: 3 }, true);
   assert.equal(decision.action, 'release');
   assert.match(decision.message, /TESTS DID NOT PASS - WORK NOT ACCEPTED/);
   assert.match(decision.message, /3 times in a row/);
   assert.deepEqual(decision.state, { blocks: 0 });
 });
 
+test('several runs in one stop: the first that is not green decides, and says where it ran', () => {
+  const worktree = run({ where: '.claude/worktrees/feat', output: 'x' });
+  const green = decide([run({}), worktree], [GREEN, GREEN], { blocks: 0 }, false);
+  assert.equal(green.message, 'greenwashing: tests passed - npm test: 5 passed, 0 failed, 1 skipped; '
+    + 'npm test in .claude/worktrees/feat: 5 passed, 0 failed, 1 skipped');
+  const red = decide([run({}), worktree], [GREEN, RED], { blocks: 0 }, false);
+  assert.equal(red.action, 'block');
+  assert.match(red.reason, /\nFolder: \.claude\/worktrees\/feat\nResult: did not run - zero tests ran \(jest\)/);
+  const first = decide([run({ output: 'first' }), worktree], [RED, RED], { blocks: 0 }, false);
+  assert.doesNotMatch(first.reason, /Folder:/);
+  assert.match(first.reason, /\nfirst$/);
+  const released = decide([run({}), worktree], [GREEN, RED], { blocks: 3 }, true);
+  assert.match(released.message, /\(npm test in \.claude\/worktrees\/feat\)\.$/);
+});
+
 test('a stop that is not continuing after a block starts the count again', () => {
-  const decision = decide(run({}), RED, { blocks: 3 }, false);
+  const decision = decide([run({})], [RED], { blocks: 3 }, false);
   assert.deepEqual([decision.action, decision.state], ['block', { blocks: 1 }]);
 });
 
@@ -174,6 +189,11 @@ test('the block reason stays short when a line of output is huge', () => {
   const reason = blockReason(run({ output: `start\n${'x'.repeat(5000000)}\nend` }), RED);
   assert.ok(reason.length < 10000, `${reason.length} characters`);
   assert.match(reason, /x{300}\.\.\. \(5000000 characters\)\nend$/);
+  // Twenty long lines, each kept from its start and cut at 300 characters, stay under the cap too.
+  const line = `a${'x'.repeat(1006)}z`;
+  const many = blockReason(run({ output: Array(20).fill(line).join('\n') }), RED);
+  assert.ok(many.length < 10000, `${many.length} characters`);
+  assert.equal(many.split('\n').at(-1), `a${'x'.repeat(299)}... (1008 characters)`);
 });
 
 test('an empty output is said so; the tail has no terminal color codes', () => {
@@ -184,7 +204,7 @@ test('an empty output is said so; the tail has no terminal color codes', () => {
 });
 
 test('the release message names the last result and the command', () => {
-  const decision = decide(run({}), RED, { blocks: 3 }, true);
+  const decision = decide([run({})], [RED], { blocks: 3 }, true);
   assert.match(decision.message, /Last result: did not run - zero tests ran \(jest\) \(npm test\)\.$/);
 });
 

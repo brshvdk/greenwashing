@@ -42,6 +42,8 @@ test("npm's placeholder or an empty test script is no test script", () => {
 test('a byte order mark before the JSON is ignored', () => {
   assert.equal(pick({ '.greenwashing.json': '\uFEFF{"testCommand": "make check"}' }).command, 'make check');
   assert.equal(pick({ 'package.json': '\uFEFF{"scripts": {"test": "jest"}}' }).command, 'npm test');
+  // Only the mark is dropped: other characters JSON does not allow there stay an error.
+  assert.match(pick({ '.greenwashing.json': '\u00A0{"testCommand": "make check"}' }).error, /is not valid JSON/);
 });
 
 test('a package.json without a test script falls through to Python', () => {

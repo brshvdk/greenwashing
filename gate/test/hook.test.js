@@ -40,8 +40,8 @@ function git(dir, ...args) {
 }
 
 // A committed project; testCommand goes to .greenwashing.json unless it is null.
-function project(t, files, testCommand = NODE_CMD) {
-  const dir = tempDir(t);
+function project(t, files, testCommand = NODE_CMD, dir = tempDir(t)) {
+  fs.mkdirSync(dir, { recursive: true });
   const config = testCommand === null ? {} : { '.greenwashing.json': JSON.stringify({ testCommand }) };
   write(dir, { ...config, ...files });
   git(dir, 'init', '-q');
@@ -181,6 +181,8 @@ test('nothing changed: the stop is allowed with one line', (t) => {
   const gate = session(t, dir);
   gate.prompt();
   assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: no files changed this turn - tests not run' });
+  // A second Stop without a prompt still measures from the same start.
+  assert.deepEqual(gate.stop().json, NO_CHANGES);
 });
 
 test('changes committed during the turn count as changes', (t) => {
@@ -381,6 +383,167 @@ test('when the agent works in another worktree of the repository, that worktree 
   assert.deepEqual(gate.stop(false, tree).json, NO_CHANGES);
 });
 
+// A committed project whose worktrees folder is ignored, as Claude Code's docs advise, and one
+// worktree of it made before the turn starts.
+function withWorktree(t, files = { 't.test.js': NODE_PASS }) {
+  const dir = project(t, { ...files, '.gitignore': '.claude/worktrees/\n' });
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  return { dir, tree };
+}
+
+test('the project is checked too when the agent ends the turn in a clean worktree', (t) => {
+  const { dir, tree } = withWorktree(t);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  const { json } = gate.stop(false, tree);
+  assert.equal(json.decision, 'block');
+  assert.doesNotMatch(json.reason, /Folder:/);
+});
+
+test('a turn that starts in a worktree still checks the project, wherever the agent stops', (t) => {
+  const { dir, tree } = withWorktree(t);
+  const gate = session(t, dir);
+  gate.prompt(tree);
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+  assert.equal(gate.stop(true, dir).json.decision, 'block');
+});
+
+test('a worktree the agent worked in is still checked after it leaves it', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, '.gitignore': '.claude/worktrees/\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  write(tree, { 't.test.js': NODE_FAIL });
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+  const { json } = gate.stop(true, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /\nFolder: \.claude\/worktrees\/feat\n/);
+});
+
+test('a worktree that is clean and on the commit it had at the start is not a change', (t) => {
+  const { dir, tree } = withWorktree(t);
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'old broken work');
+  const gate = session(t, dir);
+  gate.prompt();
+  // The agent only goes into the worktree of an old branch whose tests fail.
+  assert.deepEqual(gate.stop(false, tree).json, NO_CHANGES);
+  write(tree, { 't.test.js': `${NODE_FAIL}// touched\n` });
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+  // Committed: the worktree is clean again, but no longer on the commit it had at the start.
+  git(tree, 'commit', '-qam', 'more broken work');
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+});
+
+test('a turn that starts in a worktree records the start of the project too', (t) => {
+  const { dir, tree } = withWorktree(t, { 't.test.js': NODE_PASS, 'app.js': '1;\n' });
+  // The project already had an edit when the turn started; the agent changes nothing.
+  write(dir, { 'app.js': '2;\n' });
+  const gate = session(t, dir);
+  gate.prompt(tree);
+  assert.deepEqual(gate.stop(false, tree).json, NO_CHANGES);
+});
+
+test('a turn interrupted in a worktree keeps that worktree for the next prompt', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, '.gitignore': '.claude/worktrees/\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  write(tree, { 't.test.js': NODE_FAIL });
+  // No Stop: the user interrupts while the agent is in the worktree, then writes again.
+  gate.prompt(tree);
+  assert.equal(gate.stop(false, dir).json.decision, 'block');
+});
+
+test('a worktree removed during the turn leaves nothing to test', (t) => {
+  const { dir, tree } = withWorktree(t);
+  const gate = session(t, dir);
+  gate.prompt(tree);
+  git(dir, 'worktree', 'remove', tree);
+  assert.deepEqual(gate.stop(false, dir).json, NO_CHANGES);
+});
+
+test('two trees to test: all green gives one line for each, and the first red one decides', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, 'app.js': '1;\n', '.gitignore': '.claude/worktrees/\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'app.js': '2;\n' });
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  assert.deepEqual(gate.stop(false, tree).json, { systemMessage: `greenwashing: tests passed - ${NODE_CMD}: 1 passed, 0 failed, 0 skipped; `
+    + `${NODE_CMD} in .claude/worktrees/feat: 1 passed, 0 failed, 0 skipped` });
+  write(tree, { 't.test.js': NODE_FAIL });
+  const { json } = gate.stop(false, tree);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /\nFolder: \.claude\/worktrees\/feat\nResult: failed - 1 failed/);
+});
+
+test('the test runs of one stop share one timeout', (t) => {
+  const testCommand = `sleep 2; ${GREEN_ECHO}`;
+  const dir = project(t, { 'app.js': '1;\n', '.gitignore': '.claude/worktrees/\n', '.greenwashing.json': JSON.stringify({ testCommand, timeoutSeconds: 3 }) }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'app.js': '2;\n' });
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  // Each run alone is green in 2 s; two of them do not fit in the 3 s both share.
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+});
+
+test('a project reached through a symbolic link is tested in the worktree the agent works in', (t) => {
+  const base = tempDir(t);
+  const dir = project(t, { 't.test.js': NODE_PASS }, NODE_CMD, path.join(base, 'p'));
+  const tree = path.join(base, 'p-feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  const link = path.join(base, 'link');
+  fs.symlinkSync(dir, link);
+  const gate = session(t, link);
+  gate.prompt();
+  write(tree, { 't.test.js': NODE_FAIL });
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+});
+
+test('a repository whose .git is a symbolic link still has its worktrees followed', (t) => {
+  const base = tempDir(t);
+  const dir = project(t, { 't.test.js': NODE_PASS }, NODE_CMD, path.join(base, 'p'));
+  fs.renameSync(path.join(dir, '.git'), path.join(base, 'store'));
+  fs.symlinkSync(path.join(base, 'store'), path.join(dir, '.git'));
+  const tree = path.join(base, 'p-feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  const gate = session(t, dir);
+  gate.prompt();
+  write(tree, { 't.test.js': NODE_FAIL });
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+});
+
+test('a folder git cannot read is not taken for one outside git', (t) => {
+  const dir = tempDir(t);
+  write(dir, { '.git': 'gitdir: /nonexistent/greenwashing-gate-test\n', 'main.go': 'package main\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  const { json } = gate.stop();
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /git cannot read the repository this folder is in/);
+});
+
+test('outside git, the tests run from the project, not from the folder the agent is in', (t) => {
+  const dir = tempDir(t);
+  write(dir, {
+    '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }),
+    't.test.js': NODE_FAIL,
+    'sub/.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }),
+  });
+  const gate = session(t, dir);
+  const sub = path.join(dir, 'sub');
+  gate.prompt(sub);
+  assert.equal(gate.stop(false, sub).json.decision, 'block');
+});
+
 test('another repository inside the project (a submodule, a clone) never stands in for it', (t) => {
   const dir = project(t, { 't.test.js': NODE_PASS });
   const nested = path.join(dir, 'vendor', 'lib');
@@ -559,24 +722,28 @@ test('output over 64 MB is not read, even when it ends in green counts', (t) => 
   assert.match(json.reason, /the output was larger than 67108864 bytes and was not read/);
 });
 
-test('when the hook itself is stopped, it stops the tests it started', async (t) => {
-  const dir = project(t, { 'app.js': '1;\n' }, 'x');
-  const started = path.join(dir, 'started-marker');
-  const late = path.join(dir, 'late-marker');
-  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: `touch ${JSON.stringify(started)}; sleep 2; touch ${JSON.stringify(late)}` }) });
-  git(dir, 'commit', '-qam', 'config');
-  const gate = session(t, dir);
-  gate.prompt();
-  write(dir, { 'app.js': '2;\n' });
-  const hook = spawn(process.execPath, [HOOK, 'stop'], { env: gate.env, stdio: ['pipe', 'ignore', 'ignore'] });
-  const exited = new Promise((resolve) => hook.on('exit', (code, signal) => resolve({ code, signal })));
-  hook.stdin.end(JSON.stringify(gate.stopInput(false, dir)));
-  for (let i = 0; i < 100 && !fs.existsSync(started); i += 1) await sleep(100);
-  assert.ok(fs.existsSync(started), 'the tests never started');
-  hook.kill('SIGTERM');
-  assert.deepEqual(await exited, { code: 143, signal: null });
-  await sleep(3000);
-  assert.equal(fs.existsSync(late), false, 'the tests kept running after the hook was stopped');
+test('when the hook itself is stopped, it stops every process its tests started', async (t) => {
+  for (const [signal, code] of [['SIGTERM', 143], ['SIGINT', 130], ['SIGHUP', 129]]) {
+    const dir = project(t, { 'app.js': '1;\n' }, 'x');
+    const started = path.join(dir, 'started-marker');
+    const late = path.join(dir, 'late-marker');
+    // The late marker comes from a background process of the test command, not from its shell.
+    const testCommand = `touch ${JSON.stringify(started)}; (sleep 1; touch ${JSON.stringify(late)}) & sleep 30`;
+    write(dir, { '.greenwashing.json': JSON.stringify({ testCommand }) });
+    git(dir, 'commit', '-qam', 'config');
+    const gate = session(t, dir);
+    gate.prompt();
+    write(dir, { 'app.js': '2;\n' });
+    const hook = spawn(process.execPath, [HOOK, 'stop'], { env: gate.env, stdio: ['pipe', 'ignore', 'ignore'] });
+    const exited = new Promise((resolve) => hook.on('exit', (exitCode, exitSignal) => resolve({ code: exitCode, signal: exitSignal })));
+    hook.stdin.end(JSON.stringify(gate.stopInput(false, dir)));
+    for (let i = 0; i < 100 && !fs.existsSync(started); i += 1) await sleep(100);
+    assert.ok(fs.existsSync(started), `${signal}: the tests never started`);
+    hook.kill(signal);
+    assert.deepEqual(await exited, { code, signal: null }, signal);
+    await sleep(2000);
+    assert.equal(fs.existsSync(late), false, `${signal}: a process of the tests kept running after the hook was stopped`);
+  }
 });
 
 test('one session id in two projects: each project keeps its own start', (t) => {

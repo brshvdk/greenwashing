@@ -22,7 +22,10 @@ function countsText(sum) {
   return `${sum.passed} passed, ${sum.failed} failed, ${sum.skipped} skipped`;
 }
 
-// run: {command, source, timeoutSeconds, configError, startError, timedOut, outputTooLarge, exitCode, output}.
+// Where a run was, when not in the project itself (another worktree of its repository).
+const place = (run) => (run.where ? ` in ${run.where}` : '');
+
+// run: {command, source, where, timeoutSeconds, configError, startError, timedOut, outputTooLarge, exitCode, output}.
 // Returns {outcome: 'passed' | 'failed' | 'did not run', why, gw, counts}.
 function verdict(run) {
   const didNotRun = (why, gw = 'GW-50', counts = null) => ({ outcome: 'did not run', why, gw, counts });
@@ -62,8 +65,9 @@ function blockReason(run, result) {
   const parts = [
     `greenwashing gate: the tests ${result.outcome === 'failed' ? 'failed' : 'did not run'} - you cannot finish yet.`,
     `Command: ${run.command} (${run.source})`,
-    `Result: ${result.outcome}${result.why ? ` - ${result.why}` : ''}`,
   ];
+  if (run.where) parts.push(`Folder: ${run.where}`);
+  parts.push(`Result: ${result.outcome}${result.why ? ` - ${result.why}` : ''}`);
   if (result.counts) parts.push(`Counts: ${countsText(result.counts)}`);
   if (result.gw) parts.push(`See ${result.gw} in ${CATALOG}`);
   const last = tail(run.output || '');
@@ -71,25 +75,26 @@ function blockReason(run, result) {
   return parts.join('\n');
 }
 
-// state: {blocks} - how many times in a row the gate sent the agent back in this turn.
+// runs, results: the test runs of one stop, in order, with their verdicts; the first that is not
+// green decides. state: {blocks} - how many times in a row the gate sent the agent back in this turn.
 // stopHookActive: the Stop input says the agent is already continuing because a stop hook
 // blocked; when it is false this stop starts a new chain.
 // Returns {action: 'allow' | 'block' | 'release', reason?, message?, state}.
-function decide(run, result, state, stopHookActive) {
-  if (result.outcome === 'passed') {
-    return {
-      action: 'allow',
-      message: `greenwashing: tests passed - ${run.command}: ${countsText(result.counts)}`,
-      state: { blocks: 0 },
-    };
+function decide(runs, results, state, stopHookActive) {
+  const red = results.findIndex((one) => one.outcome !== 'passed');
+  if (red === -1) {
+    const parts = runs.map((one, i) => `${one.command}${place(one)}: ${countsText(results[i].counts)}`);
+    return { action: 'allow', message: `greenwashing: tests passed - ${parts.join('; ')}`, state: { blocks: 0 } };
   }
+  const run = runs[red];
+  const result = results[red];
   const blocks = stopHookActive ? state.blocks : 0;
   if (blocks >= MAX_BLOCKS) {
     return {
       action: 'release',
       message: `greenwashing: TESTS DID NOT PASS - WORK NOT ACCEPTED. The gate sent the agent back ${blocks} times in a row `
         + `and now lets it stop so it does not loop. Last result: ${result.outcome}`
-        + `${result.why ? ` - ${result.why}` : ''} (${run.command}).`,
+        + `${result.why ? ` - ${result.why}` : ''} (${run.command}${place(run)}).`,
       state: { blocks: 0 },
     };
   }
