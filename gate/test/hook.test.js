@@ -465,16 +465,18 @@ test('a turn interrupted in a worktree keeps that worktree for the next prompt',
 test('a worktree added to look at a branch or a commit that existed before the turn is not a change', (t) => {
   const dir = project(t, { 't.test.js': NODE_FAIL, '.gitignore': '.claude/worktrees/\n' });
   const red = git(dir, 'rev-parse', 'HEAD').trim();
+  write(dir, { 't.test.js': `${NODE_FAIL}// old\n` });
+  git(dir, 'commit', '-qam', 'still red');
   git(dir, 'branch', 'old');
   write(dir, { 't.test.js': NODE_PASS });
   git(dir, 'commit', '-qam', 'green');
-  // A worktree detached at an old red commit, there before the turn: known by its HEAD only.
+  // A worktree detached at a red commit no branch points at, there before the turn: known by its HEAD only.
   const detached = path.join(dir, '.claude', 'worktrees', 'detached');
   git(dir, 'worktree', 'add', '-q', '--detach', detached, red);
   const gate = session(t, dir);
   gate.prompt();
   assert.deepEqual(gate.stop(false, detached).json, NO_CHANGES);
-  // A new worktree of a branch whose tests fail, made only to look at it.
+  // A new worktree of a branch whose tests fail, made only to look at it: known as a branch tip only.
   const old = path.join(dir, '.claude', 'worktrees', 'old');
   git(dir, 'worktree', 'add', '-q', old, 'old');
   assert.deepEqual(gate.stop(false, old).json, NO_CHANGES);
