@@ -1,0 +1,14 @@
+{
+  "name": "greenwashing",
+  "owner": {
+    "name": "brshvdk"
+  },
+  "description": "Catch AI coding agents faking a green test suite.",
+  "plugins": [
+    {
+      "name": "greenwashing",
+      "source": "./",
+      "description": "A gate that runs your tests when the agent changed code and blocks the end of the turn unless they passed, and a skill for reporting done with evidence."
+    }
+  ]
+}

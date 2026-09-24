@@ -1,0 +1,8 @@
+{
+  "name": "greenwashing",
+  "description": "A gate that runs your tests when the agent changed code and blocks the end of the turn unless they passed, and a skill for reporting done with evidence.",
+  "author": {
+    "name": "brshvdk"
+  },
+  "license": "MIT"
+}

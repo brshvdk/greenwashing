@@ -71,6 +71,12 @@ class GuardedChangesTest(unittest.TestCase):
         self.assert_guarded("conftest.py", "tests/conftest.py", "sub/dir/conftest.py")
         self.assert_not_guarded("tests/conftest_helpers.py", "my_conftest.py")
 
+    def test_gate_config_in_any_folder(self):
+        # It names the test command the gate runs: a pull request must not swap it for a dummy.
+        self.assert_guarded(".greenwashing.json", "sub/dir/.greenwashing.json", ".GreenWashing.JSON")
+        self.assert_not_guarded("greenwashing.json", ".greenwashing.json.bak", "docs/.greenwashing.md",
+                                "my.greenwashing.json")
+
     def test_python_startup_hooks_in_any_folder(self):
         self.assert_guarded("sitecustomize.py", "sub/sitecustomize.py", "usercustomize.py", "scripts/usercustomize.py",
                             "extra.pth", "sub/dir/zz.pth", ".pth")

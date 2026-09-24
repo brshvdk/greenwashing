@@ -1,0 +1,30 @@
+============================= test session starts ==============================
+platform linux -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: /project
+collected 5 items
+
+test_m.py ..FsF                                                          [100%]
+
+=================================== FAILURES ===================================
+___________________________________ T.test_c ___________________________________
+
+self = <test_m.T testMethod=test_c>
+
+>   def test_c(self): self.assertEqual(1, 2)
+                      ^^^^^^^^^^^^^^^^^^^^^^
+E   AssertionError: 1 != 2
+
+test_m.py:5: AssertionError
+___________________________________ T.test_e ___________________________________
+
+self = <test_m.T testMethod=test_e>
+
+>   def test_e(self): raise RuntimeError("boom")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   RuntimeError: boom
+
+test_m.py:8: RuntimeError
+=========================== short test summary info ============================
+FAILED test_m.py::T::test_c - AssertionError: 1 != 2
+FAILED test_m.py::T::test_e - RuntimeError: boom
+==================== 2 failed, 2 passed, 1 skipped in 0.03s ====================

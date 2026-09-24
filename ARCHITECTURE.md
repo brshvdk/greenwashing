@@ -1,6 +1,6 @@
 # ARCHITECTURE
 
-Map of the repository: only what exists now. Of the product modules the catalog and the skill are here; the gate is not here yet.
+Map of the repository: only what exists now. All three product modules are here: the catalog, the skill and the gate, the last two shipped as a Claude Code plugin.
 
 ## Layout
 
@@ -20,6 +20,13 @@ tests/test_ci_steps.py        tests of CI steps (runs them as written in the wor
 tests/test_catalog.py         tests of the catalog structure (unittest)
 skills/greenwashing/SKILL.md  the skill (Agent Skills format)
 tests/test_skill.py           tests of the skill's frontmatter and catalog links (unittest)
+gate/hook.js                  the gate: Claude Code hook entry point (hook JSON, git, test process, state)
+gate/lib/                     the gate's logic: parse.js, verdict.js, changes.js, command.js (no I/O)
+gate/test/                    tests of the gate (node --test); fixtures/ = real output of five test runners
+.claude-plugin/               marketplace.json and plugin.json: this repository is a plugin marketplace
+hooks/hooks.json              the plugin's hooks (the gate)
+.claude/settings.json         the gate on this repository (Claude Code hooks)
+.greenwashing.json            this repository's test command for the gate
 .github/public-repos.txt      allowlist of the owner's public repositories for the leak check
 .github/workflows/ci.yml      CI
 .github/workflows/safety-net.yml   safety net workflow
@@ -35,7 +42,7 @@ Tests: `tests/test_catalog.py` - the structure only, read line by line as Markdo
 
 Depends on: nothing.
 
-Breaks: `tests/test_catalog.py` (the structure is its contract); `tests/test_skill.py` (the skill cites entry numbers); the link in `README.md` and the link in `skills/greenwashing/SKILL.md`.
+Breaks: `tests/test_catalog.py` (the structure is its contract); `tests/test_skill.py` (the skill cites entry numbers); the gate's block messages (cite GW-08 and GW-50, `gate/test/verdict.test.js`); the link in `README.md` and the link in `skills/greenwashing/SKILL.md`.
 
 Traps:
 - adding a section after H or changing the three lines - change `SECTIONS` or `FIELDS` in `tests/test_catalog.py` in the same PR, otherwise the test goes red.
@@ -52,12 +59,50 @@ Tests: `tests/test_skill.py` - frontmatter present (LF, CRLF or CR endings, a BO
 
 Depends on: `CATALOG.md` (entry numbers, entry count).
 
-Breaks: `tests/test_skill.py` (the frontmatter and cited numbers are its contract).
+Breaks: `tests/test_skill.py` (the frontmatter and cited numbers are its contract); the plugin (loads it from `skills/greenwashing/`, see below).
 
 Traps:
 - removing or renumbering a catalog entry the skill cites - `tests/test_skill.py` goes red; change the skill in the same PR.
 - adding or removing a catalog entry - the forbidden number changes, so any bare number in the skill equal to the new count (`0.87`, `line 87`) turns `tests/test_skill.py` red.
 - the skill links to `CATALOG.md` on `main` by URL - renaming or moving the catalog breaks the link, and no test checks it.
+
+### gate (`gate/`)
+
+Purpose: the Claude Code hooks that keep an agent from finishing a turn that changed code while the tests fail or did not really run. `node gate/hook.js prompt` (UserPromptSubmit) records the start of the turn - HEAD and a content hash of every file git reports as dirty - in the project's git tree and, when the agent is in another worktree of the same repository, in that one too, plus the commits the worktrees and branches of the repository point at; the state file sits in a per-user `0700` folder of the temp directory (one per session and project). After a turn no Stop judged (interrupted, or sent back and then interrupted) the next prompt keeps that turn's starts. `node gate/hook.js stop` (Stop) checks every tree the turn has seen - the project's, and every worktree of the repository that was the input's `cwd` at a prompt or a Stop of the turn; a submodule or a nested clone never counts - and finds the files whose content differs from each start, committed or not; a tree entered after the start counts as unchanged only while it is clean and on a commit a worktree or a branch pointed at when the turn started. Nothing changed or only documentation (`.md .markdown .rst .adoc`) -> allow with one line. Otherwise, for each tree that changed, in turn, it picks the command at the project's place in that tree (`testCommand` in `.greenwashing.json`, else `npm test` for a real `scripts.test` in `package.json` - next to Python code the project must set `testCommand` - else `python3 -m pytest` when pytest is configured, else `python3 -m unittest discover` in a Python project, else did not run with the how-to; outside git with no test command -> allow with one line, unless a `.git` file or a `.git` folder with a HEAD at or above it shows a checkout git cannot read; the project's folder missing in a tree -> did not run), runs it with `CI=true` in its own process group, stopped with the hook, at the timeout (`timeoutSeconds`, default 600, at most 3600; the project's value also bounds all runs of one Stop together) or past 64 MB of output, stops at the first run that is not green, reads the counts of pytest, unittest, jest, vitest and `node --test`, and decides: passed -> allow with one line (command and counts); failed or did not run (no counts, zero tests ran, a file that could not run, a non-zero exit with no failed test, not found, timeout, a broken config, the gate itself failing) -> block with the command, counts, reason, last 20 lines and GW-50 (did not run) or GW-08 (zero tests); after 3 blocks in a row -> allow with a red "WORK NOT ACCEPTED" line. The count restarts on a new prompt and when `stop_hook_active` is false. No model calls, no dependencies: Node 18+ standard library; logic in `gate/lib/` apart from the hook I/O in `hook.js`.
+
+Tests: `gate/test/*.test.js` (`node --test`) - the parser on real output of pytest 9.1.1, unittest (Python 3.11, 3.12), jest 30.5.2, vitest 5.0.1 and `node --test` (Node 20, 22); verdicts, decisions, change detection, command choice; `hook.test.js` runs `hook.js` with hook JSON on stdin in real temporary git projects (turn boundaries, worktrees, nested repositories, signals, state); `plugin.test.js` checks the hook configs (below). Run on Node 20, 21, 22.
+
+Depends on: Node 18+ and git on PATH; `CATALOG.md` (GW-08 and GW-50, cited by URL); the Claude Code hook contract (hooks reference: Stop input `stop_hook_active`, `decision: "block"` + `reason`, `systemMessage`, per-hook `timeout`, UserPromptSubmit default timeout 30 s, input `cwd` that follows the agent and `CLAUDE_PROJECT_DIR` that stays on the project); the project's `.greenwashing.json`.
+
+Breaks: `gate/test/` (messages and decisions are its contract); the plugin's `hooks/hooks.json` and this repository's `.claude/settings.json` (they call `gate/hook.js prompt|stop`); CI "Gate tests" step.
+
+Traps:
+- touching `MAX_TIMEOUT_SECONDS` or a Stop hook `timeout` - keep the hook's timeout 60 s above the longest test run in both `hooks/hooks.json` and `.claude/settings.json` (`gate/test/plugin.test.js`), otherwise Claude Code cancels the hook and the agent stops ungated.
+- touching the prompt hook - it must never exit 2 (on UserPromptSubmit that erases the user's prompt) or print to stdout (that goes to the agent as context).
+- a gate that cannot start (no `node` on PATH, a moved `hook.js`) is a non-blocking hook error in Claude Code: the agent stops ungated.
+- `node --test` counts a test file with no tests as one passing test (live on Node 20 and 22), and a test that prints a summary-like line adds counts: the counts cannot tell these apart.
+- the gate runs the command and code from the working tree: an agent that edits `.greenwashing.json` or `gate/` during the turn changes what runs; Safety net guards `.greenwashing.json` only at PR level.
+- in this repository `CATALOG.md` and `SKILL.md` are tested data, but by extension they are documentation: a turn that changes only them skips the tests.
+- running `node --test` inside a `node --test` child: `NODE_TEST_CONTEXT` makes the nested run refuse ("called recursively"); `hook.test.js` drops it from the hook's environment.
+- touching which trees a Stop checks (`places()`, `entered()`) - always the project's tree plus every worktree of the same repository (same `git rev-parse --git-common-dir`) the agent was in during the turn: checking only the `cwd`'s tree let an agent that broke the project end the turn in a clean worktree, and following `cwd` into a nested clone or submodule tested that repository instead.
+- touching `runAll()` - the runs of one Stop share the project's timeout; separate timeouts can add up past the Stop hook's own timeout, and Claude Code then lets the agent stop ungated.
+- touching the prompt hook's state writes - forget the last turn before the snapshot and keep an unjudged turn's start (`hook.test.js`), otherwise a stop measures from a stale or a too-late start and misses changes.
+- touching the test command's environment - `CI=true` keeps a script that checks it out of its watch mode, but an explicit `jest --watchAll` still watches until the timeout, and jest then fails a new snapshot instead of writing it (both live, jest 30.5.2).
+
+### plugin (`.claude-plugin/`, `hooks/hooks.json`)
+
+Purpose: this repository is a Claude Code plugin marketplace named `greenwashing` with one plugin, `greenwashing`, whose root is the repository root (`source: "./"`): `hooks/hooks.json` runs the gate through `${CLAUDE_PLUGIN_ROOT}`, and the default `skills/` scan loads `skills/greenwashing/SKILL.md` (one copy). Install: `/plugin marketplace add brshvdk/greenwashing`, then `/plugin install greenwashing@greenwashing`. No `version`: users get each new commit (commit-SHA version). This repository runs the same gate through `.claude/settings.json` with `.greenwashing.json` (Python tests with `-I`, then the gate's tests).
+
+Tests: `gate/test/plugin.test.js` - manifests, exactly one `SKILL.md`, both hook configs' commands run as written by `sh -c` from a path with a space, Stop timeouts, this repository's `.greenwashing.json`; `claude plugin validate` passes with two warnings (no `version`; `CLAUDE.md` at the plugin root is not loaded as context).
+
+Depends on: `gate/hook.js`; `skills/greenwashing/SKILL.md`; the Claude Code plugin and marketplace format.
+
+Breaks: every user install.
+
+Traps:
+- adding a top-level component folder or file (`commands/`, `agents/`, `monitors/`, `.mcp.json`, `settings.json`) - the whole repository is the plugin, so it ships to every user.
+- moving the skill or the gate out of the repository root - a plugin cannot reference files outside its root, and the cache holds only what is inside it.
+- working on this repository with the plugin installed runs the gate twice (plugin and `.claude/settings.json`).
 
 ### scripts/leak-check
 
@@ -87,7 +132,7 @@ Traps:
 
 ### safety-net workflow (`.github/workflows/safety-net.yml`, `scripts/safety-net`)
 
-Purpose: make any change to the checks themselves visible as a separate red check "Safety net". Runs on `pull_request_target` (opened, synchronize, reopened, edited - so a PR retargeted to main is checked too), so the workflow and script come from main and a PR cannot switch them off. Reads the PR's changed files through the GitHub API (read-only token; PR number only through `env:`), never checks out or runs PR code. Red when a guarded file is added, changed, removed or renamed (old and new names). The guarded list and its one exemption live only in `scripts/safety-net` (categories: exact paths, the workflows directory; in any folder, agent instruction file names, tool config and Python startup hook names, and `.claude/` folders; compared ignoring case). Runs as `python3 -I scripts/safety-net`. Did not run when the file list is empty, has an entry without a name, or is incomplete (count differs from the PR's `changed_files`). Output: guarded names only.
+Purpose: make any change to the checks themselves visible as a separate red check "Safety net". Runs on `pull_request_target` (opened, synchronize, reopened, edited - so a PR retargeted to main is checked too), so the workflow and script come from main and a PR cannot switch them off. Reads the PR's changed files through the GitHub API (read-only token; PR number only through `env:`), never checks out or runs PR code. Red when a guarded file is added, changed, removed or renamed (old and new names). The guarded list and its one exemption live only in `scripts/safety-net` (categories: exact paths, the workflows directory; in any folder, agent instruction file names, tool config, the gate's `.greenwashing.json` and Python startup hook names, and `.claude/` folders; compared ignoring case). Runs as `python3 -I scripts/safety-net`. Did not run when the file list is empty, has an entry without a name, or is incomplete (count differs from the PR's `changed_files`). Output: guarded names only.
 
 Tests: `tests/test_safety_net.py` - comparison logic directly, the script against a local fake of the GitHub API.
 
@@ -105,11 +150,11 @@ Traps:
 
 ### .github/workflows/ci.yml
 
-Purpose: the gate for every PR. On `pull_request` (opened, synchronize, reopened, edited): job `checks` - `ruff check --no-respect-gitignore .`, `python3 -I -m unittest discover -s tests -v` (red on zero tests or no "Ran N tests" line); job `leak-check` - gitleaks install (official release, pinned version and SHA-256), `python3 -I scripts/leak-check` on the PR range. On `workflow_dispatch`: the same with `--all-history`.
+Purpose: the gate for every PR. On `pull_request` (opened, synchronize, reopened, edited): job `checks` - `ruff check --no-respect-gitignore .`, `python3 -I -m unittest discover -s tests -v` (red on zero tests or no "Ran N tests" line), the gate's tests `node --test --test-reporter=tap gate/test/*.test.js` on the runner's own Node, version printed (red on zero tests or no "# tests N" line); job `leak-check` - gitleaks install (official release, pinned version and SHA-256), `python3 -I scripts/leak-check` on the PR range. On `workflow_dispatch`: the same with `--all-history`.
 
-Tests: `tests/test_ci_steps.py` - runs the tools venv, Lint and Unit tests `run:` blocks (and the safety-net step) as written, under `bash -e`, in throwaway directories; rejects step keys other than name, env, run.
+Tests: `tests/test_ci_steps.py` - runs the tools venv, Lint, Unit tests and Gate tests `run:` blocks (and the safety-net step) as written, under `bash -e`, in throwaway directories; rejects step keys other than name, env, run.
 
-Depends on: `scripts/leak-check`; `tests/`; `ruff.toml` (ruff 0.15.8); repository secret `LEAK_PATTERNS`; `actions/checkout` pinned by commit.
+Depends on: `scripts/leak-check`; `tests/`; `gate/test/` and the runner's Node; `ruff.toml` (ruff 0.15.8); repository secret `LEAK_PATTERNS`; `actions/checkout` pinned by commit.
 
 Breaks: acceptance of every PR (the owner merges on green); `tests/test_ci_steps.py` (finds the steps by name).
 
@@ -120,6 +165,7 @@ Traps:
 - touching the Lint step - keep `--no-respect-gitignore`, otherwise a `.gitignore` or `.ignore` added in any folder hides files from ruff.
 - touching the Unit tests step - keep `-I` and the "Ran N tests" check, otherwise a root package named like the standard library (`unittest/`) prints a fake OK, or a run of zero tests passes.
 - piping a command in a step - GitHub runs steps without a `shell:` key as `bash -e` without pipefail, so `cmd | tee` takes the exit status of `tee` and a failing run goes green.
+- touching the Gate tests step - keep the zero and no-count guard: Node 22 reads a glob that matches nothing as "# tests 0" and exits 0.
 - touching the tools venv step - keep `python3 -I -m venv` run outside the checkout, otherwise a `venv.py` in the PR builds the environment whose `bin/` (fake `ruff`, `python3`) comes first on PATH for Lint and Unit tests.
 - `-I` does not cover `tests/` itself: `unittest discover` puts `tests/` first on `sys.path`, so a `tests/json.py` still replaces `json` (the same open risk as an unguarded test module).
 - a `# ruff: noqa` or `# flake8: noqa` comment, or a `# ruff: disable[...]` range, still hides code from ruff (open, owner decision; `--ignore-noqa` closes all three - checked by a run).

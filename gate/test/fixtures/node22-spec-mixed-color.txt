@@ -1,0 +1,45 @@
+[32m✔ a [90m(1.265417ms)[39m[39m
+[32m✔ b [90m(0.152789ms)[39m[39m
+[31m✖ c [90m(1.511091ms)[39m[39m
+[90m﹣ d [90m(0.187514ms)[39m # SKIP[39m
+[31m✖ e [90m(0.281637ms)[39m[39m
+[32m✔ f [90m(0.20803ms)[39m # TODO[39m
+[34mℹ tests 6[39m
+[34mℹ suites 0[39m
+[34mℹ pass 2[39m
+[34mℹ fail 2[39m
+[34mℹ cancelled 0[39m
+[34mℹ skipped 1[39m
+[34mℹ todo 1[39m
+[34mℹ duration_ms 112.79504[39m
+
+[31m✖ failing tests:[39m
+
+test at m.test.js:4:1
+[31m✖ c [90m(1.511091ms)[39m[39m
+  AssertionError [ERR_ASSERTION]: 1 == 2
+      at TestContext.<anonymous> [90m(/project/[39mm.test.js:4:26[90m)[39m
+  [90m    at Test.runInAsyncScope (node:async_hooks:214:14)[39m
+  [90m    at Test.run (node:internal/test_runner/test:1047:25)[39m
+  [90m    at Test.processPendingSubtests (node:internal/test_runner/test:744:18)[39m
+  [90m    at Test.postRun (node:internal/test_runner/test:1173:19)[39m
+  [90m    at Test.run (node:internal/test_runner/test:1101:12)[39m
+  [90m    at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)[39m {
+    generatedMessage: [33mtrue[39m,
+    code: [32m'ERR_ASSERTION'[39m,
+    actual: [33m1[39m,
+    expected: [33m2[39m,
+    operator: [32m'=='[39m,
+    diff: [32m'simple'[39m
+  }
+
+test at m.test.js:6:1
+[31m✖ e [90m(0.281637ms)[39m[39m
+  Error: boom
+      at TestContext.<anonymous> [90m(/project/[39mm.test.js:6:25[90m)[39m
+  [90m    at Test.runInAsyncScope (node:async_hooks:214:14)[39m
+  [90m    at Test.run (node:internal/test_runner/test:1047:25)[39m
+  [90m    at Test.processPendingSubtests (node:internal/test_runner/test:744:18)[39m
+  [90m    at Test.postRun (node:internal/test_runner/test:1173:19)[39m
+  [90m    at Test.run (node:internal/test_runner/test:1101:12)[39m
+  [90m    at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)[39m

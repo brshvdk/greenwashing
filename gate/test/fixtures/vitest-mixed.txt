@@ -1,0 +1,60 @@
+
+ RUN  v5.0.1 /project
+
+ ❯ m.test.js (0 test)
+ ❯ v.test.mjs (5 tests | 2 failed | 1 skipped) 16ms
+   × c 7ms
+   × e 1ms
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  m.test.js [ m.test.js ]
+ReferenceError: test is not defined
+ ❯ m.test.js:2:1
+      1| const assert = require('node:assert');
+      2| test('a', () => { assert.equal(1, 1); });
+       | ^
+      3| test('b', () => { assert.equal(1, 1); });
+      4| test('c', () => { assert.equal(1, 2); });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  v.test.mjs > c
+AssertionError: expected 1 to be 2 // Object.is equality
+
+- Expected
++ Received
+
+- 2
++ 1
+
+ ❯ v.test.mjs:4:29
+      2| test('a', () => { expect(1).toBe(1); });
+      3| test('b', () => { expect(1).toBe(1); });
+      4| test('c', () => { expect(1).toBe(2); });
+       |                             ^
+      5| test.skip('d', () => {});
+      6| test('e', () => { throw new Error('boom'); });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/3]⎯
+
+ FAIL  v.test.mjs > e
+Error: boom
+ ❯ v.test.mjs:6:25
+      4| test('c', () => { expect(1).toBe(2); });
+      5| test.skip('d', () => {});
+      6| test('e', () => { throw new Error('boom'); });
+       |                         ^
+      7|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/3]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  2 failed | 2 passed | 1 skipped (5)
+   Start at  06:01:39
+   Duration  266ms (import 37%, transform 29%, tests 19%, worker 15%)
+

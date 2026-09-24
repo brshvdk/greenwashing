@@ -1,0 +1,17 @@
+FAIL jbroken/b.test.js
+  ● Test suite failed to run
+
+    Cannot find module 'no-such-module-xyz' from 'b.test.js'
+
+    > 1 | require('no-such-module-xyz'); test('x', () => {});
+        | ^
+      2 |
+
+      at Resolver._throwModNotFoundError (../node_modules/jest-resolve/build/index.js:1031:11)
+      at Object.require (b.test.js:1:1)
+
+Test Suites: 1 failed, 1 passed, 2 total
+Tests:       2 passed, 2 total
+Snapshots:   0 total
+Time:        1.046 s
+Ran all test suites.

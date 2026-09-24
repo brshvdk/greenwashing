@@ -1,0 +1,21 @@
+test_err (unittest.loader._FailedTest.test_err) ... ERROR
+
+======================================================================
+ERROR: test_err (unittest.loader._FailedTest.test_err)
+----------------------------------------------------------------------
+ImportError: Failed to import test module: test_err
+Traceback (most recent call last):
+  File "/usr/lib/python3.11/unittest/loader.py", line 419, in _find_test_path
+    module = self._get_module_from_name(name)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.11/unittest/loader.py", line 362, in _get_module_from_name
+    __import__(name)
+  File "/project/test_err.py", line 1, in <module>
+    import nonexistent_module_xyz
+ModuleNotFoundError: No module named 'nonexistent_module_xyz'
+
+
+----------------------------------------------------------------------
+Ran 1 test in 0.000s
+
+FAILED (errors=1)

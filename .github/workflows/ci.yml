@@ -58,6 +58,23 @@ jobs:
           fi
           exit "$status"
 
+      # The gate's tests on the Node the runner already has (no setup action), with the same
+      # guard: zero tests, or no "# tests N" line, fails the step. The TAP reporter keeps the
+      # summary lines stable across Node versions; Node 22 turns a glob that matches nothing
+      # into "# tests 0" and exit 0. tests/test_ci_steps.py runs this block as written.
+      - name: Gate tests
+        run: |
+          node --version
+          status=0
+          node --test --test-reporter=tap gate/test/*.test.js > "$RUNNER_TEMP/gate-tests.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/gate-tests.log"
+          ran=$(sed -n 's/^# tests \([0-9][0-9]*\)$/\1/p' "$RUNNER_TEMP/gate-tests.log" | tail -n 1)
+          if [ -z "$ran" ] || [ "$ran" -eq 0 ]; then
+            echo "gate tests did not run: ${ran:-no} tests ran"
+            exit 1
+          fi
+          exit "$status"
+
   # A separate job: no test or tool from the PR runs before the leak check, so
   # nothing can rewrite its environment (GITHUB_ENV, GITHUB_PATH) first.
   leak-check:

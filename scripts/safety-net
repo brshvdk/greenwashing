@@ -39,9 +39,9 @@ GUARDED_PATHS = {
 # Every file under these directories.
 GUARDED_DIRS = (".github/workflows/",)
 # File names guarded in any folder: instructions for coding agents, tool config
-# that can override ruff.toml or the test run, and Python startup hooks.
+# that can override ruff.toml or the test run, the gate's test command, and Python startup hooks.
 GUARDED_NAMES = {"CLAUDE.md", "CLAUDE.local.md", ".mcp.json", "AGENTS.md", "ruff.toml", ".ruff.toml", "pyproject.toml",
-                 "setup.cfg", "tox.ini", "conftest.py", "sitecustomize.py", "usercustomize.py"}
+                 "setup.cfg", "tox.ini", "conftest.py", ".greenwashing.json", "sitecustomize.py", "usercustomize.py"}
 GUARDED_EXTENSIONS = (".pth",)
 # Directories guarded in any folder, with everything in them (Claude Code settings,
 # hooks, commands, agents, skills)...
