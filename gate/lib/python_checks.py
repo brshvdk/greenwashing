@@ -154,16 +154,25 @@ def runs(function, names):
 
 
 def asserts(function, names):
-    """The function's body checks something: an assert statement, a call named assert*, or pytest.raises and the like."""
+    """The function's body checks something: an assert statement, a call named assert*, or pytest.raises and the like.
+
+    An assertion on a constant that is always true (assert True, self.assertTrue(1)) checks nothing.
+    """
     for statement in function.body:
         for node in ast.walk(statement):
-            if isinstance(node, ast.Assert):
+            if isinstance(node, ast.Assert) and not truthy_constant(node.test):
                 return True
             if isinstance(node, ast.Call):
                 name = last_name(node.func)
+                if name == "assertTrue" and node.args and truthy_constant(node.args[0]):
+                    continue
                 if name.lower().startswith("assert") or name == "fail" or dotted(node.func, names) in CHECKING_CALLS:
                     return True
     return False
+
+
+def truthy_constant(node):
+    return isinstance(node, ast.Constant) and bool(node.value)
 
 
 def main():

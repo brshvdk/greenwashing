@@ -202,13 +202,20 @@ function* linesAt(text, start) {
   }
 }
 
-// The markers that make a test or suite not run, run alone, or pass when it fails.
-const MARKERS = new Set(['skip', 'only', 'todo', 'failing', 'fails', 'skipIf', 'runIf']);
-const NOT_RUN = new Set(['skip', 'todo', 'skipIf', 'runIf']);
+// The markers that make a test or suite not run, run alone, or pass when it fails (fixme and fail:
+// Playwright).
+const MARKERS = new Set(['skip', 'only', 'todo', 'failing', 'fails', 'skipIf', 'runIf', 'fixme', 'fail']);
+const NOT_RUN = new Set(['skip', 'todo', 'skipIf', 'runIf', 'fixme']);
+// The members that leave a call a test: test.only(...), it.each(table)(...). Anything else is not a
+// test (Playwright's test.beforeEach, test.step, test.describe, test.use).
+const TEST_MODIFIERS = new Set([...MARKERS, 'concurrent', 'each', 'sequential', 'shuffle']);
 // t.skip() in node:test, ctx.skip() in vitest, this.skip() in mocha: the test stops as skipped.
 const RUNTIME_SKIP = /(?<![\w$.])(t|ctx|context|this)\s*\.\s*(skip|todo)\s*\(/;
 const TEST_OBJECTS = 'describe|it|test|context|suite|specify|bench';
-const ASSERTION = /(?<![\w$])(?:expect\w*|assert\w*)\s*[.(]|\.\s*should\b|(?<![\w$.])t\s*\.\s*[A-Za-z_$]/;
+// expect( expect. assert( assert. , a call to a helper named expect... or assert..., .should, t.
+const ASSERTION = /(?<![\w$])(?:expect|assert)\s*[.(]|(?<![\w$])(?:expect|assert)[\w$]+\s*\(|\.\s*should\b|(?<![\w$.])t\s*\.\s*[A-Za-z_$]/g;
+// A value that is always truthy, written out: true, a non-zero number, a non-empty string.
+const TRUTHY = /^(?:true|[1-9][\d.]*|0\.\d*[1-9]\d*|'[^']+'|"[^"]+"|`[^`$]+`)$/;
 // Matchers and asserts that pass whenever their two sides are the same.
 const SAME_MATCHERS = new Set(['toBe', 'toEqual', 'toStrictEqual', 'toMatchObject', 'toBeCloseTo', 'toBeGreaterThanOrEqual',
   'toBeLessThanOrEqual', 'equal', 'equals', 'eql', 'eq']);
@@ -299,6 +306,19 @@ function checkJs(source, changes, checks) {
     return text.length > 80 ? `${text.slice(0, 77)}...` : text;
   };
   const calls = testCalls(code, templates);
+  // An assertion on a value written out as truthy cannot fail: assert(true), assert.ok(1),
+  // expect('x').toBeTruthy(), expect(1).toBeDefined(). (Two same sides are GW-01's.)
+  const cannotFail = (at) => {
+    const call = /^(?:assert(?:\s*\.\s*ok)?|expect)\s*\(/.exec(code.slice(at, at + 40));
+    if (!call) return false;
+    const open = at + call[0].length - 1;
+    const end = closing(code, open);
+    const first = end === -1 ? null : args(code, open, end)[0];
+    if (!first || !TRUTHY.test(normal(...first))) return false;
+    if (!call[0].startsWith('expect')) return true;
+    const matcher = /^\s*\.\s*(toBeTruthy|toBeDefined)\s*\(\s*\)/.exec(code.slice(end + 1, end + 40));
+    return Boolean(matcher);
+  };
 
   if (checks.skips !== false) {
     for (const call of calls) {
@@ -328,14 +348,15 @@ function checkJs(source, changes, checks) {
     for (const call of calls) {
       // A test that does not run is a skip (above), not a test without assertions.
       const notRun = call.members.some((member) => NOT_RUN.has(member)) || call.options.some((option) => option.name !== 'only');
-      if (!['it', 'test', 'specify'].includes(call.name) || notRun || !touched(call.start, call.end + 1)) continue;
+      const test = ['it', 'test', 'specify'].includes(call.name) && call.members.every((member) => TEST_MODIFIERS.has(member));
+      if (!test || notRun || !touched(call.start, call.end + 1)) continue;
       const fn = call.list.find(([from, to]) => /^(?:async\b|function\b)/.test(code.slice(from, to).trim()) || topLevelArrow(code, from, to));
       if (!fn) continue;
       const body = code.slice(fn[0], fn[1]);
       if (RUNTIME_SKIP.test(body)) continue;
       const param = firstParam(body);
       const own = param && new RegExp(`(?<![\\w$.])${param.replace(/\$/g, '\\$')}\\s*\\.\\s*[A-Za-z_$]`);
-      if (ASSERTION.test(body) || (own && own.test(body))) continue;
+      if ([...body.matchAll(ASSERTION)].some((m) => !cannotFail(fn[0] + m.index)) || (own && own.test(body))) continue;
       const name = call.list.length > 1 ? ` ${brief(...call.list[0])}` : '';
       report(CHECKS.assertions, call.start, `the test${name} has no assertion`);
     }

@@ -118,6 +118,32 @@ test('GW-01 honest cases: different sides, a negated check or an unchanged line 
   assert.deepEqual(edited(old, `${old}${OK}\n`), []);
 });
 
+test('GW-18: only a test counts - Playwright hooks, steps, options and suites on test are not tests', () => {
+  const playwright = [
+    "test.beforeEach(async ({ page }) => { await page.goto('/'); });", "test.afterAll(async () => { await db.close(); });",
+    "test.use({ locale: 'en' });", "test.describe('login', () => { setup(); });",
+    "test('a', async ({ page }) => {\n  await test.step('open', async () => { await page.click('#x'); });\n  await expect(page).toHaveTitle('x');\n});",
+  ];
+  for (const source of playwright) assert.deepEqual(fresh(source), [], source);
+  assert.deepEqual(fresh("test.fixme('later', async () => {});"), [[1, 'GW-17']]);
+  assert.deepEqual(fresh("test('a', async ({ page }) => { test.fail(); await expect(page).toHaveURL('/x'); });"), [[1, 'GW-17']]);
+});
+
+test('GW-18: a name that only starts like expect or assert, or an assertion that cannot fail, is no assertion', () => {
+  for (const source of [
+    "test('saves', () => { const expected = build(); save(expected.user); });", "test('logs', () => { const assertions = []; assertions.push(run()); });",
+    "test('a', () => { save(u); assert(true); });", "test('a', () => { save(u); assert.ok(1); });", "test('a', () => { save(u); expect(true).toBeTruthy(); });",
+    "test('a', () => { save(u); expect('saved').toBeDefined(); });",
+  ]) {
+    assert.deepEqual(fresh(source), [[1, 'GW-18']], source);
+  }
+  // A real value checked, or two same sides (reported as GW-01, not twice).
+  for (const source of ["test('a', () => { assert(save(u)); });", "test('a', () => { expect(save(u)).toBeTruthy(); });", "test('a', () => { assert.ok(u.id); });"]) {
+    assert.deepEqual(fresh(source), [], source);
+  }
+  assert.deepEqual(fresh("test('a', () => { save(u); expect(true).toBe(true); });"), [[1, 'GW-01']]);
+});
+
 test('a test skipped when it runs is a skip, not a test without assertions; t. counts as an assertion', () => {
   assert.deepEqual(fresh("it('a', function () { this.skip(); });"), [[1, 'GW-17']]);
   assert.deepEqual(fresh("test('a', (ctx) => { ctx.skip(); run(); });"), [[1, 'GW-17']]);
@@ -222,6 +248,13 @@ test('Python GW-01: a check whose two sides are the same is red; different sides
     'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertNotEqual(x, x)\n        self.assertEqual(x, y)\n']) {
     assert.deepEqual(python(null, source), [], source);
   }
+});
+
+test('Python GW-18: an assertion on a constant that is always true is no assertion; assert False is one', () => {
+  assert.deepEqual(python(null, 'def test_a():\n    save(u)\n    assert True\n'), [[1, 'GW-18']]);
+  assert.deepEqual(python(null, 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        save(u)\n        self.assertTrue(1)\n'), [[5, 'GW-18']]);
+  assert.deepEqual(python(null, 'def test_a():\n    try:\n        save(u)\n    except ValueError:\n        assert False, "raised"\n'), []);
+  assert.deepEqual(python(null, 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertTrue(save(u))\n'), []);
 });
 
 test('Python: a skipped test is a skip, not a test without assertions', () => {
