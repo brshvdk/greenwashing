@@ -20,8 +20,9 @@ function items(text, separator, words) {
   return counts;
 }
 
-function summary(runner, passed, failed, skipped, brokenFiles = 0) {
-  return { runner, passed, failed, skipped, brokenFiles };
+// brokenFiles: test files that could not run; errors: errors outside any test.
+function summary(runner, passed, failed, skipped, brokenFiles = 0, errors = 0) {
+  return { runner, passed, failed, skipped, brokenFiles, errors };
 }
 
 // unittest: "Ran 5 tests in 0.001s", then "OK", "OK (skipped=1)", "FAILED (failures=1, errors=1)"
@@ -48,7 +49,7 @@ function unittest(all, i) {
 }
 
 const PYTEST_WORDS = ['passed', 'failed', 'error', 'errors', 'skipped', 'xfailed', 'xpassed', 'deselected',
-  'warning', 'warnings', 'rerun'];
+  'warning', 'warnings', 'rerun', 'subtests passed'];
 
 // pytest: "==== 2 failed, 2 passed, 1 skipped in 0.03s ====", the same without "=" under -q,
 // or "no tests ran in 0.00s".
@@ -67,8 +68,10 @@ function pytest(all, i) {
 }
 
 // jest: "Tests:       2 failed, 1 skipped, 2 passed, 5 total"; a file that could not run
-// shows up only in "Test Suites: 1 failed, 1 passed, 2 total".
+// shows up only in "Test Suites: 1 failed, 1 passed, 2 total". "No tests found, exiting with
+// code 0" (--passWithNoTests) or code 1 is a run of zero tests.
 function jest(all, i) {
+  if (/^No tests found, exiting with code \d+$/.test(all[i])) return summary('jest', 0, 0, 0);
   const match = /^Tests: +(?:(.+), )?(\d+) total$/.exec(all[i]);
   if (!match) return null;
   const counts = match[1] ? items(match[1], ',', ['passed', 'failed', 'skipped', 'todo']) : {};
@@ -81,17 +84,21 @@ function jest(all, i) {
 }
 
 // vitest: "      Tests  2 failed | 2 passed | 1 skipped (5)"; a file that could not load
-// shows up only in " Test Files  1 failed | 1 passed (2)".
+// shows up only in " Test Files  1 failed | 1 passed (2)", an unhandled error only in
+// "     Errors  1 error" after it. "No test files found, exiting with code 0" is zero tests.
 function vitest(all, i) {
+  if (/^No test files found, exiting with code \d+$/.test(all[i])) return summary('vitest', 0, 0, 0);
   const match = /^ *Tests {2}(.+) \((\d+)\)$/.exec(all[i]);
   if (!match) return null;
-  const counts = items(match[1], '|', ['passed', 'failed', 'skipped', 'todo']);
+  const counts = items(match[1], '|', ['passed', 'failed', 'skipped', 'todo', 'expected fail']);
   if (!counts) return null;
   const files = all.slice(Math.max(i - 3, 0), i)
     .map((line) => /^ *Test Files {2}(\d+) failed/.exec(line)).find(Boolean);
+  const errors = all.slice(i + 1, i + 4).map((line) => /^ *Errors {2}(\d+) errors?$/.exec(line)).find(Boolean);
   const failed = counts.failed || 0;
-  return summary('vitest', counts.passed || 0, failed, (counts.skipped || 0) + (counts.todo || 0),
-    files && failed === 0 ? Number(files[1]) : 0);
+  return summary('vitest', counts.passed || 0, failed,
+    (counts.skipped || 0) + (counts.todo || 0) + (counts['expected fail'] || 0),
+    files && failed === 0 ? Number(files[1]) : 0, errors ? Number(errors[1]) : 0);
 }
 
 const NODE_KEYS = ['tests', 'suites', 'pass', 'fail', 'cancelled', 'skipped', 'todo'];

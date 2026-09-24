@@ -1,0 +1,12 @@
+RR.RRF                                                                   [100%]
+=================================== FAILURES ===================================
+___________________________________ test_bad ___________________________________
+
+    def test_bad():
+>       assert False
+E       assert False
+
+test_r.py:8: AssertionError
+=========================== short test summary info ============================
+FAILED test_r.py::test_bad - assert False
+1 failed, 1 passed, 4 rerun in 0.02s

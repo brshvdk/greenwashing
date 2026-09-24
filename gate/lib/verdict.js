@@ -7,9 +7,11 @@ const { parseSummaries, lines } = require('./parse');
 const CATALOG = 'https://github.com/brshvdk/greenwashing/blob/main/CATALOG.md';
 const MAX_BLOCKS = 3;
 const TAIL_LINES = 20;
+// Claude Code caps a hook's text fields at 10,000 characters; a tail line can be a whole file.
+const TAIL_LINE_CHARS = 300;
 
 function totals(summaries) {
-  const sum = { passed: 0, failed: 0, skipped: 0, brokenFiles: 0 };
+  const sum = { passed: 0, failed: 0, skipped: 0, brokenFiles: 0, errors: 0 };
   for (const one of summaries) {
     for (const key of Object.keys(sum)) sum[key] += one[key];
   }
@@ -40,6 +42,7 @@ function verdict(run) {
     return didNotRun(`zero tests ran (${empty.join(', ')})`, 'GW-08', counts);
   }
   if (counts.brokenFiles > 0) return didNotRun(`${counts.brokenFiles} test file(s) could not run`, 'GW-50', counts);
+  if (counts.errors > 0) return didNotRun(`${counts.errors} error(s) outside the tests`, 'GW-50', counts);
   if (run.exitCode !== 0) {
     return didNotRun(`the command exited with code ${run.exitCode} although no test failed`, 'GW-50', counts);
   }
@@ -49,7 +52,9 @@ function verdict(run) {
 function tail(output) {
   const all = lines(output);
   while (all.length && all[all.length - 1] === '') all.pop();
-  return all.slice(-TAIL_LINES).join('\n');
+  return all.slice(-TAIL_LINES)
+    .map((line) => (line.length > TAIL_LINE_CHARS ? `${line.slice(0, TAIL_LINE_CHARS)}... (${line.length} characters)` : line))
+    .join('\n');
 }
 
 // The reason the agent reads when the gate sends it back.
@@ -91,4 +96,4 @@ function decide(run, result, state, stopHookActive) {
   return { action: 'block', reason: blockReason(run, result), state: { blocks: blocks + 1 } };
 }
 
-module.exports = { verdict, decide, blockReason, MAX_BLOCKS, TAIL_LINES, CATALOG };
+module.exports = { verdict, decide, blockReason, MAX_BLOCKS, TAIL_LINES, TAIL_LINE_CHARS, CATALOG };

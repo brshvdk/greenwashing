@@ -21,11 +21,15 @@ const REAL = {
   'unittest-zero-py312': [5, 'did not run', 'GW-08'],
   'jest-mixed': [1, 'failed', null],
   'jest-green': [0, 'passed', null],
-  'jest-no-tests': [1, 'did not run', 'GW-50'],
+  'jest-no-tests': [1, 'did not run', 'GW-08'],
+  'jest-pass-with-no-tests': [0, 'did not run', 'GW-08'],
   'jest-broken-suite': [1, 'did not run', 'GW-50'],
   'vitest-mixed': [1, 'failed', null],
   'vitest-green': [0, 'passed', null],
-  'vitest-no-tests': [1, 'did not run', 'GW-50'],
+  'vitest-no-tests': [1, 'did not run', 'GW-08'],
+  'vitest-pass-with-no-tests': [0, 'did not run', 'GW-08'],
+  'vitest-unhandled-error': [1, 'did not run', 'GW-50'],
+  'vitest-expected-fail': [0, 'passed', null],
   'vitest-broken-file': [1, 'did not run', 'GW-50'],
   'node20-tap-mixed': [1, 'failed', null],
   'node22-tap-green': [0, 'passed', null],
@@ -75,6 +79,23 @@ test('a timeout did not run, even with green counts printed before it', () => {
   assert.match(result.why, /did not finish in 7 s/);
 });
 
+test('every run of several counts: zero tests or failures in the first run are not hidden by a green second', () => {
+  const zeroFirst = verdict(run({ output: `${fixture('unittest-zero-py311')}\n${fixture('node22-tap-green')}` }));
+  assert.deepEqual(brief(zeroFirst), ['did not run', 'GW-08']);
+  const failedFirst = verdict(run({ output: `${fixture('unittest-mixed')}\n${fixture('node22-tap-green')}` }));
+  assert.deepEqual(brief(failedFirst), ['failed', null]);
+  const noTestsFirst = verdict(run({ output: `${fixture('jest-pass-with-no-tests')}\n${fixture('unittest-green')}` }));
+  assert.deepEqual(brief(noTestsFirst), ['did not run', 'GW-08']);
+  const exitWithTwo = verdict(run({ exitCode: 1, output: `${fixture('unittest-green')}\n${fixture('node22-tap-green')}` }));
+  assert.deepEqual(brief(exitWithTwo), ['did not run', 'GW-50']);
+});
+
+test('an unhandled error outside the tests is red even when the command exits 0', () => {
+  const result = verdict(run({ exitCode: 0, output: fixture('vitest-unhandled-error') }));
+  assert.deepEqual(brief(result), ['did not run', 'GW-50']);
+  assert.match(result.why, /1 error\(s\) outside the tests/);
+});
+
 test('zero tests ran in one of two runs: did not run', () => {
   const result = verdict(run({ output: `${fixture('unittest-green')}\n${fixture('node22-tap-zero')}` }));
   assert.deepEqual(brief(result), ['did not run', 'GW-08']);
@@ -105,7 +126,7 @@ test('a test file that could not run is red even when the command exits 0 (a scr
 test('green: counts of every run are added up', () => {
   const result = verdict(run({ output: `${fixture('unittest-green')}\n${fixture('node22-tap-green')}` }));
   assert.equal(result.outcome, 'passed');
-  assert.deepEqual(result.counts, { passed: 4, failed: 0, skipped: 0, brokenFiles: 0 });
+  assert.deepEqual(result.counts, { passed: 4, failed: 0, skipped: 0, brokenFiles: 0, errors: 0 });
 });
 
 const RED = { outcome: 'did not run', why: 'zero tests ran (jest)', gw: 'GW-08', counts: { passed: 0, failed: 0, skipped: 0, brokenFiles: 0 } };
@@ -147,6 +168,24 @@ test('the block reason names the command, the result, the counts, the catalog en
   assert.match(reason, /line 6\nline 7/);
   assert.match(reason, /line 25$/);
   assert.doesNotMatch(reason, /line 5\n/);
+});
+
+test('the block reason stays short when a line of output is huge', () => {
+  const reason = blockReason(run({ output: `start\n${'x'.repeat(5000000)}\nend` }), RED);
+  assert.ok(reason.length < 10000, `${reason.length} characters`);
+  assert.match(reason, /x{300}\.\.\. \(5000000 characters\)\nend$/);
+});
+
+test('an empty output is said so; the tail has no terminal color codes', () => {
+  assert.match(blockReason(run({ output: '' }), RED), /The command printed nothing\.$/);
+  const colored = blockReason(run({ output: fixture('vitest-mixed-color') }), RED);
+  assert.doesNotMatch(colored, /\x1b\[/);
+  assert.match(colored, /Tests {2}2 failed \| 2 passed \| 1 skipped \(5\)/);
+});
+
+test('the release message names the last result and the command', () => {
+  const decision = decide(run({}), RED, { blocks: 3 }, true);
+  assert.match(decision.message, /Last result: did not run - zero tests ran \(jest\) \(npm test\)\.$/);
 });
 
 test('failed tests name no catalog entry; did not run names GW-50', () => {
