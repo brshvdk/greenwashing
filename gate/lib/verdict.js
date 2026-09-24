@@ -2,11 +2,12 @@
 // Turns a finished test run into one of three outcomes, and an outcome into the gate's
 // decision. Pure functions: no files, processes or hook JSON here.
 
-const { parseSummaries, lines } = require('./parse');
+const { parseSummaries, failedTests, lines } = require('./parse');
 
 const CATALOG = 'https://github.com/brshvdk/greenwashing/blob/main/CATALOG.md';
 const MAX_BLOCKS = 3;
 const TAIL_LINES = 20;
+const FAILED_NAMES = 10;
 // Claude Code caps a hook's text fields at 10,000 characters; a tail line can be a whole file.
 const TAIL_LINE_CHARS = 300;
 
@@ -52,12 +53,20 @@ function verdict(run) {
   return { outcome: 'passed', why: '', gw: null, counts };
 }
 
+const cut = (line) => (line.length > TAIL_LINE_CHARS ? `${line.slice(0, TAIL_LINE_CHARS)}... (${line.length} characters)` : line);
+
 function tail(output) {
   const all = lines(output);
   while (all.length && all[all.length - 1] === '') all.pop();
-  return all.slice(-TAIL_LINES)
-    .map((line) => (line.length > TAIL_LINE_CHARS ? `${line.slice(0, TAIL_LINE_CHARS)}... (${line.length} characters)` : line))
-    .join('\n');
+  return all.slice(-TAIL_LINES).map(cut).join('\n');
+}
+
+// The failed tests the output names, at most FAILED_NAMES of them.
+function failedNames(output) {
+  const names = failedTests(output);
+  if (names.length === 0) return null;
+  const count = names.length > FAILED_NAMES ? `${names.length}, the first ${FAILED_NAMES}` : `${names.length}`;
+  return `Failed tests (${count}):\n${names.slice(0, FAILED_NAMES).map((name) => `- ${cut(name)}`).join('\n')}`;
 }
 
 // The reason the agent reads when the gate sends it back.
@@ -70,6 +79,8 @@ function blockReason(run, result) {
   parts.push(`Result: ${result.outcome}${result.why ? ` - ${result.why}` : ''}`);
   if (result.counts) parts.push(`Counts: ${countsText(result.counts)}`);
   if (result.gw) parts.push(`See ${result.gw} in ${CATALOG}`);
+  const names = failedNames(run.output || '');
+  if (names) parts.push(names);
   const last = tail(run.output || '');
   parts.push(last ? `Last ${TAIL_LINES} lines of output:\n${last}` : 'The command printed nothing.');
   return parts.join('\n');
@@ -101,4 +112,4 @@ function decide(runs, results, state, stopHookActive) {
   return { action: 'block', reason: blockReason(run, result), state: { blocks: blocks + 1 } };
 }
 
-module.exports = { verdict, decide, blockReason, MAX_BLOCKS, TAIL_LINES, TAIL_LINE_CHARS, CATALOG };
+module.exports = { verdict, decide, blockReason, MAX_BLOCKS, TAIL_LINES, TAIL_LINE_CHARS, FAILED_NAMES, CATALOG };

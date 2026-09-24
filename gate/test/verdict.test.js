@@ -185,6 +185,18 @@ test('the block reason names the command, the result, the counts, the catalog en
   assert.doesNotMatch(reason, /line 5\n/);
 });
 
+test('the block reason names the failed tests before the last lines, at most ten of them', () => {
+  const failed = verdict(run({ exitCode: 1, output: fixture('pytest-mixed') }));
+  const reason = blockReason(run({ exitCode: 1, output: fixture('pytest-mixed') }), failed);
+  assert.match(reason, /\nFailed tests \(2\):\n- test_m\.py::T::test_c\n- test_m\.py::T::test_e\nLast 20 lines of output:\n/);
+  const many = Array.from({ length: 12 }, (_, i) => `FAIL: test_${i} (m.T.test_${i})`).join('\n');
+  const listed = blockReason(run({ exitCode: 1, output: `${many}\nRan 12 tests in 0.1s\n\nFAILED (failures=12)\n` }), failed);
+  assert.match(listed, /Failed tests \(12, the first 10\):\n- test_0 \(m\.T\.test_0\)\n/);
+  assert.match(listed, /- test_9 \(m\.T\.test_9\)\nLast 20 lines/);
+  assert.doesNotMatch(listed, /- test_10 /);
+  assert.doesNotMatch(blockReason(run({ output: fixture('jest-green') }), RED), /Failed tests/);
+});
+
 test('the block reason stays short when a line of output is huge', () => {
   const reason = blockReason(run({ output: `start\n${'x'.repeat(5000000)}\nend` }), RED);
   assert.ok(reason.length < 10000, `${reason.length} characters`);
