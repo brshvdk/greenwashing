@@ -228,7 +228,7 @@ test('GW-17: vitest fails and node:test shorthand options; nested keys and false
   assert.deepEqual(fresh("test('a', { meta: { skip: true } }, () => { expect(f()).toBe(1); });"), []);
 });
 
-test('GW-17: a changed condition of skipIf, or a new test in a skipped suite, is a new skip; an edit inside an old skip is not', () => {
+test('GW-17: a changed condition of skipIf, or a new test in a suite that never runs, is a new skip; an edit inside an old skip is not', () => {
   const skipIf = (condition) => `it.skipIf(\n  ${condition},\n)('a', () => {\n  expect(f()).toBe(1);\n});\n`;
   assert.deepEqual(edited(skipIf("process.platform === 'win32'"), skipIf("process.platform === 'win32' || !!process.env.CI")), [[1, 'GW-17']]);
   const suite = (body) => `describe.skip('old', () => {\n${body}});\n`;
@@ -238,6 +238,12 @@ test('GW-17: a changed condition of skipIf, or a new test in a skipped suite, is
   // A new skipped suite is one finding, not one more for each test in it.
   assert.deepEqual(fresh(suite(`${one}  test('b', () => { run(); });\n`)), [[1, 'GW-17']]);
   assert.deepEqual(fresh(`xdescribe('new', () => {\n${one}});\n`), [[1, 'GW-17']]);
+  // Only a test new in the suite counts: an edit or a rename of a test that was already there does
+  // not, nor a new test above the suite, nor one in a suite a condition may let run.
+  assert.deepEqual(edited(suite(one), suite(one.replace("'a'", "'renamed'").replace('f()', 'f(1)'))), []);
+  assert.deepEqual(edited(suite(one), `test('above', () => { expect(h()).toBe(3); });\n${suite(one)}`), []);
+  const skipIfSuite = (body) => `describe.skipIf(process.platform === 'win32')('old', () => {\n${body}});\n`;
+  assert.deepEqual(edited(skipIfSuite(one), skipIfSuite(`${one}  test('b', () => { expect(g()).toBe(2); });\n`)), []);
   assert.deepEqual(edited("it.skip('old', () => {\n  run(1);\n});\n", "it.skip('old', () => {\n  run(2);\n});\n"), []);
 });
 
@@ -391,15 +397,29 @@ test('Python GW-18: a pytest fixture named test_* is not a test; a helper named 
   assert.deepEqual(python(null, 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self._assert_file("x")\n'), []);
 });
 
-test('Python GW-17: __test__ = False, a new test in a skipped class or module, a changed skipif condition, a named marker', () => {
+test('Python GW-17: __test__ = False, a new test in a class or module that never runs, a changed skipif condition, a named marker', () => {
   assert.deepEqual(python(null, 'class TestA:\n    __test__ = False\n\n    def test_a(self):\n        assert f()\n'), [[2, 'GW-17']]);
   const skipped = 'import pytest\n\n\n@pytest.mark.skip\nclass TestOld:\n    def test_a(self):\n        assert f()\n';
   assert.deepEqual(python(skipped, `${skipped}\n    def test_b(self):\n        assert g()\n`), [[9, 'GW-17']]);
-  assert.deepEqual(python(skipped, skipped.replace('assert f()', 'assert f(1)')), [[6, 'GW-17']]);
+  // An edit or a rename of a test that was already in the skipped class is no new skip.
+  assert.deepEqual(python(skipped, skipped.replace('assert f()', 'assert f(1)').replace('test_a', 'test_renamed')), []);
   const marked = 'import pytest\n\npytestmark = pytest.mark.skip\n';
   assert.deepEqual(python(marked, `${marked}\n\ndef test_a():\n    assert f()\n`), [[6, 'GW-17']]);
-  const hidden = 'class TestA:\n    __test__ = False\n\n    def test_a(self):\n        assert f()\n';
-  assert.deepEqual(python(hidden, `${hidden}\n    def test_b(self):\n        assert g()\n`), [[7, 'GW-17']]);
+  // __test__ = False counts where it is added: a base class keeps it while its subclasses run its tests.
+  const base = 'class BaseTests:\n    __test__ = False\n\n    def test_a(self):\n        assert f()\n\n\nclass TestReal(BaseTests):\n    __test__ = True\n';
+  assert.deepEqual(python(base, base.replace('        assert f()\n', '        assert f()\n\n    def test_b(self):\n        assert g()\n')), []);
+  // A class marked by its own pytestmark, and a module whose pytestmark list holds a skip.
+  const classMark = 'import pytest\n\n\nclass TestOld:\n    pytestmark = pytest.mark.skip\n\n    def test_a(self):\n        assert f()\n';
+  assert.deepEqual(python(classMark, `${classMark}\n    def test_b(self):\n        assert g()\n`), [[10, 'GW-17']]);
+  const listMark = 'import pytest\n\npytestmark = [pytest.mark.slow, pytest.mark.skip]\n';
+  assert.deepEqual(python(listMark, `${listMark}\n\ndef test_a():\n    assert f()\n`), [[6, 'GW-17']]);
+  // A condition may let the module run: a new test there is not reported, nor more marks added.
+  const platform = 'import sys\n\nimport pytest\n\npytestmark = pytest.mark.skipif(sys.platform == "win32", reason="x")\n';
+  assert.deepEqual(python(platform, `${platform}\n\ndef test_a():\n    assert f()\n`), []);
+  assert.deepEqual(python(platform, `${platform}pytestmark = pytestmark + [pytest.mark.slow]\n`), []);
+  // One case of a parametrize marked skip does not make the class a suite that never runs.
+  const oneCase = 'import pytest\n\n\n@pytest.mark.parametrize("x", [1, pytest.param(2, marks=pytest.mark.skip)])\nclass TestP:\n    def test_a(self, x):\n        assert f(x)\n';
+  assert.deepEqual(python(oneCase, `${oneCase}\n    def test_b(self, x):\n        assert g(x)\n`), []);
   const skipIf = (condition) => `import sys\n\nimport pytest\n\n\n@pytest.mark.skipif(\n    ${condition},\n    reason="x",\n)\ndef test_a():\n    assert f()\n`;
   assert.deepEqual(python(skipIf('sys.platform == "win32"'), skipIf('sys.platform == "win32" or True')), [[6, 'GW-17']]);
   const named = 'import os\n\nimport pytest\n\nneeds_sandbox = pytest.mark.skipif(not os.environ.get("SANDBOX"), reason="x")\n\n\n';
@@ -447,6 +467,6 @@ test('Python edges: markers and messages, an old comment, removed lines above a 
   }).stdout).findings.map((f) => f.what);
   const old = 'import pytest\n\n\n@pytest.mark.skip\nclass TestOld:\n    def test_a(self):\n        assert f()\n';
   assert.deepEqual(inside(old, `${old}\n    def test_b(self):\n        assert g()\n`), ['a test inside a class marked pytest.mark.skip - the test does not run']);
-  const hidden = '__test__ = False\n\n\ndef test_a():\n    assert f()\n';
-  assert.deepEqual(inside(hidden, `${hidden}\n\ndef test_b():\n    assert g()\n`), ['a test inside the module with __test__ = False - the runner does not collect it']);
+  const xfailed = 'import pytest\n\npytestmark = pytest.mark.xfail\n';
+  assert.deepEqual(inside(xfailed, `${xfailed}\n\ndef test_b():\n    assert g()\n`), ['a test inside a module marked pytest.mark.xfail - the test passes when it fails']);
 });

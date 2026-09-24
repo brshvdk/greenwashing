@@ -28,6 +28,9 @@ SKIPS = {
 PASSES_WHEN_FAILING = {"pytest.mark.xfail", "pytest.xfail", "unittest.expectedFailure", "unittest.case.expectedFailure"}
 # Markers after which the test does not run: it is a skip, not a test without assertions.
 NOT_RUN = SKIPS - PASSES_WHEN_FAILING
+# Markers whose condition may let the tests run: on a class or module they do not make it a suite
+# that never runs.
+CONDITIONAL = {"pytest.mark.skipif", "unittest.skipIf", "unittest.skipUnless", "unittest.case.skipIf", "unittest.case.skipUnless"}
 # Calls that check something, besides the assert statement and names starting with "assert".
 CHECKING_CALLS = {"pytest.raises", "pytest.warns", "pytest.deprecated_call", "pytest.fail"}
 # Comparisons that hold whenever both sides are the same.
@@ -158,11 +161,11 @@ def check(file, source, added, gaps, checks, entries):
         for token in tokenize.generate_tokens(io.StringIO(source, newline=None).readline):
             if token.type == tokenize.COMMENT and token.start[0] in added and COMMENTED_TEST.match(token.string):
                 report(entries["skips"], token.start[0], f"a test in a comment: {token.string[:60]}")
-        # A test in a suite that does not run as written; a new marker of the suite is reported above.
+        # A test new in a suite that never runs, or moved into one; a new marker of the suite is
+        # reported above, not again for each test in it.
         for function, start, suite in tests:
-            if suite and not added_in(suite[1]) and touched(function, start, added, gaps):
-                effect = what(suite[2]) if suite[2] else "the runner does not collect it"
-                report(entries["skips"], start, f"a test inside {suite[0]} - {effect}")
+            if suite and not added_in(suite[1]) and is_new(start, added, gaps):
+                report(entries["skips"], start, f"a test inside {suite[0]} - {what(suite[2])}")
 
     if checks.get("assertions") is not False:
         for function, start, suite in tests:
@@ -193,6 +196,13 @@ def not_collected(node):
             and isinstance(node.value, ast.Constant) and node.value.value is False)
 
 
+def is_new(start, added, gaps):
+    """A test that is new here, or moved here: its first line added, and no line removed in its place
+    (an edited or renamed test is a changed line, one removed and one added). The rest of it may match
+    other lines."""
+    return start in added and start not in gaps
+
+
 def touched(function, start, added, gaps):
     """A line of the test added or changed, or a line removed inside it. A function ends at its last
     statement, so a line removed right after it may have been that statement: the gap before line
@@ -203,22 +213,28 @@ def touched(function, start, added, gaps):
 
 def test_functions(tree, names, marker):
     """(function, first line with its decorators, suite) for each test function in the module or its
-    classes. suite is (what, node, marker) for what keeps the test from running as written: a marker
-    on its class or in the module's pytestmark, or __test__ = False there (marker None); node is where
-    that is written. pytest fixtures named test_* are not tests."""
-    module = next(((f"a module marked {marker(n)}", n, marker(n)) for s in tree.body if isinstance(s, ast.Assign)
-                   and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in s.targets)
-                   for n in ast.walk(s.value) if marker(n)), None)
+    classes. suite is (what, node, marker) when a marker on its class, in the class's or the module's
+    pytestmark, keeps every test in it from running as written whatever the environment (not a
+    condition, CONDITIONAL); node is where that marker is written. pytest fixtures named test_* are
+    not tests."""
+    def suite_mark(nodes):
+        # Decorators, or pytestmark values and the items of their lists; not marks deeper inside, such
+        # as pytest.param(..., marks=pytest.mark.skip) for one case of a parametrize.
+        items = [item for node in nodes for item in (node.elts if isinstance(node, (ast.List, ast.Tuple)) else [node])]
+        return next((n for n in items if marker(n) and marker(n) not in CONDITIONAL), None)
+
+    def pytestmark(body):
+        return [s.value for s in body if isinstance(s, ast.Assign)
+                and any(isinstance(t, ast.Name) and t.id == "pytestmark" for t in s.targets)]
+
+    module = suite_mark(pytestmark(tree.body))
     found = []
-    bodies = [(tree.body, module)]
+    bodies = [(tree.body, module and (f"a module marked {marker(module)}", module, marker(module)))]
     while bodies:
         body, suite = bodies.pop()
-        hidden = next((node for node in body if isinstance(node, ast.Assign) and not_collected(node)), None)
-        if hidden and not suite:
-            suite = (f"{'the module' if body is tree.body else 'a class'} with __test__ = False", hidden, None)
         for node in body:
             if isinstance(node, ast.ClassDef):
-                mark = next((d for d in node.decorator_list if marker(d)), None)
+                mark = suite_mark(node.decorator_list + pytestmark(node.body))
                 bodies.append((node.body, suite or (mark and (f"a class marked {marker(mark)}", mark, marker(mark)))))
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and TEST_NAME.match(node.name):
                 if any(dotted(d.func if isinstance(d, ast.Call) else d, names) == "pytest.fixture" for d in node.decorator_list):

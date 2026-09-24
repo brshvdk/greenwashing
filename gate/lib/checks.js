@@ -223,6 +223,8 @@ const MARKERS = {
   fail: 'the test passes when it fails',
 };
 const NOT_RUN = new Set(['skip', 'todo', 'fixme', 'skipIf', 'runIf']);
+// The suite markers after which no test in the suite runs, whatever the environment.
+const SUITE_SKIPS = new Set(['skip', 'todo', 'fixme']);
 // The members that leave a call a test: test.only(...), it.each(table)(...). Anything else is not a
 // test (Playwright's test.beforeEach, test.step, test.describe, test.use).
 const TEST_MODIFIERS = new Set([...Object.keys(MARKERS), 'concurrent', 'each', 'for', 'sequential', 'shuffle']);
@@ -380,6 +382,10 @@ function checkJs(source, changes, checks) {
     for (let line = first; line <= last; line += 1) if (changes.added.has(line)) return true;
     return false;
   };
+  // A test that is new here, or moved here: its first line (with its name) added, and no line removed
+  // in its place - an edited or renamed test is a changed line, one removed and one added. The rest
+  // of it may match other lines (a closing "});").
+  const isNew = (at) => changes.added.has(lineOf(at)) && !changes.gaps.has(lineOf(at));
   // Lines added or changed in the span, or a line removed inside it.
   const touched = (from, to) => {
     const [first, last] = span(from, to);
@@ -401,12 +407,10 @@ function checkJs(source, changes, checks) {
   const calls = testCalls(code, templates);
   const imports = assertImports(source, code);
   const tests = calls.filter((call) => TESTS.has(call.name) && call.members.every((member) => TEST_MODIFIERS.has(member)));
-  // The spans of suites that do not run: describe.skip(...), xdescribe(...); head: the end of the marker.
-  const skippedSuites = calls.filter((call) => SUITES.has(call.name) && call.members.some((member) => NOT_RUN.has(member)))
-    .map((call) => ({
-      start: call.start, end: call.end, head: call.condEnd !== null ? call.condEnd + 1 : call.chainEnd,
-      what: `${call.name}.${call.members.find((member) => NOT_RUN.has(member))}`,
-    }));
+  // The spans of suites that never run: describe.skip(...), xdescribe(...) - not skipIf or runIf,
+  // whose condition may let them run; head: the end of the marker.
+  const skippedSuites = calls.filter((call) => SUITES.has(call.name) && call.members.some((member) => SUITE_SKIPS.has(member)))
+    .map((call) => ({ start: call.start, end: call.end, head: call.chainEnd, what: `${call.name}.${call.members.find((member) => SUITE_SKIPS.has(member))}` }));
   for (const m of code.matchAll(/(?<![\w$.])(xdescribe|xcontext)\s*\(/g)) {
     const end = closing(code, m.index + m[0].length - 1);
     if (end !== -1) skippedSuites.push({ start: m.index, end, head: m.index + m[1].length, what: m[1] });
@@ -502,9 +506,10 @@ function checkJs(source, changes, checks) {
       for (const skip of runtimeSkips(test)) {
         if (added(skip.at, skip.at + 1)) report(CHECKS.skips, skip.at, `${skip.what} - the test stops as skipped`);
       }
-      // A new marker of the suite is reported above, not again for each test in it.
+      // A test new in a suite that never runs, or moved into one; a new marker of the suite is
+      // reported above, not again for each test in it.
       const suite = inSkipped(test);
-      if (suite && !added(suite.start, suite.head) && touched(test.start, test.end + 1)) {
+      if (suite && !added(suite.start, suite.head) && isNew(test.start)) {
         report(CHECKS.skips, test.start, `a test inside ${suite.what} - the test does not run`);
       }
     }
