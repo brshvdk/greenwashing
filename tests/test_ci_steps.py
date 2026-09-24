@@ -5,7 +5,7 @@ GitHub Actions runs a step without a shell: key - `bash -e` (the CI logs show
 "shell: /usr/bin/bash -e {0}"), so no pipefail - in a throwaway directory. A
 step may only have the keys name, env and run, and the workflows may not use
 keys that change how or whether a step runs (shell, if, continue-on-error,
-working-directory, defaults). Needs python3, ruff and git on PATH, as in the
+working-directory, defaults). Needs python3, ruff, git and node on PATH, as in the
 CI job that runs it.
 """
 
@@ -145,6 +145,38 @@ class UnitTestsStepTest(StepCase):
         code, out = self.run_tests_step({"tests/test_exit.py": "import os\nos._exit(0)\n"})
         self.assertNotEqual(code, 0, out)
         self.assertIn("unit tests did not run: no tests ran", out)
+
+
+NODE_PASSING = "const test = require('node:test');\ntest('ok', () => {});\n"
+NODE_FAILING = "const test = require('node:test');\nconst assert = require('node:assert');\ntest('fails', () => assert.fail('planted'));\n"
+
+
+class GateTestsStepTest(StepCase):
+    def run_gate_step(self, files):
+        return self.run_step("ci.yml", "Gate tests", self.make_dir(files))
+
+    def test_passing_suite_passes_and_prints_the_node_version(self):
+        code, out = self.run_gate_step({"gate/test/ok.test.js": NODE_PASSING})
+        self.assertEqual(code, 0, out)
+        self.assertRegex(out.splitlines()[0], r"^v\d+\.\d+\.\d+$")
+        self.assertIn("# pass 1", out)
+
+    def test_failing_test_fails(self):
+        code, out = self.run_gate_step({"gate/test/ok.test.js": NODE_PASSING, "gate/test/bad.test.js": NODE_FAILING})
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("# fail 1", out)
+
+    def test_no_test_files_fail(self):
+        # Node 22 reads the unmatched glob itself: "# tests 0" and exit 0; Node 20: "Could not find".
+        code, out = self.run_gate_step({"gate/lib/x.js": "module.exports = 1;\n"})
+        self.assertNotEqual(code, 0, out)
+        self.assertRegex(out, r"gate tests did not run: (0|no) tests ran")
+
+    def test_run_without_a_summary_line_fails(self):
+        # A test file that kills the runner: no "# tests N" line.
+        code, out = self.run_gate_step({"gate/test/kill.test.js": "process.kill(process.ppid, 'SIGKILL');\n"})
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("gate tests did not run: no tests ran", out)
 
 
 class ToolsVenvStepTest(StepCase):
