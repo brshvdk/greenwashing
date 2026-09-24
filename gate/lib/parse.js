@@ -138,8 +138,8 @@ function tapFailures(all) {
 
 // The names of the tests that failed, in the order the output gives them, each once: TAP "not ok",
 // pytest "FAILED"/"ERROR <node id>", jest "  ● a › b", vitest " FAIL  file > a > b", unittest
-// "FAIL:"/"ERROR:". A file that could not run (jest "Test suite failed to run", vitest
-// " FAIL  file [ file ]") is not a test.
+// "FAIL:"/"ERROR: name (module.Class...)". A file that could not run (jest "Test suite failed to
+// run", vitest " FAIL  file [ file ]") is not a test, and neither is a log line "ERROR: ...".
 function failedTests(text) {
   const all = lines(text);
   const names = [...tapFailures(all)];
@@ -147,7 +147,7 @@ function failedTests(text) {
     const found = /^(?:FAILED|ERROR) (?!\()(.+?)(?: - .*)?$/.exec(line)
       || /^ {2}● (?!Test suite failed to run$)(.+)$/.exec(line)
       || /^ FAIL {2}(?!.* \[ .* \]$)(.+)$/.exec(line)
-      || /^(?:FAIL|ERROR): (.+)$/.exec(line);
+      || /^(?:FAIL|ERROR): (\S+ \(.+\))$/.exec(line);
     if (found) names.push(found[1]);
   }
   return [...new Set(names)];

@@ -87,6 +87,9 @@ test('failed test names: a summary or a file that could not run is not a test, a
   assert.deepEqual(failedTests('FAILED (failures=1)\nERROR (errors=2)\n  ● Test suite failed to run\n FAIL  a.test.js [ a.test.js ]\n'), []);
   assert.deepEqual(failedTests('FAIL: test_a (m.T.test_a)\nFAIL: test_a (m.T.test_a)\n'), ['test_a (m.T.test_a)']);
   assert.deepEqual(failedTests('FAILED test_x.py::test_y[a b] - assert 1 == 2\n'), ['test_x.py::test_y[a b]']);
+  // unittest names a test and its class in parentheses (lines of Python 3.10 to 3.13); a log line is not a test.
+  const unittest = 'ERROR: could not connect to the database\nERROR: setUpClass (test_s.U)\nFAIL: test_doc (test_s.T)\nFAIL: test_sub (test_s.T.test_sub) (i=1)\n';
+  assert.deepEqual(failedTests(unittest), ['setUpClass (test_s.U)', 'test_doc (test_s.T)', 'test_sub (test_s.T.test_sub) (i=1)']);
 });
 
 test('output with no summary gives nothing', () => {
