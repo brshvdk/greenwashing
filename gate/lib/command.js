@@ -6,7 +6,11 @@ const DEFAULT_TIMEOUT_SECONDS = 600;
 // The Stop hook's own timeout in hooks/hooks.json and .claude/settings.json is this plus 60 s:
 // Claude Code cancels a hook that runs longer and lets the agent stop (gate/test/plugin.test.js).
 const MAX_TIMEOUT_SECONDS = 3600;
-const CONFIG_KEYS = ['testCommand', 'timeoutSeconds'];
+const CONFIG_KEYS = ['testCommand', 'timeoutSeconds', 'checks'];
+// The gate's quick checks on changed test lines (gate/lib/checks.js) and the catalog entry each
+// reports; a project turns one off with "checks": {"skips": false}.
+const CHECKS = { skips: 'GW-17', assertions: 'GW-18', selfComparisons: 'GW-01' };
+const CHECK_NAMES = Object.keys(CHECKS);
 const HOW_TO = `add {"testCommand": "<the command that runs your tests>"} to ${CONFIG_FILE} in the project root`;
 // What `npm init` writes when there are no tests.
 const NPM_PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
@@ -21,10 +25,12 @@ const isPythonTest = (file) => /^test_.*\.py$|_test\.py$/.test(file.split('/').p
 // A byte order mark at the start is not part of the JSON (JSON.parse refuses it).
 const withoutBom = (text) => text.replace(/^\uFEFF/, '');
 
+const ALL_CHECKS = Object.fromEntries(CHECK_NAMES.map((name) => [name, true]));
+
 // Reads .greenwashing.json text (or null when the file is absent).
-// Returns {testCommand?, timeoutSeconds} or {error}.
+// Returns {testCommand?, timeoutSeconds, checks} or {error}.
 function readConfig(text) {
-  if (text === null) return { timeoutSeconds: DEFAULT_TIMEOUT_SECONDS };
+  if (text === null) return { timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, checks: ALL_CHECKS };
   let config;
   try {
     config = JSON.parse(withoutBom(text));
@@ -43,7 +49,12 @@ function readConfig(text) {
     && config.timeoutSeconds <= MAX_TIMEOUT_SECONDS)) {
     return { error: `${CONFIG_FILE}: timeoutSeconds must be a whole number from 1 to ${MAX_TIMEOUT_SECONDS}` };
   }
-  return { testCommand: config.testCommand, timeoutSeconds: config.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS };
+  const checks = config.checks === undefined ? {} : config.checks;
+  if (checks === null || typeof checks !== 'object' || Array.isArray(checks)
+    || Object.entries(checks).some(([name, on]) => !CHECK_NAMES.includes(name) || typeof on !== 'boolean')) {
+    return { error: `${CONFIG_FILE}: checks must be an object of true or false for ${CHECK_NAMES.join(', ')}` };
+  }
+  return { testCommand: config.testCommand, timeoutSeconds: config.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS, checks: { ...ALL_CHECKS, ...checks } };
 }
 
 function pytestConfigured(files) {
@@ -85,5 +96,5 @@ function chooseCommand(files, hasPythonTests) {
 const ROOT_FILES = [CONFIG_FILE, 'package.json', ...PYTEST_FILES, ...PYTEST_SECTION_FILES];
 
 module.exports = {
-  chooseCommand, readConfig, pytestConfigured, isPythonTest, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
+  chooseCommand, readConfig, pytestConfigured, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
 };
