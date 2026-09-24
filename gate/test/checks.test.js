@@ -12,12 +12,12 @@ const fresh = (source, checks = ALL) => brief(checkJs(source, lineChanges(null, 
 const edited = (before, after, checks = ALL) => brief(checkJs(after, lineChanges(before, after), checks));
 const OK = "test('adds', () => { expect(add(1, 2)).toBe(3); });";
 
-test('test files are the ones jest, vitest and node --test collect by default, and Python test_*.py and *_test.py', () => {
+test('test files are the ones jest, vitest and node --test collect by default, and Python test*.py (unittest) and *_test.py (pytest)', () => {
   const js = ['a.test.js', 'a.spec.js', 'a.test.ts', 'a.spec.tsx', 'a.test.mjs', 'a.test.cjs', 'a.test.mts', 'a.test.cts',
     'a.test.jsx', 'src/c.spec.ts', 'test.js', 'a-test.js', 'a_test.js', 'test-a.js', 'test/a.js', 'test/sub/b.js',
     '__tests__/a.js', '__tests__/b.ts', 'a-test.ts', 'test-b.ts'];
   for (const file of js) assert.equal(testFileKind(file), 'js', file);
-  for (const file of ['test_a.py', 'tests/a_test.py']) assert.equal(testFileKind(file), 'python', file);
+  for (const file of ['test_a.py', 'tests/a_test.py', 'shop/tests.py', 'test.py']) assert.equal(testFileKind(file), 'python', file);
   const none = ['a.js', 'tests/a.js', 'spec/a.js', 'a.tests.js', 'atest.js', 'a.test.json', 'a.test.md', 'test/a.py', 'a.test.js.snap',
     'contest.js', 'latest.js', 'src/testing.ts'];
   for (const file of none) assert.equal(testFileKind(file), null, file);
