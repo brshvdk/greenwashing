@@ -60,10 +60,12 @@ test('GW-17: every skip, focus and expected-failure marker on an added line is r
 test('GW-17 honest cases: a marker the turn did not add, or code that only looks like one, is not red', () => {
   const old = `it.skip('old', () => {});\n${OK}\n`;
   assert.deepEqual(edited(old, `${old}${OK}\n`), []);
+  const comment = `// it('old', () => {\n/*\n * test('older', () => {\n */\n${OK}\n`;
+  assert.deepEqual(edited(comment, `${comment}${OK}\n`), []);
   const lookalikes = [
     "test('a', { skip: false }, () => { expect(1 + 1).toBe(2); });", 'const r = fit(model, data);', "db.find().skip(10);",
     "cursor.skip(10).limit(5);", "expect(/it.skip\\(/.test(src)).toBe(true);", "const s = 'xit(\"a\")';", "// test (the helper) is slow",
-    "test.todo('parses dates');", "it.todo('later');",
+    "test.todo('parses dates');", "it.todo('later');", "test('parses dates', { todo: true });",
     "// see test('a') in a.test.js is fine", "query({ skip: 10, take: 5 });", "items.only = true;", "const test = require('node:test');",
     "expect(src).not.toMatch(/it.skip('a')/);",
   ];
@@ -150,6 +152,8 @@ test('GW-18: a name that only starts like expect or assert, or an assertion that
 
 test('a test skipped when it runs is a skip, not a test without assertions; t. counts as an assertion', () => {
   assert.deepEqual(fresh("it('a', function () { this.skip(); });"), [[1, 'GW-17']]);
+  // mocha: this.skip() in a hook skips the tests it runs for.
+  assert.deepEqual(fresh("describe('s', function () {\n  before(function () { this.skip(); });\n  it('a', () => { expect(f()).toBe(1); });\n});"), [[2, 'GW-17']]);
   assert.deepEqual(fresh("test('a', (ctx) => { ctx.skip(); run(); });"), [[1, 'GW-17']]);
   assert.deepEqual(fresh("test('a', () => { t.ok(run()); });"), []);
 });
@@ -183,6 +187,7 @@ test('GW-18: functions imported from assertion modules count, with type argument
   for (const source of asserting) assert.deepEqual(fresh(source), [], source);
   assert.deepEqual(fresh("import { strictEqual } from './helpers';\ntest('a', () => { strictEqual(f(), 1); });"), [[2, 'GW-18']]);
   assert.deepEqual(fresh("import { strictEqual } from 'node:assert/strict';\ntest('a', () => { strictEqual(x.y, x.y); });"), [[2, 'GW-01']]);
+  assert.deepEqual(fresh("import * as check from 'node:assert';\ntest('a', () => { check.equal(x.y, x.y); });"), [[2, 'GW-01']]);
 });
 
 test('GW-18: expect with no matcher, a context member that checks nothing, a test with no function, a .for table', () => {
@@ -247,8 +252,9 @@ test('each marker says what it does to the test', () => {
 test('the scanner: JSX text with a stray /* or backtick hides nothing; slashes after } and return start regular expressions', () => {
   assert.deepEqual(fresh("const a = <b>Matches src/* only</b>;\nit.skipIf(ci)('a', () => { expect(f()).toBe(1); });"), [[2, 'GW-17']]);
   assert.deepEqual(fresh("const h = <Hint>Press ` to open</Hint>;\nit.skip('a', () => {});"), [[2, 'GW-17']]);
-  assert.deepEqual(fresh("function f() {}\n/`/.test(s);\nit.only('a', () => { expect(g()).toBe(1); });"), [[3, 'GW-17']]);
-  assert.deepEqual(fresh("function f() { return /`/.test(s); }\nit.only('a', () => { expect(g()).toBe(1); });"), [[2, 'GW-17']]);
+  // A later template: a backtick misread as one would close there and hide the lines between.
+  assert.deepEqual(fresh("function f() {}\n/`/.test(s);\nit.only('a', () => { expect(g()).toBe(1); });\nconst t = `x`;"), [[3, 'GW-17']]);
+  assert.deepEqual(fresh("function f() { return /`/.test(s); }\nit.only('a', () => { expect(g()).toBe(1); });\nconst t = `x`;"), [[2, 'GW-17']]);
   // A comment's lines keep their places; a lone CR ends a line.
   assert.deepEqual(edited('/*\n * notes\n */\n', "/*\n * it('old', () => {\n */\n"), [[2, 'GW-17']]);
   assert.deepEqual(fresh("test('a', () => { expect(f()).toBe(1); });\rxit('b', () => {});\r"), [[2, 'GW-17']]);
@@ -399,6 +405,8 @@ test('Python GW-17: __test__ = False, a new test in a skipped class or module, a
   const named = 'import os\n\nimport pytest\n\nneeds_sandbox = pytest.mark.skipif(not os.environ.get("SANDBOX"), reason="x")\n\n\n';
   assert.deepEqual(python(named, `${named}@needs_sandbox\ndef test_pays():\n    assert pay()\n`), [[8, 'GW-17']]);
   assert.deepEqual(python(named, `${named}def test_pays():\n    assert pay()\n`), []);
+  // A test under a named skip does not run: a skip, not also a test without assertions.
+  assert.deepEqual(python(named, `${named}@needs_sandbox\ndef test_pays():\n    pay()\n`), [[8, 'GW-17']]);
   // A new skipped class or module is one finding, not one more for each test in it.
   assert.deepEqual(python(null, `${skipped}\n    def test_b(self):\n        run()\n`), [[4, 'GW-17']]);
   assert.deepEqual(python(null, `${marked}\n\ndef test_a():\n    assert f()\n`), [[3, 'GW-17']]);

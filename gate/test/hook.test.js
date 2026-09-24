@@ -1346,8 +1346,17 @@ test('a test file moved in the turn is read against the file it was: an old skip
   assert.match(json.reason, /\n- b\.test\.js:5: it\.only - only this test runs \(GW-17\)\nSee each/);
   // Mostly new lines: a new file, not a moved one.
   fs.unlinkSync(path.join(dir, 'b.test.js'));
-  write(dir, { 'c.test.js': `it.skip('old', () => {});\n${JEST_OK}test('more', () => {\n  expect(add(2, 2)).toBe(4);\n});\n` });
+  write(dir, { 'c.test.js': "it.skip('old', () => {});\ntest('more', () => {\n  expect(add(2, 2)).toBe(4);\n}, 5000);\n" });
   assert.match(gate.stop(true).json.reason, /\n- c\.test\.js:1: it\.skip - the test does not run \(GW-17\)\nSee each/);
+});
+
+test('a copied test file is new: the file it came from is still there, so its old skip counts', (t) => {
+  const old = `${JEST_OK}it.skip('old', () => {});\n`;
+  const dir = project(t, { 'a.test.js': old }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': `${old}// more\n`, 'e.test.js': old });
+  assert.match(gate.stop().json.reason, /\n- e\.test\.js:4: it\.skip - the test does not run \(GW-17\)\nSee each/);
 });
 
 test('GW-114 for a .greenwashing.json git ignores: changed or created during the turn blocks, alone too', (t) => {
