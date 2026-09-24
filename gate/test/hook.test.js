@@ -526,7 +526,7 @@ test('the project folder missing in a worktree is did not run, and the worktree 
   write(tree, { 'other.txt': 'y\n' });
   const { json } = gate.stop(false, tree);
   assert.equal(json.decision, 'block');
-  assert.match(json.reason, /the project's folder \.\.\/\.claude\/worktrees\/other\/app does not exist in this tree/);
+  assert.match(json.reason, /\nFolder: \.\.\/\.claude\/worktrees\/other\/app\nResult: did not run - the project's folder is missing there/);
   assert.equal(gate.stop(true, app).json.decision, 'block');
 });
 
@@ -555,6 +555,100 @@ test('a run in a worktree keeps the timeout its own config sets', (t) => {
   const { json } = gate.stop(false, tree);
   assert.equal(json.decision, 'block');
   assert.match(json.reason, /did not finish in 2 s and was stopped/);
+});
+
+// The temporary checkouts the gate made and has not removed: folders in the session's temp
+// directory, or worktrees git still lists.
+function leftovers(gate, dir) {
+  const folders = fs.readdirSync(gate.tmp).filter((name) => name.startsWith('greenwashing-gate-check-'));
+  const listed = git(dir, 'worktree', 'list', '--porcelain').split('\n').filter((line) => line.includes('greenwashing-gate-check-'));
+  return [...folders, ...listed];
+}
+
+// A project and a worktree of it on branch feat, both seen by the gate at the prompt.
+function seenWorktree(t, files = { 't.test.js': NODE_PASS }, testCommand = NODE_CMD) {
+  const dir = project(t, { ...files, '.gitignore': '.claude/worktrees/\n' }, testCommand);
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  const gate = session(t, dir);
+  gate.prompt(tree);
+  return { dir, tree, gate };
+}
+
+test('a worktree removed after a red commit: that commit is tested in a temporary checkout, and blocks', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'red');
+  const red = git(tree, 'rev-parse', 'HEAD').trim();
+  git(dir, 'worktree', 'remove', tree);
+  const { json } = gate.stop(false, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, new RegExp(`\\nFolder: a temporary checkout of ${red.slice(0, 12)} \\(branch feat\\), the last commit of the removed worktree \\.claude/worktrees/feat\\nResult: failed - 1 failed`));
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+test('a worktree removed after a green commit: the temporary checkout passes and the stop is allowed', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
+  git(tree, 'commit', '-qam', 'green');
+  git(dir, 'worktree', 'remove', tree);
+  assert.match(gate.stop(false, dir).json.systemMessage,
+    /^greenwashing: tests passed - node --test --test-reporter=tap t\.test\.js in a temporary checkout of [0-9a-f]{12} \(branch feat\), the last commit of the removed worktree \.claude\/worktrees\/feat: 1 passed, 0 failed, 0 skipped$/);
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+test('a removed worktree whose branch the project merged is not tested again', (t) => {
+  const log = path.join(tempDir(t), 'ran-in');
+  const { dir, tree, gate } = seenWorktree(t, { 't.test.js': NODE_PASS }, `pwd >> ${JSON.stringify(log)}; ${NODE_CMD}`);
+  write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
+  git(tree, 'commit', '-qam', 'green');
+  git(dir, 'merge', '-q', 'feat');
+  git(dir, 'worktree', 'remove', tree);
+  assert.match(gate.stop(false, dir).json.systemMessage, /^greenwashing: tests passed - pwd >> .*: 1 passed, 0 failed, 0 skipped$/);
+  // The project ran its tests for the merge; nothing ran in a temporary checkout.
+  assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split('\n'), [fs.realpathSync(dir)]);
+});
+
+test('a removed worktree whose commit cannot be tested: did not run, and the checkout is still removed', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { '.greenwashing.json': '{"testCommand": ' });
+  git(tree, 'commit', '-qam', 'broken config');
+  git(dir, 'worktree', 'remove', tree);
+  const { json } = gate.stop(false, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /Result: did not run - \.greenwashing\.json is not valid JSON/);
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+test('a removed worktree whose branch and commits are gone: did not run', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'red');
+  // The gate sees the red commit, then the worktree, its branch and the commit disappear.
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+  git(dir, 'worktree', 'remove', tree);
+  git(dir, 'branch', '-q', '-D', 'feat');
+  git(dir, 'reflog', 'expire', '--expire=now', '--all');
+  git(dir, 'gc', '-q', '--prune=now');
+  const { json } = gate.stop(true, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /Result: did not run - the worktree \.claude\/worktrees\/feat was removed and the commit it left cannot be found/);
+});
+
+test('when the hook is stopped during a temporary checkout, the checkout is removed too', async (t) => {
+  const started = path.join(tempDir(t), 'started');
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: `touch ${JSON.stringify(started)}; sleep 30` }) });
+  git(tree, 'commit', '-qam', 'slow');
+  git(dir, 'worktree', 'remove', tree);
+  const hook = spawn(process.execPath, [HOOK, 'stop'], { env: gate.env, stdio: ['pipe', 'ignore', 'ignore'] });
+  const exited = new Promise((resolve) => hook.on('exit', (code) => resolve(code)));
+  hook.stdin.end(JSON.stringify(gate.stopInput(false, dir)));
+  for (let i = 0; i < 100 && !fs.existsSync(started); i += 1) await sleep(100);
+  assert.ok(fs.existsSync(started), 'the tests never started');
+  hook.kill('SIGTERM');
+  assert.equal(await exited, 143);
+  assert.deepEqual(leftovers(gate, dir), []);
 });
 
 test('a worktree removed during the turn leaves nothing to test', (t) => {
