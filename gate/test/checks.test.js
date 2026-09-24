@@ -247,6 +247,15 @@ test('GW-17: a changed condition of skipIf, or a new test in a suite that never 
   assert.deepEqual(edited("it.skip('old', () => {\n  run(1);\n});\n", "it.skip('old', () => {\n  run(2);\n});\n"), []);
 });
 
+test('GW-17: a test commented out by a new /* and */ around its old lines', () => {
+  const failing = "test('multiplies', () => {\n  expect(total(2, 3)).toBe(6);\n});\n";
+  assert.deepEqual(edited(`${OK}\n${failing}`, `${OK}\n/*\n${failing}*/\n`), [[3, 'GW-17']]);
+  assert.deepEqual(edited(`${OK}\n${failing}`, `${OK}\n/* ${failing}*/\n`), [[2, 'GW-17']]);
+  // An old block comment that stays as it was is not new.
+  const old = `${OK}\n/*\n${failing}*/\n`;
+  assert.deepEqual(edited(old, `${old}${OK}\n`), []);
+});
+
 test('each marker says what it does to the test', () => {
   const what = (source) => checkJs(source, lineChanges(null, source), ALL).map((f) => f.what);
   assert.deepEqual(what("it.only('a', () => { expect(f()).toBe(1); });"), ['it.only - only this test runs']);

@@ -35,7 +35,8 @@ const isBreak = (c) => c === '\n' || c === '\r';
 
 // Blanks out comments, the text of strings and templates, and regular expression bodies; quotes,
 // slashes and the code inside ${} stay. Returns {code, kinds, comments, templates}: code has the
-// source's length and line breaks; kinds[i] is CODE, TEXT or COMMENT; comments: [{start, text}];
+// source's length and line breaks; kinds[i] is CODE, TEXT or COMMENT; comments: [{start, text}], with
+// open and close, the indexes of /* and */, for a block comment;
 // templates: index of each opening backtick -> index of its closing one. A template or a block
 // comment that never closes is not one: a stray backtick or `/*` in JSX text would hide the rest
 // of the file, so the backtick is read again as a plain character and the `/*` as code.
@@ -96,7 +97,7 @@ function scan(source, plain) {
       i = end;
     } else if (c === '/' && source[i + 1] === '*' && source.indexOf('*/', i + 2) !== -1) {
       const close = source.indexOf('*/', i + 2);
-      comments.push({ start: i + 2, text: source.slice(i + 2, close) });
+      comments.push({ start: i + 2, text: source.slice(i + 2, close), open: i, close });
       blank(i, close + 2, COMMENT);
       i = close + 2;
     } else if (c === '\'' || c === '"') {
@@ -518,8 +519,10 @@ function checkJs(source, changes, checks) {
       if (added(m.index, m.index + 1)) report(CHECKS.skips, m.index, 'this.skip() - the test stops as skipped');
     }
     for (const comment of comments) {
+      // A block comment whose /* or */ is new comments out the old lines inside it too.
+      const wrapped = comment.open !== undefined && (added(comment.open, comment.open + 1) || added(comment.close, comment.close + 1));
       for (const { line, at } of linesAt(comment.text, comment.start)) {
-        if (COMMENTED_TEST.test(line) && added(at, at + 1)) report(CHECKS.skips, at, `a test in a comment: ${line.trim().slice(0, 60)}`);
+        if (COMMENTED_TEST.test(line) && (wrapped || added(at, at + 1))) report(CHECKS.skips, at, `a test in a comment: ${line.trim().slice(0, 60)}`);
       }
     }
   }
