@@ -103,6 +103,16 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 - **Why it's green:** the branch never runs, and file-level coverage still looks fine.
 - **Catch it:** branch coverage on changed lines, and a fixture per branch.
 
+### GW-17 A skip that buys green
+- **Looks like:** the suite is green right after the agent added `.skip`, `xit` or `@pytest.mark.skip` to a failing test.
+- **Why it's green:** the failing test no longer runs. The summary counts it as skipped, and skipped reads as fine.
+- **Catch it:** any new skip, focus or expected-failure marker in a change is red until a human accepts it.
+
+### GW-18 A test with nothing to check
+- **Looks like:** `it("saves the user", async () => { await save(user) })`.
+- **Why it's green:** there is no assertion. Only a thrown error could fail it, and most bugs don't throw.
+- **Catch it:** every test asserts something about the result. A test without an assertion is red.
+
 ## B. Test doubles that lie
 
 ### GW-20 A mock without the exports the code needs
