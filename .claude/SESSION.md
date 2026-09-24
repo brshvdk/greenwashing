@@ -13,12 +13,13 @@ Step 1, PR 4b - the owner's decisions after PR 4: close the removed-worktree loo
   Last 20 lines of output:
   ```
   The file restored by copying; the next turn end at 16:16 UTC was allowed with `greenwashing: no files changed this turn - tests not run` (the turn's net change was zero, so no tests ran - by design). After this PR's code changes, the turn end at 16:37 UTC was allowed with `greenwashing: tests passed - python3 -I -m unittest discover -s tests && node --test --test-reporter=tap gate/test/*.test.js: 318 passed, 0 failed, 0 skipped`. The gate had already been running in this session since 06:41 UTC (Claude Code picked up `.claude/settings.json` mid-session); its allows are in the session transcript, for example `greenwashing: tests passed - python3 -I -m unittest discover -s tests && node --test --test-reporter=tap gate/test/*.test.js: 304 passed, 0 failed, 0 skipped` (15:52 UTC).
-- [ ] removed-worktree loophole: test a vanished tree's new commit in a temporary worktree
-- [ ] Python counts only with Python tests or Python test config
-- [ ] `docs/limitations.md`
+- [x] removed-worktree loophole: the commit a removed worktree left is tested in a temporary worktree (removed in every outcome, also on a signal); older or merged commits are not; a commit that cannot be found is did not run
+- [x] Python counts only with Python test files (`test_*.py`, `*_test.py`) or pytest settings; a helper `.py` or packaging files do not
+- [x] `docs/limitations.md`; SESSION.md keeps only a pointer to it
+- [x] wave 6 (27 mutants of both rules at 271a538, 3 worktrees, controls green first and last): 26 red; W17 (a removed worktree's commit tested at the checkout's root, not the project's place) closed by a test, red at 3113026; tests for both rules were written first and failed on the old code; live runs of both rules on temporary projects
 - [ ] fresh-context review of this PR and of 7db9327..28aa8a6 (not reviewed in PR 4)
 - [ ] PR; all three checks green (no guarded file touched)
-(1 of 6 done)
+(5 of 7 done)
 gate on this repo: observed live
 
 ## Decisions made (and why)
