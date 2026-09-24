@@ -19,8 +19,8 @@ Step 1, PR 4b - the owner's decisions after PR 4: close the removed-worktree loo
 - [x] wave 6 (27 mutants of both rules at 271a538, 3 worktrees, controls green first and last): 26 red; W17 (a removed worktree's commit tested at the checkout's root, not the project's place) closed by a test, red at 3113026; tests for both rules were written first and failed on the old code; live runs of both rules on temporary projects
 - [x] fresh-context review of this PR and of 7db9327..28aa8a6 (not reviewed in PR 4), accepted by re-running its main finds: 39 mutants (31 red, 8 holes), 10 false passes, 5 false alarms, 1 data-destroying side effect, 2 leftover checkouts, 4 wrong limitation lines, no mentions. Fixed at 4c57e5e: removing the checkout ran `git worktree prune`, which dropped the user's worktrees whose folder was away (reproduced); a discarded experiment kept blocking; a worktree on a fetched pull request blocked; merge-then-reset let a removed worktree's commit through; a signal during `git worktree add` left the checkout; the 8 test holes. The other bypasses are exotic (renamed or reset branches, worktree moves, `merge -s ours`) and went to `docs/limitations.md` only (owner rule)
 - [x] wave 7 (18 mutants at 5833afb: the review's green mutants and mutants of its fixes; controls green first and last): 16 red. R6 (the time left rounded instead of rounded up) survives: a sub-second boundary, not pinned on purpose. C2 (no hand-made removal of the checkout folder) survived because git removes the folder itself when the checkout fails (live run), so that fallback was dead code: removed at f247bf2, where git makes the folder at a new random path. Wave 8 at f247bf2 (3 mutants of the removal: `git worktree remove` skipped, no removal after the run, the checkout hidden from the signal handler; controls green first and last): 3 red. At f247bf2: gate tests 206/206 on Node 20.20.2, 21.7.3 and 22.22.2, unit tests 122 OK, ruff clean, live hook runs of both rules repeated with the same results, leak-check references passed (gitleaks and patterns did not run, exit 2)
-- [ ] PR; all three checks green (no guarded file touched)
-(7 of 8 done)
+- [x] PR https://github.com/brshvdk/greenwashing/pull/11: at 9f7ad31 leak-check, checks (ruff clean, 122 unit tests OK, gate tests 206/206 on Node 22.23.2 with git 2.55.0) and Safety net green; 7 files, no guarded file
+(8 of 8 done)
 gate on this repo: observed live
 
 ## Decisions made (and why)
@@ -64,7 +64,7 @@ gate on this repo: observed live
 
 ## Where we stopped
 PR 4b is on `claude/hopeful-pascal-i0o22j`, restarted from main at a23285a after PR 4 was merged. Next steps:
-1. PR 4b: all three checks green on the PR; the owner merges.
+1. PR 4b (https://github.com/brshvdk/greenwashing/pull/11): waits for the owner's merge and the answer on the temporary checkout's ignored files (Known issues).
 2. Then PR 5: fast checks for JS/TS and Python.
 
 ## Known issues / traps
