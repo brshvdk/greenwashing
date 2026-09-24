@@ -134,3 +134,97 @@ test('findings name the line and what was found', () => {
     { line: 4, gw: 'GW-01', what: 'expect(a.b).toBe(a.b) - both sides are the same' },
   ]);
 });
+
+// Python test files go through python_checks.py, run the way the hook runs it.
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
+const { CHECKS } = require('../lib/command');
+
+function python(before, after, checks = ALL) {
+  const { added, gaps } = lineChanges(before, after);
+  const request = { files: [{ file: 'test_x.py', text: after, added: [...added], gaps: [...gaps], checks }], entries: CHECKS };
+  const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], { input: JSON.stringify(request), encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  const out = JSON.parse(run.stdout);
+  return out.errors.length ? out.errors : out.findings.map(({ line, gw }) => [line, gw]);
+}
+const PY_OK = 'def test_adds():\n    assert add(1, 2) == 3\n';
+
+test('Python GW-17: every skip and expected-failure marker on an added line is red, under any import name', () => {
+  const markers = [
+    'import pytest\n\n\n@pytest.mark.skip(reason="later")\ndef test_a():\n    assert f()\n',
+    'import pytest\n\n\n@pytest.mark.skipif(True, reason="x")\ndef test_a():\n    assert f()\n',
+    'import pytest\n\n\n@pytest.mark.xfail\ndef test_a():\n    assert f()\n',
+    'import unittest\n\n\nclass T(unittest.TestCase):\n    @unittest.skip("x")\n    def test_a(self):\n        self.assertTrue(f())\n',
+    'import unittest\n\n\nclass T(unittest.TestCase):\n    @unittest.skipIf(True, "x")\n    def test_a(self):\n        self.assertTrue(f())\n',
+    'import unittest\n\n\nclass T(unittest.TestCase):\n    @unittest.skipUnless(False, "x")\n    def test_a(self):\n        self.assertTrue(f())\n',
+    'import unittest\n\n\nclass T(unittest.TestCase):\n    @unittest.expectedFailure\n    def test_a(self):\n        self.assertTrue(f())\n',
+    'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.skipTest("x")\n        self.assertTrue(f())\n',
+    'import pytest\n\n\ndef test_a():\n    pytest.skip("x")\n    assert f()\n',
+    'import pytest\n\n\ndef test_a():\n    pytest.xfail("x")\n    assert f()\n',
+    'import pytest\n\nnp = pytest.importorskip("numpy")\n',
+    'import unittest\n\n\ndef test_a():\n    raise unittest.SkipTest("x")\n',
+    'import pytest\n\npytestmark = pytest.mark.skip\n',
+    'import pytest as pt\n\n\n@pt.mark.skip\ndef test_a():\n    assert f()\n',
+    'from pytest import mark\n\n\n@mark.xfail\ndef test_a():\n    assert f()\n',
+    'from unittest import skip\n\n\n@skip("x")\ndef test_a():\n    assert f()\n',
+    'from unittest.case import skip as later\n\n\n@later("x")\ndef test_a():\n    assert f()\n',
+    `${PY_OK}\n\n# def test_old():\n#     assert f()\n`,
+    `${PY_OK}\n\n#async def test_old():\n`,
+  ];
+  for (const source of markers) {
+    assert.deepEqual(python(null, source, { ...ALL, assertions: false }).filter(([, gw]) => gw === 'GW-17').length, 1, source);
+  }
+});
+
+test('Python GW-17 honest cases: an old marker, a name that only looks like one, a comment or a string are not red', () => {
+  const old = 'import pytest\n\n\n@pytest.mark.skip\ndef test_old():\n    assert f()\n\n\n';
+  assert.deepEqual(python(old, `${old}${PY_OK}`), []);
+  for (const source of ['skip = 10\n\n\ndef test_a():\n    assert f(skip)\n', '# define test data below\nDATA = 1\n',
+    'NOTE = "use @pytest.mark.skip only with a reason"\n', 'def test_a(runner):\n    runner.skip(3)\n    assert runner.done\n']) {
+    assert.deepEqual(python(null, source), [], source);
+  }
+});
+
+test('Python GW-18: a new or changed test with no assertion is red; one whose assertion the turn removed too', () => {
+  assert.deepEqual(python(null, 'def test_saves():\n    save(user)\n'), [[1, 'GW-18']]);
+  assert.deepEqual(python(null, 'async def test_saves():\n    await save(user)\n'), [[1, 'GW-18']]);
+  assert.deepEqual(python(null, 'import unittest\n\n\nclass T(unittest.TestCase):\n    def testSaves(self):\n        save(user)\n'), [[5, 'GW-18']]);
+  assert.deepEqual(python('def test_a():\n    run()\n    assert x == 1\n\n\nDONE = 1\n', 'def test_a():\n    run()\n\n\nDONE = 1\n'), [[1, 'GW-18']]);
+});
+
+test('Python GW-18 honest cases: any assertion counts; a helper, a skipped test or an unchanged test is not red', () => {
+  const asserting = [
+    PY_OK, 'import pytest\n\n\ndef test_a():\n    with pytest.raises(ValueError):\n        f()\n',
+    'import pytest\n\n\ndef test_a():\n    with pytest.warns(UserWarning):\n        f()\n', 'def test_a(m):\n    f()\n    m.assert_called_once_with(1)\n',
+    'from pandas.testing import assert_frame_equal\n\n\ndef test_a():\n    assert_frame_equal(f(), g())\n',
+    'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        if f():\n            self.fail("no")\n',
+    'def test_a():\n    def check(x):\n        assert x\n    check(f())\n', 'def testdata():\n    return [1, 2]\n', 'def helper():\n    run()\n',
+  ];
+  for (const source of asserting) assert.deepEqual(python(null, source), [], source);
+  const unchanged = 'def test_old():\n    run()\n\n\n';
+  assert.deepEqual(python(unchanged, `${unchanged}${PY_OK}`), []);
+});
+
+test('Python GW-01: a check whose two sides are the same is red; different sides or a negated check are not', () => {
+  for (const source of ['def test_a():\n    assert x == x\n', 'def test_a():\n    assert a.b is a.b\n', 'def test_a():\n    assert f(1) >= f( 1 )\n',
+    'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(x, x)\n',
+    'import numpy as np\n\n\ndef test_a():\n    np.testing.assert_array_equal(a, a)\n']) {
+    assert.deepEqual(python(null, source).map(([, gw]) => gw), ['GW-01'], source);
+  }
+  for (const source of ['def test_a():\n    assert x == y\n', 'def test_a():\n    assert x != x\n',
+    'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertNotEqual(x, x)\n        self.assertEqual(x, y)\n']) {
+    assert.deepEqual(python(null, source), [], source);
+  }
+});
+
+test('Python: a check turned off does not report; a file Python cannot read is an error, not a pass', () => {
+  const source = 'import pytest\n\n\n@pytest.mark.skip\ndef test_a():\n    assert x == x\n\n\ndef test_b():\n    run()\n';
+  assert.deepEqual(python(null, source).map(([, gw]) => gw).sort(), ['GW-01', 'GW-17', 'GW-18']);
+  assert.deepEqual(python(null, source, { ...ALL, skips: false }).map(([, gw]) => gw).sort(), ['GW-01', 'GW-18']);
+  assert.deepEqual(python(null, source, { ...ALL, assertions: false }).map(([, gw]) => gw).sort(), ['GW-01', 'GW-17']);
+  assert.deepEqual(python(null, source, { ...ALL, selfComparisons: false }).map(([, gw]) => gw).sort(), ['GW-17', 'GW-18']);
+  const [error] = python(null, 'def test_a(:\n');
+  assert.equal(error.file, 'test_x.py');
+  assert.match(error.error, /^Python could not read it \(SyntaxError/);
+});

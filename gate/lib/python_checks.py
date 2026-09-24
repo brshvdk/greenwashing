@@ -110,7 +110,9 @@ def check(file, source, added, gaps, checks, entries):
     if checks.get("assertions") is not False:
         for function, start in test_functions(tree):
             end = function.end_lineno or function.lineno
-            touched = any(line in added for line in range(start, end + 1)) or any(start < gap <= end for gap in gaps)
+            # A function ends at its last statement, so a line removed right after it may have been that
+            # statement: the gap before line end + 1 counts too.
+            touched = any(line in added for line in range(start, end + 1)) or any(start < gap <= end + 1 for gap in gaps)
             if touched and runs(function, names) and not asserts(function, names):
                 report(entries["assertions"], start, f"{function.name} has no assertion")
 

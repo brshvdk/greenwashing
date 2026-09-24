@@ -198,6 +198,25 @@ test('the block reason names the failed tests before the last lines, at most ten
   assert.doesNotMatch(blockReason(run({ output: fixture('jest-green') }), RED), /Failed tests/);
 });
 
+test('the quick checks: findings block with file, line and entry, at most twenty listed; the release says CHECKS', () => {
+  const findings = Array.from({ length: 23 }, (_, i) => ({ file: 'a.test.js', line: i + 1, gw: 'GW-17', what: 'it.skip - the test does not run as written' }));
+  const checks = { kind: 'checks', command: 'greenwashing checks', source: 'the checks', findings };
+  const result = verdict(checks);
+  assert.deepEqual([result.outcome, result.why], ['failed', '23 problems in the test lines this turn added or changed']);
+  const reason = blockReason(checks, result);
+  assert.match(reason, /^greenwashing gate: the changed tests can pass without testing anything - you cannot finish yet\.\n/);
+  assert.match(reason, /\n- a\.test\.js:1: it\.skip - the test does not run as written \(GW-17\)\n/);
+  assert.match(reason, /\n- a\.test\.js:20: .*\n- and 3 more\n/);
+  assert.doesNotMatch(reason, /a\.test\.js:21:/);
+  assert.match(reason, /turn a check off in \.greenwashing\.json/);
+  const released = decide([checks], [result], { blocks: 3 }, true);
+  assert.match(released.message, /^greenwashing: CHECKS DID NOT PASS - WORK NOT ACCEPTED\./);
+  assert.match(decide([run({})], [RED], { blocks: 3 }, true).message, /^greenwashing: TESTS DID NOT PASS/);
+  // Checks that could not run are did not run, like tests.
+  const notRun = { kind: 'checks', command: 'greenwashing checks', source: 'the checks', configError: 'python3 was not found on PATH' };
+  assert.match(blockReason(notRun, verdict(notRun)), /^greenwashing gate: the checks of the changed tests did not run - you cannot finish yet\./);
+});
+
 test('the block reason stays short when a line of output is huge', () => {
   const reason = blockReason(run({ output: `start\n${'x'.repeat(5000000)}\nend` }), RED);
   assert.ok(reason.length < 10000, `${reason.length} characters`);

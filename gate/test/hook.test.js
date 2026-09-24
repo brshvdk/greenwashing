@@ -1367,6 +1367,24 @@ test('the checks read every tree the turn changed: a worktree, a removed worktre
   assert.doesNotMatch(json.reason, /xit/);
 });
 
+test('a finding blocks like a failed test: three times in a row, then the stop is let go as not accepted', (t) => {
+  const dir = project(t, { 'a.test.js': JEST_OK }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': `${JEST_OK}it.only('mine', () => { expect(a).toBe(1); });\n` });
+  for (const active of [false, true, true]) assert.equal(gate.stop(active).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /^greenwashing: CHECKS DID NOT PASS - WORK NOT ACCEPTED\./);
+});
+
+test('GW-114 in a project in a subfolder: its own .greenwashing.json counts', (t) => {
+  const repo = project(t, { 'app/a.test.js': JEST_OK, 'app/.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) }, null);
+  const app = path.join(repo, 'app');
+  const gate = session(t, app);
+  gate.prompt();
+  write(app, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, timeoutSeconds: 5 }) });
+  assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+});
+
 test('a test file that was dirty when the turn started: only the lines the turn changed count', (t) => {
   const dir = project(t, { 'a.test.js': JEST_OK }, GREEN_ECHO);
   // The user's own skip, not committed, before the prompt.
