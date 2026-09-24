@@ -4,7 +4,7 @@
 // two sides are the same (GW-01). This file reads JavaScript and TypeScript with a small scanner;
 // Python test files go to python_checks.py. Pure functions: texts and changed lines in, findings out.
 
-const { isPythonTest } = require('./command');
+const { isPythonTest, CHECKS } = require('./command');
 
 const JS_EXTENSION = /\.(?:[cm]?[jt]s|[jt]sx)$/;
 
@@ -303,9 +303,9 @@ function checkJs(source, changes, checks) {
   if (checks.skips !== false) {
     for (const call of calls) {
       const marker = call.members.find((member) => MARKERS.has(member));
-      if (marker && added(call.start, call.chainEnd)) report('GW-17', call.start, `${call.name}.${marker} - the test does not run as written`);
+      if (marker && added(call.start, call.chainEnd)) report(CHECKS.skips, call.start, `${call.name}.${marker} - the test does not run as written`);
       for (const option of call.options) {
-        if (added(option.at, option.at + 1)) report('GW-17', option.at, `${call.name}(..., { ${option.name}: ... }) - the test does not run as written`);
+        if (added(option.at, option.at + 1)) report(CHECKS.skips, option.at, `${call.name}(..., { ${option.name}: ... }) - the test does not run as written`);
       }
     }
     for (const [re, what] of [
@@ -314,12 +314,12 @@ function checkJs(source, changes, checks) {
       [new RegExp(RUNTIME_SKIP.source, 'g'), (m) => `${m[1]}.${m[2]}() - the test stops as skipped`],
     ]) {
       for (let match = re.exec(code); match; match = re.exec(code)) {
-        if (added(match.index, match.index + 1)) report('GW-17', match.index, what(match));
+        if (added(match.index, match.index + 1)) report(CHECKS.skips, match.index, what(match));
       }
     }
     for (const comment of comments) {
       for (const { line, at } of linesAt(comment.text, comment.start)) {
-        if (COMMENTED_TEST.test(line) && added(at, at + 1)) report('GW-17', at, `a test in a comment: ${line.trim().slice(0, 60)}`);
+        if (COMMENTED_TEST.test(line) && added(at, at + 1)) report(CHECKS.skips, at, `a test in a comment: ${line.trim().slice(0, 60)}`);
       }
     }
   }
@@ -337,7 +337,7 @@ function checkJs(source, changes, checks) {
       const own = param && new RegExp(`(?<![\\w$.])${param.replace(/\$/g, '\\$')}\\s*\\.\\s*[A-Za-z_$]`);
       if (ASSERTION.test(body) || (own && own.test(body))) continue;
       const name = call.list.length > 1 ? ` ${brief(...call.list[0])}` : '';
-      report('GW-18', call.start, `the test${name} has no assertion`);
+      report(CHECKS.assertions, call.start, `the test${name} has no assertion`);
     }
   }
 
@@ -363,7 +363,7 @@ function checkJs(source, changes, checks) {
       if (!actual || !matcher || matcher.end === -1 || props.includes('not') || !SAME_MATCHERS.has(matcher.name)) continue;
       const expected = args(code, matcher.open, matcher.end)[0];
       if (expected && normal(...actual) === normal(...expected) && added(match.index, matcher.end + 1)) {
-        report('GW-01', match.index, `${brief(match.index, matcher.end + 1)} - both sides are the same`);
+        report(CHECKS.selfComparisons, match.index, `${brief(match.index, matcher.end + 1)} - both sides are the same`);
       }
     }
     const assertRe = new RegExp(`(?<![\\w$.])(?:assert(?:\\s*\\.\\s*strict)?|t(?:\\s*\\.\\s*assert)?)\\s*\\.\\s*(?:${SAME_ASSERTS})\\s*\\(`, 'g');
@@ -373,7 +373,7 @@ function checkJs(source, changes, checks) {
       if (end === -1) continue;
       const list = args(code, open, end);
       if (list.length >= 2 && normal(...list[0]) === normal(...list[1]) && added(match.index, end + 1)) {
-        report('GW-01', match.index, `${brief(match.index, end + 1)} - both sides are the same`);
+        report(CHECKS.selfComparisons, match.index, `${brief(match.index, end + 1)} - both sides are the same`);
       }
     }
   }

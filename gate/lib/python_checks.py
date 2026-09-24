@@ -5,7 +5,8 @@ assertion (GW-18), a check whose two sides are the same (GW-01), each only on
 the lines a turn added or changed. The hook runs it as
 `python3 -I python_checks.py` with JSON on stdin:
     {"files": [{"file", "text", "added": [line], "gaps": [line],
-                "checks": {"skips", "assertions", "selfComparisons"}}]}
+                "checks": {"skips", "assertions", "selfComparisons"}}],
+     "entries": {"skips": "GW-17", ...}}
 and reads JSON from stdout:
     {"findings": [{"file", "line", "gw", "what"}], "errors": [{"file", "error"}]}
 """
@@ -82,8 +83,8 @@ def brief(source, node):
     return text if len(text) <= 80 else text[:77] + "..."
 
 
-def check(file, source, added, gaps, checks):
-    """The findings in one file: [{"file", "line", "gw", "what"}]."""
+def check(file, source, added, gaps, checks, entries):
+    """The findings in one file: [{"file", "line", "gw", "what"}]; entries: the catalog entry of each check."""
     tree = ast.parse(source, filename=file)
     names = imported_names(tree)
     findings = []
@@ -99,19 +100,19 @@ def check(file, source, added, gaps, checks):
             if isinstance(node, (ast.Name, ast.Attribute)) and node.lineno in added:
                 name = dotted(node, names)
                 if name in SKIPS:
-                    report("GW-17", node.lineno, f"{name} - the test does not run as written")
+                    report(entries["skips"], node.lineno, f"{name} - the test does not run as written")
                 elif isinstance(node, ast.Attribute) and node.attr == "skipTest":
-                    report("GW-17", node.lineno, f"{name or 'skipTest'}() - the test stops as skipped")
+                    report(entries["skips"], node.lineno, f"{name or 'skipTest'}() - the test stops as skipped")
         for token in tokenize.generate_tokens(io.StringIO(source).readline):
             if token.type == tokenize.COMMENT and token.start[0] in added and COMMENTED_TEST.match(token.string):
-                report("GW-17", token.start[0], f"a test in a comment: {token.string[:60]}")
+                report(entries["skips"], token.start[0], f"a test in a comment: {token.string[:60]}")
 
     if checks.get("assertions") is not False:
         for function, start in test_functions(tree):
             end = function.end_lineno or function.lineno
             touched = any(line in added for line in range(start, end + 1)) or any(start < gap <= end for gap in gaps)
             if touched and runs(function, names) and not asserts(function, names):
-                report("GW-18", start, f"{function.name} has no assertion")
+                report(entries["assertions"], start, f"{function.name} has no assertion")
 
     if checks.get("selfComparisons") is not False:
         for node in ast.walk(tree):
@@ -122,7 +123,7 @@ def check(file, source, added, gaps, checks):
             else:
                 continue
             if same and added_in(node):
-                report("GW-01", node.lineno, f"{brief(source, node)} - both sides are the same")
+                report(entries["selfComparisons"], node.lineno, f"{brief(source, node)} - both sides are the same")
     return findings
 
 
@@ -168,7 +169,7 @@ def main():
     findings, errors = [], []
     for item in request["files"]:
         try:
-            findings += check(item["file"], item["text"], set(item["added"]), set(item["gaps"]), item["checks"])
+            findings += check(item["file"], item["text"], set(item["added"]), set(item["gaps"]), item["checks"], request["entries"])
         except (SyntaxError, ValueError, tokenize.TokenError) as error:
             errors.append({"file": item["file"], "error": f"Python could not read it ({type(error).__name__}: {error})"})
     sys.stdout.buffer.write(json.dumps({"findings": findings, "errors": errors}).encode("utf-8"))

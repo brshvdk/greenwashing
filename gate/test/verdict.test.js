@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { verdict, decide, blockReason } = require('../lib/verdict');
+const { CHECKS } = require('../lib/command');
 
 const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', `${name}.txt`), 'utf8');
 const run = (fields) => ({ command: 'npm test', source: 'package.json scripts.test', timeoutSeconds: 600, exitCode: 0, output: '', ...fields });
@@ -229,8 +230,10 @@ test('failed tests name no catalog entry; did not run names GW-50', () => {
 
 test('the catalog entries the gate cites exist in CATALOG.md', () => {
   const catalog = fs.readFileSync(path.join(__dirname, '..', '..', 'CATALOG.md'), 'utf8');
-  const cited = new Set();
-  for (const result of [verdict(run({ output: 'ok' })), verdict(run({ output: fixture('node22-tap-zero') }))]) cited.add(result.gw);
-  assert.deepEqual([...cited].sort(), ['GW-08', 'GW-50']);
+  const cited = new Set(Object.values(CHECKS));
+  const config = { kind: 'config', command: 'greenwashing checks', files: ['.greenwashing.json'] };
+  for (const result of [verdict(run({ output: 'ok' })), verdict(run({ output: fixture('node22-tap-zero') })), verdict(config)]) cited.add(result.gw);
+  assert.deepEqual([...cited].sort(), ['GW-01', 'GW-08', 'GW-114', 'GW-17', 'GW-18', 'GW-50']);
   for (const id of cited) assert.match(catalog, new RegExp(`^### ${id} `, 'm'), id);
+  assert.match(blockReason(config, verdict(config)), /See GW-114 in /);
 });

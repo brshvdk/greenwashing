@@ -12,7 +12,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { candidatePaths, changedPaths, classify } = require('./lib/changes');
 const { checkJs, testFileKind } = require('./lib/checks');
-const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS } = require('./lib/command');
+const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CONFIG_FILE, CHECKS, DEFAULT_TIMEOUT_SECONDS } = require('./lib/command');
 const { lineChanges } = require('./lib/diff');
 const { verdict, decide } = require('./lib/verdict');
 
@@ -593,7 +593,7 @@ function pythonChecks(files, deadline) {
   const seconds = Math.min(PYTHON_CHECKS_SECONDS, Math.ceil((deadline - Date.now()) / 1000));
   if (seconds < 1) return { error: 'no time was left: the timeout was used up' };
   const result = spawnSync('python3', ['-I', PYTHON_CHECKS], {
-    input: JSON.stringify({ files }), cwd: os.tmpdir(), timeout: seconds * 1000, maxBuffer: OUTPUT_LIMIT, stdio: ['pipe', 'pipe', 'pipe'],
+    input: JSON.stringify({ files, entries: CHECKS }), cwd: os.tmpdir(), timeout: seconds * 1000, maxBuffer: OUTPUT_LIMIT, stdio: ['pipe', 'pipe', 'pipe'],
   });
   if (result.error) return { error: result.error.code === 'ENOENT' ? 'python3 was not found on PATH' : result.error.message };
   const stderr = result.stderr.toString('utf8').trim().split('\n').slice(-3).join(' ');
