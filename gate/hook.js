@@ -317,16 +317,13 @@ function isAncestor(root, commit, of) {
 // Temporary checkouts in use: folder -> repository.
 const checkouts = new Map();
 
+// Deletes the folder, then lets git forget the worktree whose folder is gone.
 function removeWorktree(root, dir) {
+  fs.rmSync(dir, { recursive: true, force: true });
   try {
-    git(root, ['worktree', 'remove', '--force', dir]);
+    git(root, ['worktree', 'prune']);
   } catch {
-    fs.rmSync(dir, { recursive: true, force: true });
-    try {
-      git(root, ['worktree', 'prune']);
-    } catch {
-      // Nothing to prune.
-    }
+    // The repository itself is gone.
   }
   checkouts.delete(dir);
 }

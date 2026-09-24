@@ -635,6 +635,46 @@ test('a removed worktree whose branch and commits are gone: did not run', (t) =>
   assert.match(json.reason, /Result: did not run - the worktree \.claude\/worktrees\/feat was removed and the commit it left cannot be found/);
 });
 
+test('a removed worktree of an old branch it did not change leaves nothing to test', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, '.gitignore': '.claude/worktrees/\n' });
+  const tree = path.join(dir, '.claude', 'worktrees', 'old');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'old');
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'old red work, not in the project');
+  const gate = session(t, dir);
+  gate.prompt(tree);
+  git(dir, 'worktree', 'remove', tree);
+  assert.deepEqual(gate.stop(false, dir).json, NO_CHANGES);
+});
+
+test('a removed worktree whose branch was deleted too: the commit it was last seen on is tested', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'red');
+  const red = git(tree, 'rev-parse', 'HEAD').trim();
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+  git(dir, 'worktree', 'remove', tree);
+  git(dir, 'branch', '-q', '-D', 'feat');
+  const { json } = gate.stop(true, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, new RegExp(`\\nFolder: a temporary checkout of ${red.slice(0, 12)} \\(branch feat\\), the last commit of the removed worktree`));
+  assert.match(json.reason, /Result: failed - 1 failed/);
+});
+
+test('a worktree first seen at the prompt after an interrupted turn is still checked when removed', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, '.gitignore': '.claude/worktrees/\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  // No Stop: the user interrupts while the agent is in the worktree, then writes again.
+  gate.prompt(tree);
+  write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
+  git(tree, 'commit', '-qam', 'green');
+  git(dir, 'worktree', 'remove', tree);
+  assert.match(gate.stop(false, dir).json.systemMessage, /^greenwashing: tests passed - .* in a temporary checkout of [0-9a-f]{12} \(branch feat\)/);
+});
+
 test('when the hook is stopped during a temporary checkout, the checkout is removed too', async (t) => {
   const started = path.join(tempDir(t), 'started');
   const { dir, tree, gate } = seenWorktree(t);
@@ -801,7 +841,8 @@ test('a project in a subfolder of its repository is tested from that subfolder, 
 
 test('outside a git repository with no test command, the stop is allowed with one line', (t) => {
   const dir = tempDir(t);
-  write(dir, { 'main.go': 'package main\n' });
+  // A Python helper that is no test does not make the folder a Python project.
+  write(dir, { 'main.go': 'package main\n', 'helper.py': 'print("helper")\n' });
   const gate = session(t, dir);
   gate.prompt();
   assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: not a git repository and no test command - tests not run' });
@@ -836,6 +877,20 @@ test('a JavaScript project with a helper Python script runs npm test, no testCom
   gate.prompt();
   write(dir, { 'sum.test.js': `${NODE_PASS}// touched\n` });
   assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: tests passed - npm test: 1 passed, 0 failed, 0 skipped' });
+});
+
+test('a JavaScript project with a pytest section in pyproject.toml, setup.cfg or tox.ini needs a testCommand', (t) => {
+  for (const [name, text] of [['pyproject.toml', '[tool.pytest.ini_options]\n'], ['setup.cfg', '[tool:pytest]\n'], ['tox.ini', '[pytest]\n']]) {
+    const dir = project(t, {
+      'package.json': JSON.stringify({ name: 'demo', scripts: { test: 'node --test --test-reporter=tap' } }),
+      'sum.test.js': NODE_PASS,
+      [name]: text,
+    }, null);
+    const gate = session(t, dir);
+    gate.prompt();
+    write(dir, { 'sum.test.js': `${NODE_PASS}// touched\n` });
+    assert.match(gate.stop().json.reason, /package\.json has a test script and the project also has Python tests/, name);
+  }
 });
 
 test('a JavaScript project with Python tests (test_*.py or *_test.py) needs a testCommand', (t) => {
