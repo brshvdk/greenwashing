@@ -11,7 +11,7 @@ Step 1, PR 5 - the gate's quick checks of the test lines a turn added or changed
 - [x] the checks: `gate/lib/checks.js` (JS/TS scanner), `gate/lib/python_checks.py` (ast, `python3 -I`); hook wiring: start texts of dirty test files, every checked tree, a removed worktree's commit, a tree entered later against its newest known first-parent commit; GW-114 first
 - [x] live hook runs on temporary projects with real jest 30.5.2 and pytest 9.1.1: 22 cases (each owner marker, no assertion, same sides; JS and Python) blocked, the 22 honest versions allowed with real counts; `.greenwashing.json` changed in a turn blocked, undone in the same turn allowed, turned off by the user between turns allowed
 - [x] false-alarm probe: the three checks on every test file of this repository as if every line were new: 8 JS files (192 test call sites) and 5 Python files (122 test functions), 0 findings; positive control (a planted skip and an assertion-free test in each file) 13 of 13; no test here passes only by the `t.` rule
-- [ ] wave 9 (76 mutants at 75d019b, running)
+- [x] wave 9 (76 mutants at 75d019b over every rule and honest case, the failed test names, the config, the line diff and the hook wiring; 2 worktrees, controls green first and last): 75 red, each on tests of its own rule; K24 (regular expressions never recognized by the scanner) survived, closed by a test at 746aec9 (the mutant turns 2 tests red)
 - [ ] fresh-context review of PR 5 (running)
 - [ ] PR; all three checks green (no guarded file touched)
 
