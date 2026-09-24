@@ -70,6 +70,14 @@ test('on random texts, the unchanged lines are a longest common subsequence of b
   }
 });
 
+test('the edit limit leaves room for a big honest edit: 1800 new lines around an old one keep it old', () => {
+  const lines = (n, tag) => Array.from({ length: n }, (_, i) => `${tag} ${i}`);
+  const old = "it.skip('old', () => {});";
+  const { added } = changes(old, [...lines(900, 'top'), old, ...lines(900, 'end')].join('\n'));
+  assert.equal(added.length, 1800);
+  assert.ok(!added.includes(901));
+});
+
 test('past the edit limit, every line between the first and the last difference counts as changed', () => {
   const before = Array.from({ length: MAX_EDITS }, (_, i) => `old ${i}`);
   const after = Array.from({ length: MAX_EDITS }, (_, i) => `new ${i}`);

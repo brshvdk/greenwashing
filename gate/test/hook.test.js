@@ -1429,6 +1429,20 @@ test('a finding blocks like a failed test: three times in a row, then the stop i
   assert.match(gate.stop(true).json.systemMessage, /^greenwashing: CHECKS DID NOT PASS - WORK NOT ACCEPTED\./);
 });
 
+test('a project in a subfolder: its own .greenwashing.json turns a check off; a broken checks setting is did not run', (t) => {
+  const repo = project(t, { 'app/a.test.js': JEST_OK, 'app/.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, checks: { skips: false } }) }, null);
+  const app = path.join(repo, 'app');
+  const gate = session(t, app);
+  gate.prompt();
+  write(app, { 'a.test.js': `${JEST_OK}it.skip('later', () => {});\n` });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  const dir = project(t, { 'a.test.js': JEST_OK, '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, checks: { skips: 'no' } }) }, null);
+  const broken = session(t, dir);
+  broken.prompt();
+  write(dir, { 'a.test.js': `${JEST_OK}// more\n` });
+  assert.match(broken.stop().json.reason, /^greenwashing gate: the checks of the changed tests did not run - you cannot finish yet\.\n(.*\n)*Result: did not run - \.greenwashing\.json: checks must be an object of true or false/);
+});
+
 test('GW-114 in a project in a subfolder: its own .greenwashing.json counts', (t) => {
   const repo = project(t, { 'app/a.test.js': JEST_OK, 'app/.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) }, null);
   const app = path.join(repo, 'app');
