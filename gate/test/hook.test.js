@@ -631,6 +631,14 @@ test('a folder git cannot read is not taken for one outside git', (t) => {
   assert.match(session(t, path.join(dir, 'p')).stop().json.reason, /git cannot read the repository this folder is in/);
 });
 
+test('a .git folder with a HEAD that git cannot read is a checkout', (t) => {
+  const dir = tempDir(t);
+  write(dir, { '.git/HEAD': 'ref: refs/heads/main\n', 'main.go': 'package main\n' });
+  const { json } = session(t, dir).stop();
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /git cannot read the repository this folder is in/);
+});
+
 test('an empty .git folder above a folder outside git is not a checkout', (t) => {
   const dir = tempDir(t);
   fs.mkdirSync(path.join(dir, '.git'));
