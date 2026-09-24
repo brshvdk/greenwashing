@@ -497,8 +497,9 @@ async function onStop(input) {
     return settle(file, state, [{ command: '(none)', source: 'git', timeoutSeconds: 0, configError, output: '' }], active);
   }
   // With no start recorded (the prompt hook did not run, or failed), nothing tells which lines the
-  // turn changed: the tests run, as for any change that cannot be told, but the checks cannot.
-  const recorded = Object.keys(state.starts).length > 0;
+  // turn changed: the tests run, as for any change that cannot be told, but the checks cannot. Only
+  // the prompt records a start; a Stop keeps the trees it saw with none.
+  const recorded = Object.values(state.starts).some((start) => start !== null);
   // Every tree the turn has seen, with the project's and the one the agent is in now.
   const starts = entered(state.starts, [home, here]);
   const seen = { ...state.seen };

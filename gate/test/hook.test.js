@@ -1233,9 +1233,12 @@ test('a prompt that could not record its start leaves no older start behind: the
 test('a stop with no recorded start: the tests run, the checks do not, and no file counts as the turn\'s', (t) => {
   const dir = project(t, { 'a.test.js': `${JEST_OK}test.skip('old', () => {});\n` }, GREEN_ECHO);
   const gate = session(t, dir);
-  assert.deepEqual(gate.stop().json, {
-    systemMessage: "greenwashing: tests passed - printf 'Ran 1 test in 0.1s\\n\\nOK\\n': 1 passed, 0 failed, 0 skipped; quick checks of changed tests not run (no start of the turn was recorded)",
-  });
+  // Every stop: the first one leaves the tree it saw without a start, which is still no start.
+  for (const active of [false, true, false]) {
+    assert.deepEqual(gate.stop(active).json, {
+      systemMessage: "greenwashing: tests passed - printf 'Ran 1 test in 0.1s\\n\\nOK\\n': 1 passed, 0 failed, 0 skipped; quick checks of changed tests not run (no start of the turn was recorded)",
+    });
+  }
 });
 
 // The quick checks on the test lines a turn added or changed. The test command only prints green
