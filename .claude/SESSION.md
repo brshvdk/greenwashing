@@ -12,7 +12,7 @@ Step 1, PR 4b - the owner's decisions after PR 4: close the removed-worktree loo
   Counts: 303 passed, 1 failed, 0 skipped
   Last 20 lines of output:
   ```
-  The file restored by copying; the next turn end at 16:16 UTC was allowed with `greenwashing: no files changed this turn - tests not run` (the turn's net change was zero, so no tests ran - by design). The gate had already been running in this session since 06:41 UTC (Claude Code picked up `.claude/settings.json` mid-session); its allows are in the session transcript, for example `greenwashing: tests passed - python3 -I -m unittest discover -s tests && node --test --test-reporter=tap gate/test/*.test.js: 304 passed, 0 failed, 0 skipped` (15:52 UTC).
+  The file restored by copying; the next turn end at 16:16 UTC was allowed with `greenwashing: no files changed this turn - tests not run` (the turn's net change was zero, so no tests ran - by design). After this PR's code changes, the turn end at 16:37 UTC was allowed with `greenwashing: tests passed - python3 -I -m unittest discover -s tests && node --test --test-reporter=tap gate/test/*.test.js: 318 passed, 0 failed, 0 skipped`. The gate had already been running in this session since 06:41 UTC (Claude Code picked up `.claude/settings.json` mid-session); its allows are in the session transcript, for example `greenwashing: tests passed - python3 -I -m unittest discover -s tests && node --test --test-reporter=tap gate/test/*.test.js: 304 passed, 0 failed, 0 skipped` (15:52 UTC).
 - [ ] removed-worktree loophole: test a vanished tree's new commit in a temporary worktree
 - [ ] Python counts only with Python tests or Python test config
 - [ ] `docs/limitations.md`
