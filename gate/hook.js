@@ -335,8 +335,9 @@ function changesIn(tree, start, known) {
 // first-parent line that existed when the turn started (reachable from a commit in known), or from
 // nothing when there is none. Null when git cannot tell.
 function sinceKnown(root, now, known) {
-  // A folder that is not the top of its own checkout any more would be read as its parent repository.
-  if (now.tree && repoRoot(now.tree) !== now.tree) return null;
+  // A folder that is not the top of its own checkout any more would be read as its parent repository;
+  // with no commit known from the start of the turn, every line would read as new.
+  if ((now.tree && repoRoot(now.tree) !== now.tree) || known.length === 0) return null;
   try {
     const head = now.tree ? headCommit(now.tree) : now.commit;
     let base = null;
@@ -491,6 +492,9 @@ async function onStop(input) {
     const configError = 'git cannot read the repository this folder is in, so the gate cannot tell what changed (run git status here to see why)';
     return settle(file, state, [{ command: '(none)', source: 'git', timeoutSeconds: 0, configError, output: '' }], active);
   }
+  // With no start recorded (the prompt hook did not run, or failed), nothing tells which lines the
+  // turn changed: the tests run, as for any change that cannot be told, but the checks cannot.
+  const recorded = Object.keys(state.starts).length > 0;
   // Every tree the turn has seen, with the project's and the one the agent is in now.
   const starts = entered(state.starts, [home, here]);
   const seen = { ...state.seen };
@@ -540,10 +544,12 @@ async function onStop(input) {
   // of its repository), within the timeout the project sets.
   const budget = readConfig(readRootFiles(project)[CONFIG_FILE]).timeoutSeconds || DEFAULT_TIMEOUT_SECONDS;
   const deadline = Date.now() + budget * 1000;
-  const problem = quickChecks(checked, path.relative(home, project), deadline);
+  const problem = recorded ? quickChecks(checked, path.relative(home, project), deadline) : null;
   if (problem) return settle(file, next, [problem], active);
   const targets = [...pending.map((tree) => ({ dir: path.join(tree, path.relative(home, project)) })), ...removed];
-  return settle(file, next, await runAll(targets, project, home, deadline), active);
+  const outcome = settle(file, next, await runAll(targets, project, home, deadline), active);
+  if (!recorded && outcome.systemMessage) outcome.systemMessage += '; quick checks of changed tests not run (no start of the turn was recorded)';
+  return outcome;
 }
 
 const CHECKS_SOURCE = 'the gate\'s checks of the changed test lines';
