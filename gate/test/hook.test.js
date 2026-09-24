@@ -1253,10 +1253,10 @@ test('the block for a failing run names the failed tests', (t) => {
 
 test('GW-17, GW-18, GW-01: each problem in the added test lines blocks, with file, line and entry', (t) => {
   const cases = {
-    'a.test.js': [`${JEST_OK}test.skip('saves', () => {\n  expect(save()).toBe(true);\n});\n`, /- a\.test\.js:4: test\.skip - the test does not run as written \(GW-17\)/],
+    'a.test.js': [`${JEST_OK}test.skip('saves', () => {\n  expect(save()).toBe(true);\n});\n`, /- a\.test\.js:4: test\.skip - the test does not run \(GW-17\)/],
     'b.test.js': [`${JEST_OK}it('saves the user', async () => {\n  await save(user);\n});\n`, /- b\.test\.js:4: the test 'saves the user' has no assertion \(GW-18\)/],
     'c.test.js': [`${JEST_OK}test('limit', () => {\n  expect(result.limit).toBe(result.limit);\n});\n`, /- c\.test\.js:5: expect\(result\.limit\)\.toBe\(result\.limit\) - both sides are the same \(GW-01\)/],
-    'test_d.py': [`${PY_OK}\n\n@pytest.mark.skip(reason="later")\ndef test_saves():\n    assert save()\n`, /- test_d\.py:5: pytest\.mark\.skip - the test does not run as written \(GW-17\)/],
+    'test_d.py': [`${PY_OK}\n\n@pytest.mark.skip(reason="later")\ndef test_saves():\n    assert save()\n`, /- test_d\.py:5: pytest\.mark\.skip - the test does not run \(GW-17\)/],
     'test_e.py': [`${PY_OK}\n\ndef test_saves():\n    save(user)\n`, /- test_e\.py:5: test_saves has no assertion \(GW-18\)/],
     'test_f.py': [`${PY_OK}\n\ndef test_limit():\n    assert result.limit == result.limit\n`, /- test_f\.py:6: assert result\.limit == result\.limit - both sides are the same \(GW-01\)/],
   };
@@ -1375,7 +1375,7 @@ test('the checks read every tree the turn changed: a worktree, a removed worktre
   write(late, { 'a.test.js': `xit('before', () => {});\n${JEST_OK}test.only('new', () => { expect(a).toBe(1); });\n` });
   git(late, 'commit', '-qam', 'focus');
   const { json } = entered.stop(false, late);
-  assert.match(json.reason, /a\.test\.js:5: test\.only - the test does not run as written \(GW-17\)/);
+  assert.match(json.reason, /a\.test\.js:5: test\.only - only this test runs \(GW-17\)/);
   assert.doesNotMatch(json.reason, /xit/);
 });
 

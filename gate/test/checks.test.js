@@ -41,7 +41,7 @@ test('GW-17: every skip, focus and expected-failure marker on an added line is r
   const markers = [
     "it.skip('a', () => {});", "test.skip('a', () => {});", "describe.skip('s', () => {});", "it.only('a', () => {});",
     "describe.only('s', () => {});", "xit('a', () => {});", "xdescribe('s', () => {});", "xtest('a', () => {});",
-    "fit('a', () => {});", "fdescribe('s', () => {});", "test.todo('a');", "test.failing('a', () => {});",
+    "fit('a', () => {});", "fdescribe('s', () => {});", "test.todo('a', () => { run(); });", "test.failing('a', () => {});",
     "test.fails('a', () => {});", "test.skipIf(ci)('a', () => {});", "test.runIf(!ci)('a', () => {});",
     "test.concurrent.skip('a', () => {});", "test.skip.each([[1]])('a %i', (n) => {});", 'it.only.each`x\n${1}`(\'a\', () => {});',
     "test('a', (t) => { t.skip('later'); });", "it('a', function () { this.skip(); });", "test('a', (ctx) => { ctx.skip(); });",
@@ -63,6 +63,7 @@ test('GW-17 honest cases: a marker the turn did not add, or code that only looks
   const lookalikes = [
     "test('a', { skip: false }, () => { expect(1 + 1).toBe(2); });", 'const r = fit(model, data);', "db.find().skip(10);",
     "cursor.skip(10).limit(5);", "expect(/it.skip\\(/.test(src)).toBe(true);", "const s = 'xit(\"a\")';", "// test (the helper) is slow",
+    "test.todo('parses dates');", "it.todo('later');",
     "// see test('a') in a.test.js is fine", "query({ skip: 10, take: 5 });", "items.only = true;", "const test = require('node:test');",
     "expect(src).not.toMatch(/it.skip('a')/);",
   ];
@@ -84,7 +85,7 @@ test('GW-18: a new or changed test with no assertion is red', () => {
 test('GW-18 honest cases: a test with an assertion, an unchanged test, or a test function defined elsewhere is not red', () => {
   const asserting = [
     OK, "it('a', () => { assert.equal(f(), 2); });", "it('a', () => { assert(f()); });", "it('a', () => { f().should.equal(2); });",
-    "test('a', (t) => { t.assert.equal(f(), 2); });", "test('a', async (t) => { await t.test('b', () => {}); });",
+    "test('a', (t) => { t.assert.equal(f(), 2); });", "test('a', async (t) => { await t.test('b', () => { assert.ok(f()); }); });",
     "test('a', (ctx) => { ctx.expect(f()).toBe(2); });", "test('a', async ({ page }) => { await expect(page).toHaveTitle('x'); });",
     "it('a', () => { expectValidUser(u); });", "it('a', () => { assertUser(u); });", "it('a', () => { sinon.assert.calledOnce(spy); });",
     "it('a', () => request(app).get('/').expect(200));", "test('a', function (t) { t.equal(f(), 2); });",
@@ -164,10 +165,103 @@ test('a check turned off in the settings does not report', () => {
 test('findings name the line and what was found', () => {
   const source = `${OK}\nit.skip('later', () => {});\ntest('saves', () => { save(); });\ntest('c', () => { expect(a.b).toBe(a.b); });\n`;
   assert.deepEqual(checkJs(source, lineChanges(null, source), ALL), [
-    { line: 2, gw: 'GW-17', what: 'it.skip - the test does not run as written' },
+    { line: 2, gw: 'GW-17', what: 'it.skip - the test does not run' },
     { line: 3, gw: 'GW-18', what: "the test 'saves' has no assertion" },
     { line: 4, gw: 'GW-01', what: 'expect(a.b).toBe(a.b) - both sides are the same' },
   ]);
+});
+
+test('GW-18: functions imported from assertion modules count, with type arguments too; the same names from elsewhere do not', () => {
+  const asserting = [
+    "import { strictEqual } from 'node:assert/strict';\ntest('a', () => { strictEqual(total([1]), 6); });",
+    "import assert, { deepEqual as same } from 'node:assert';\ntest('a', () => { same(f(), [1]); });",
+    "import * as check from 'node:assert';\ntest('a', () => { check.equal(f(), 1); });",
+    "const { ok: isOk } = require('assert');\ntest('a', () => { isOk(f()); });",
+    "import { expect as want } from 'chai';\nit('a', () => { want(f()).to.equal(1); });",
+    "test('a', () => { expect<number>(f()).toBe(1); });", "test('a', () => { assertType<string>(f()); });",
+  ];
+  for (const source of asserting) assert.deepEqual(fresh(source), [], source);
+  assert.deepEqual(fresh("import { strictEqual } from './helpers';\ntest('a', () => { strictEqual(f(), 1); });"), [[2, 'GW-18']]);
+  assert.deepEqual(fresh("import { strictEqual } from 'node:assert/strict';\ntest('a', () => { strictEqual(x.y, x.y); });"), [[2, 'GW-01']]);
+});
+
+test('GW-18: expect with no matcher, a context member that checks nothing, a test with no function, a .for table', () => {
+  assert.deepEqual(fresh("test('a', () => { expect(total(x)); });"), [[1, 'GW-18']]);
+  assert.deepEqual(fresh("test('a', (t) => { t.diagnostic(String(total(x))); });"), [[1, 'GW-18']]);
+  assert.deepEqual(fresh("test('a', (t) => { t.plan(1); t.assert.ok(f()); });"), []);
+  assert.deepEqual(fresh("test('multiplies by quantity');"), [[1, 'GW-18']]);
+  assert.deepEqual(fresh("test('a', { timeout: 5 });"), [[1, 'GW-18']]);
+  assert.deepEqual(fresh("test.for([[1]])('adds %i', ([n]) => { add(n); });"), [[1, 'GW-18']]);
+  assert.deepEqual(fresh("specify('a', () => { run(); });"), [[1, 'GW-18']]);
+});
+
+test('GW-17: a test stops itself only through its own context; t.skip() on some other t is not a skip', () => {
+  for (const source of ["test('a', (tc) => { tc.skip('flaky'); run(); });", "test('a', ({ skip }) => { skip(!!ci, 'flaky'); run(); });",
+    "test('a', (testContext) => { testContext.skip(); run(); });", "it('a', async function () { this.skip(); });"]) {
+    assert.deepEqual(fresh(source), [[1, 'GW-17']], source);
+  }
+  assert.deepEqual(fresh("const t = tokens('a b');\nt.skip();\ntest('a', () => { expect(t.next()).toBe('b'); });"), []);
+});
+
+test('GW-17 and GW-18 read node:test subtests', () => {
+  assert.deepEqual(fresh("test('a', async (t) => {\n  await t.test('b', { skip: 'flaky' }, () => { assert.ok(f()); });\n});"), [[2, 'GW-17']]);
+  assert.deepEqual(fresh("test('a', async (t) => {\n  await t.test('b', () => { run(); });\n});"), [[2, 'GW-18']]);
+});
+
+test('GW-17: a marker that is named instead of called, and every use of that name the turn adds', () => {
+  assert.deepEqual(fresh("(process.env.CI ? it.skip : it)('a', () => { expect(f()).toBe(1); });"), [[1, 'GW-17']]);
+  assert.deepEqual(fresh("const pending = it.skip;\npending('a', () => { expect(f()).toBe(1); });"), [[1, 'GW-17'], [2, 'GW-17']]);
+  const old = `const itWithSandbox = process.env.SANDBOX ? it : it.skip;\n${OK}\n`;
+  assert.deepEqual(edited(old, `${old}itWithSandbox('pays', () => { expect(pay()).toBe(true); });\n`), [[3, 'GW-17']]);
+  assert.deepEqual(edited(old, `${old}${OK}\n`), []);
+});
+
+test('GW-17: vitest fails and node:test shorthand options; nested keys and false values are not options', () => {
+  assert.deepEqual(fresh("it('a', { fails: true }, () => { expect(f()).toBe(1); });"), [[1, 'GW-17']]);
+  assert.deepEqual(fresh("const skip = !!process.env.CI;\ntest('a', { skip }, () => { assert.ok(f()); });"), [[2, 'GW-17']]);
+  assert.deepEqual(fresh("test('a', { skip: true }, () => {});"), [[1, 'GW-17']]);
+  assert.deepEqual(fresh("test('a', { meta: { skip: true } }, () => { expect(f()).toBe(1); });"), []);
+});
+
+test('GW-17: a changed condition of skipIf, or a new test in a skipped suite, is a new skip; an edit inside an old skip is not', () => {
+  const skipIf = (condition) => `it.skipIf(\n  ${condition},\n)('a', () => {\n  expect(f()).toBe(1);\n});\n`;
+  assert.deepEqual(edited(skipIf("process.platform === 'win32'"), skipIf("process.platform === 'win32' || !!process.env.CI")), [[1, 'GW-17']]);
+  const suite = (body) => `describe.skip('old', () => {\n${body}});\n`;
+  const one = "  test('a', () => { expect(f()).toBe(1); });\n";
+  assert.deepEqual(edited(suite(one), suite(`${one}  test('b', () => { expect(g()).toBe(2); });\n`)), [[3, 'GW-17']]);
+  assert.deepEqual(edited(`xdescribe('old', () => {\n${one}});\n`, `xdescribe('old', () => {\n${one}  test('b', () => { expect(g()).toBe(2); });\n});\n`), [[3, 'GW-17']]);
+  // A new skipped suite is one finding, not one more for each test in it.
+  assert.deepEqual(fresh(suite(`${one}  test('b', () => { run(); });\n`)), [[1, 'GW-17']]);
+  assert.deepEqual(fresh(`xdescribe('new', () => {\n${one}});\n`), [[1, 'GW-17']]);
+  assert.deepEqual(edited("it.skip('old', () => {\n  run(1);\n});\n", "it.skip('old', () => {\n  run(2);\n});\n"), []);
+});
+
+test('each marker says what it does to the test', () => {
+  const what = (source) => checkJs(source, lineChanges(null, source), ALL).map((f) => f.what);
+  assert.deepEqual(what("it.only('a', () => { expect(f()).toBe(1); });"), ['it.only - only this test runs']);
+  assert.deepEqual(what("test.failing('a', () => { expect(f()).toBe(1); });"), ['test.failing - the test passes when it fails']);
+  assert.deepEqual(what("xit('a', () => {});"), ['xit - the test does not run']);
+  assert.deepEqual(what("test('a', () => { t2(); });"), ["the test 'a' has no assertion"]);
+});
+
+test('the scanner: JSX text with a stray /* or backtick hides nothing; slashes after } and return start regular expressions', () => {
+  assert.deepEqual(fresh("const a = <b>Matches src/* only</b>;\nit.skipIf(ci)('a', () => { expect(f()).toBe(1); });"), [[2, 'GW-17']]);
+  assert.deepEqual(fresh("const h = <Hint>Press ` to open</Hint>;\nit.skip('a', () => {});"), [[2, 'GW-17']]);
+  assert.deepEqual(fresh("function f() {}\n/`/.test(s);\nit.only('a', () => { expect(g()).toBe(1); });"), [[3, 'GW-17']]);
+  assert.deepEqual(fresh("function f() { return /`/.test(s); }\nit.only('a', () => { expect(g()).toBe(1); });"), [[2, 'GW-17']]);
+  // A comment's lines keep their places; a lone CR ends a line.
+  assert.deepEqual(edited('/*\n * notes\n */\n', "/*\n * it('old', () => {\n */\n"), [[2, 'GW-17']]);
+  assert.deepEqual(fresh("test('a', () => { expect(f()).toBe(1); });\rxit('b', () => {});\r"), [[2, 'GW-17']]);
+});
+
+test('GW-18 and GW-01 edges: a line removed above a test is not in it; other same-sides matchers; an old self-comparison stays', () => {
+  assert.deepEqual(edited("run();\ntest('a', () => { go(); });\n", "test('a', () => { go(); });\n"), []);
+  for (const source of ['expect(a).toMatchObject(a);', 'expect(a).toBeCloseTo(a);', 't.same(a, a);', 't.strictSame(a, a);', 't.like(a, a);']) {
+    assert.deepEqual(fresh(`test('a', (t) => { ${source} });`), [[1, 'GW-01']], source);
+  }
+  const old = "test('a', () => { assert.equal(x, x); });\n";
+  assert.deepEqual(edited(old, `${old}${OK}\n`), []);
+  assert.deepEqual(fresh("xcontext('s', () => {});\nxspecify('a', () => {});"), [[1, 'GW-17'], [2, 'GW-17']]);
 });
 
 // Python test files go through python_checks.py, run the way the hook runs it.
@@ -275,4 +369,76 @@ test('Python: a check turned off does not report; a file Python cannot read is a
   const [error] = python(null, 'def test_a(:\n');
   assert.equal(error.file, 'test_x.py');
   assert.match(error.error, /^Python could not read it \(SyntaxError/);
+});
+
+test('Python: a BOM, a CR-only file and a NUL byte', () => {
+  assert.deepEqual(python(null, '﻿def test_a():\n    run()\n'), [[1, 'GW-18']]);
+  const cr = 'def test_a():\r    assert f()\r';
+  assert.deepEqual(python(cr, `${cr}# def test_b():\r`), [[3, 'GW-17']]);
+  const [error] = python(null, 'x = 1\x00\n');
+  assert.match(error.error, /^Python could not read it \((SyntaxError|ValueError)/);
+});
+
+test('Python GW-18: a pytest fixture named test_* is not a test; a helper named _assert... is an assertion', () => {
+  assert.deepEqual(python(null, 'import pytest\n\n\n@pytest.fixture\ndef test_cart():\n    return Cart()\n'), []);
+  assert.deepEqual(python(null, 'from pytest import fixture\n\n\n@fixture(scope="module")\ndef test_user():\n    return make()\n'), []);
+  assert.deepEqual(python(null, 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self._assert_file("x")\n'), []);
+});
+
+test('Python GW-17: __test__ = False, a new test in a skipped class or module, a changed skipif condition, a named marker', () => {
+  assert.deepEqual(python(null, 'class TestA:\n    __test__ = False\n\n    def test_a(self):\n        assert f()\n'), [[2, 'GW-17']]);
+  const skipped = 'import pytest\n\n\n@pytest.mark.skip\nclass TestOld:\n    def test_a(self):\n        assert f()\n';
+  assert.deepEqual(python(skipped, `${skipped}\n    def test_b(self):\n        assert g()\n`), [[9, 'GW-17']]);
+  assert.deepEqual(python(skipped, skipped.replace('assert f()', 'assert f(1)')), [[6, 'GW-17']]);
+  const marked = 'import pytest\n\npytestmark = pytest.mark.skip\n';
+  assert.deepEqual(python(marked, `${marked}\n\ndef test_a():\n    assert f()\n`), [[6, 'GW-17']]);
+  const hidden = 'class TestA:\n    __test__ = False\n\n    def test_a(self):\n        assert f()\n';
+  assert.deepEqual(python(hidden, `${hidden}\n    def test_b(self):\n        assert g()\n`), [[7, 'GW-17']]);
+  const skipIf = (condition) => `import sys\n\nimport pytest\n\n\n@pytest.mark.skipif(\n    ${condition},\n    reason="x",\n)\ndef test_a():\n    assert f()\n`;
+  assert.deepEqual(python(skipIf('sys.platform == "win32"'), skipIf('sys.platform == "win32" or True')), [[6, 'GW-17']]);
+  const named = 'import os\n\nimport pytest\n\nneeds_sandbox = pytest.mark.skipif(not os.environ.get("SANDBOX"), reason="x")\n\n\n';
+  assert.deepEqual(python(named, `${named}@needs_sandbox\ndef test_pays():\n    assert pay()\n`), [[8, 'GW-17']]);
+  assert.deepEqual(python(named, `${named}def test_pays():\n    assert pay()\n`), []);
+  // A new skipped class or module is one finding, not one more for each test in it.
+  assert.deepEqual(python(null, `${skipped}\n    def test_b(self):\n        run()\n`), [[4, 'GW-17']]);
+  assert.deepEqual(python(null, `${marked}\n\ndef test_a():\n    assert f()\n`), [[3, 'GW-17']]);
+  // A changed condition of a module's skipif, on a line of its own.
+  const module = (condition) => `import sys\n\nimport pytest\n\npytestmark = [\n    pytest.mark.slow,\n    pytest.mark.skipif(\n        ${condition},\n        reason="x",\n    ),\n]\n\n\ndef test_a():\n    assert f()\n`;
+  assert.deepEqual(python(module('sys.platform == "win32"'), module('True')), [[7, 'GW-17']]);
+  // A class marked xfail still runs its tests: a new test in it without assertions is also GW-18.
+  const xfail = 'import pytest\n\n\n@pytest.mark.xfail\nclass TestOld:\n    def test_a(self):\n        assert f()\n';
+  assert.deepEqual(python(xfail, `${xfail}\n    def test_b(self):\n        run()\n`), [[9, 'GW-17'], [9, 'GW-18']]);
+});
+
+test('Python edges: markers and messages, an old comment, removed lines above a test, other same sides', () => {
+  const found = (source) => python(null, source).map(([, gw]) => gw).sort();
+  assert.deepEqual(found('import pytest\n\n\n@pytest.mark.xfail\ndef test_a():\n    run()\n'), ['GW-17', 'GW-18']);
+  assert.deepEqual(found('def test():\n    run()\n'), ['GW-18']);
+  assert.deepEqual(found('def test_a():\n    assert a <= a\n'), ['GW-01']);
+  assert.deepEqual(found('import numpy as np\n\n\ndef test_a():\n    np.testing.assert_allclose(a, a)\n'), ['GW-01']);
+  assert.deepEqual(found('import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertIs(a, a)\n'), ['GW-01']);
+  assert.deepEqual(found('def test_a():\n    assert a == a == b\n'), []);
+  assert.deepEqual(found('import pytest\n\n\ndef test_a():\n    with pytest.deprecated_call():\n        old()\n'), []);
+  // The second line of an assert that spans lines changed.
+  assert.deepEqual(python('def test_a():\n    assert (\n        a.b\n        == a.c\n    )\n', 'def test_a():\n    assert (\n        a.b\n        == a.b\n    )\n'), [[2, 'GW-01']]);
+  // A new decorator on an old test without assertions makes it a changed test.
+  const bare = 'def test_old():\n    run()\n';
+  assert.deepEqual(python(`import pytest\n\n\n${bare}`, `import pytest\n\n\n@pytest.mark.slow\n${bare}`), [[4, 'GW-18']]);
+  assert.deepEqual(python(`import os\n${bare}`, bare), []);
+  const comment = 'def test_a():\n    assert f()\n\n# def test_old():\n';
+  assert.deepEqual(python(comment, `${comment}\n\ndef test_b():\n    assert g()\n`), []);
+  const words = (source) => JSON.parse(spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+    input: JSON.stringify({ files: [{ file: 't.py', text: source, added: [...lineChanges(null, source).added], gaps: [], checks: ALL }], entries: CHECKS }),
+    encoding: 'utf8',
+  }).stdout).findings.map((f) => f.what);
+  assert.deepEqual(words('import pytest\n\n\n@pytest.mark.xfail\ndef test_a():\n    assert f()\n'), ['pytest.mark.xfail - the test passes when it fails']);
+  assert.deepEqual(words('import pytest\n\n\n@pytest.mark.skip\ndef test_a():\n    assert f()\n'), ['pytest.mark.skip - the test does not run']);
+  const inside = (before, after) => JSON.parse(spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+    input: JSON.stringify({ files: [{ file: 't.py', text: after, added: [...lineChanges(before, after).added], gaps: [], checks: ALL }], entries: CHECKS }),
+    encoding: 'utf8',
+  }).stdout).findings.map((f) => f.what);
+  const old = 'import pytest\n\n\n@pytest.mark.skip\nclass TestOld:\n    def test_a(self):\n        assert f()\n';
+  assert.deepEqual(inside(old, `${old}\n    def test_b(self):\n        assert g()\n`), ['a test inside a class marked pytest.mark.skip - the test does not run']);
+  const hidden = '__test__ = False\n\n\ndef test_a():\n    assert f()\n';
+  assert.deepEqual(inside(hidden, `${hidden}\n\ndef test_b():\n    assert g()\n`), ['a test inside the module with __test__ = False - the runner does not collect it']);
 });
