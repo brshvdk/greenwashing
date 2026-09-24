@@ -10,9 +10,10 @@ Step 1, PR 4 - the gate: a Claude Code Stop hook that runs the project's tests w
 - [x] `.greenwashing.json` guarded by Safety net; "Gate tests" step in CI
 - [x] own mutation wave (88 mutants at 269cd1e, 4 worktrees): 82 red; survivors R1m, R3e, R3f, R5h closed by new tests (each re-run red); C6 stricter (a skipped-only suite), C7 equivalent (TAP is the default off a terminal); live gate runs on temporary projects; real plugin install in an isolated CLAUDE_CONFIG_DIR
 - [x] fresh-context reviews accepted by re-running: leaks (none; the reviewer's planted controls were found), false passes and false alarms (13 + 12; the main ones reproduced), test holes (38 surviving mutants). Fixed in three pieces (parser and verdict; command choice and the docs list; the hook), four points by owner decision; wave 3 (53 mutants at 43f3e23, 3 worktrees, controls green first and last): the reviewers' serious survivors re-expressed on the new code and mutants of the new hook logic, 51 red; survivors H13 (timeout doubled) and N19 (start not checked to be the same tree) closed by tests, red at abd4784
-- [x] final fresh-context review of 0be3f91..b244bcc, accepted by re-running its experiments on the same code: 54 mutants (40 red; 8 real holes, 4 minor, 2 equivalent), 9 false passes, 5 false alarms, no mentions. Its main find (checking only the cwd's tree let an agent break the project and end the turn in a clean worktree) and the holes are fixed at 47257b3; wave 4 re-runs its green mutants and mutants of the fix (results in the PR)
+- [x] final fresh-context review of 0be3f91..b244bcc, accepted by re-running its experiments on the same code: 54 mutants (40 red; 8 real holes, 4 minor, 2 equivalent), 9 false passes, 5 false alarms, no mentions. Its main find (checking only the cwd's tree let an agent break the project and end the turn in a clean worktree) and the holes are fixed at 47257b3. Wave 4 (36 mutants at 47257b3: its green mutants re-expressed and mutants of the fix; controls green first and last): 31 red; B7 and M14 closed by tests (red at 0d1e7e8); M07 (no stop after the first red run) and M13 (no `tree !== home`) equivalent: the decision stays the same; M20 was redundant code (git already resolves links in `--show-toplevel`) and is gone
+- [ ] fresh-context review of the multi-tree change (b244bcc..0d1e7e8, running)
 - [ ] PR; `checks` and `leak-check` green, Safety net red by design
-(7 of 8 done)
+(7 of 9 done)
 gate on this repo: not yet observed live
 
 ## Decisions made (and why)
