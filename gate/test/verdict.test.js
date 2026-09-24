@@ -144,3 +144,11 @@ test('failed tests name no catalog entry; did not run names GW-50', () => {
   const notRun = verdict(run({ output: 'ok' }));
   assert.match(blockReason(run({ output: 'ok' }), notRun), /See GW-50 in /);
 });
+
+test('the catalog entries the gate cites exist in CATALOG.md', () => {
+  const catalog = fs.readFileSync(path.join(__dirname, '..', '..', 'CATALOG.md'), 'utf8');
+  const cited = new Set();
+  for (const result of [verdict(run({ output: 'ok' })), verdict(run({ output: fixture('node22-tap-zero') }))]) cited.add(result.gw);
+  assert.deepEqual([...cited].sort(), ['GW-08', 'GW-50']);
+  for (const id of cited) assert.match(catalog, new RegExp(`^### ${id} `, 'm'), id);
+});
