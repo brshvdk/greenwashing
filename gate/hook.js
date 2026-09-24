@@ -153,8 +153,8 @@ function killGroup(child) {
   }
 }
 
-// Runs the command in a shell, in its own process group, with CI=true (so test scripts do not
-// start a watch mode), and collects stdout and stderr together. If the hook itself is stopped,
+// Runs the command in a shell, in its own process group, with CI=true (test scripts that check it
+// skip their watch mode), and collects stdout and stderr together. If the hook itself is stopped,
 // the command's whole process group is stopped with it.
 function runTests(dir, choice) {
   return new Promise((resolve) => {

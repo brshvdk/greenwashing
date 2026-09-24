@@ -433,7 +433,7 @@ test('Python files git does not track yet make a Python project; outside git, a 
   assert.deepEqual(other.stop().json, { systemMessage: 'greenwashing: tests passed - python3 -m unittest discover: 1 passed, 0 failed, 0 skipped' });
 });
 
-test('the tests run with CI=true, so test scripts do not wait in a watch mode', (t) => {
+test('the tests run with CI=true, which test scripts check before they start a watch mode', (t) => {
   const dir = project(t, { 'ci.js': "if (process.env.CI === 'true') console.log('Ran 1 test in 0.1s\\n\\nOK');\n" }, 'node ci.js');
   const gate = session(t, dir, { env: { CI: 'false' } });
   gate.prompt();
