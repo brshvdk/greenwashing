@@ -1,0 +1,26 @@
+{
+  "description": "greenwashing gate: record the start of each turn; at the end of a turn that changed code, run the tests and block the stop unless they passed",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gate/hook.js\" prompt"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gate/hook.js\" stop",
+            "timeout": 3660
+          }
+        ]
+      }
+    ]
+  }
+}
