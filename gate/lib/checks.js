@@ -44,8 +44,8 @@ function mask(source) {
   const plain = new Set();
   for (;;) {
     const read = scan(source, plain);
-    if (read.unclosed === null) return read;
-    plain.add(read.unclosed);
+    if (read.unclosed.length === 0) return read;
+    for (const at of read.unclosed) plain.add(at);
   }
 }
 
@@ -140,7 +140,7 @@ function scan(source, plain) {
       i += 1;
     }
   }
-  return { code: code.join(''), kinds, comments, templates, unclosed: open.length ? open[0].start : null };
+  return { code: code.join(''), kinds, comments, templates, unclosed: open.map((template) => template.start) };
 }
 
 // A function from an index to its 1-based line.
@@ -363,11 +363,14 @@ function options(code, list) {
 
 // The end of a declaration's initializer that starts at from: a ; or a closing bracket at its own
 // depth, or a line break that neither the line before (ending in an operator: ? : = , < > | & + -
-// * /) nor the line after (starting with ? : . || && ??) continues.
+// * /) nor the line after (starting with ? : . || && ??) continues; at most INITIALIZER characters,
+// so unbalanced brackets cannot make every declaration read to the end of the file.
+const INITIALIZER = 2000;
 function initializerEnd(code, from) {
+  const stop = Math.min(code.length, from + INITIALIZER);
   let depth = 0;
   let last = '';
-  for (let i = from; i < code.length; i += 1) {
+  for (let i = from; i < stop; i += 1) {
     const c = code[i];
     if ('([{'.includes(c)) depth += 1;
     else if (')]}'.includes(c)) {
@@ -378,7 +381,7 @@ function initializerEnd(code, from) {
       && !/^\s*(?:[?:.]|\|\||&&|\?\?)/.test(code.slice(i + 1, i + 80))) return i;
     if (!/\s/.test(c)) last = c;
   }
-  return code.length;
+  return stop;
 }
 
 // The name of a function's first parameter when it is a plain name: (t) => ..., function (t) {...}.
