@@ -731,11 +731,13 @@ test('a commit that cannot be checked out: did not run, and no checkout is left'
   assert.deepEqual(leftovers(gate, dir), []);
 });
 
-test('a worktree git no longer knows (its .git file moved away) is still tested as a folder', (t) => {
+test('a worktree git no longer knows (its .git file moved away): which lines changed cannot be told, so the checks did not run', (t) => {
   const { dir, tree, gate } = seenWorktree(t);
   write(tree, { 't.test.js': NODE_FAIL });
   fs.renameSync(path.join(tree, '.git'), path.join(tree, 'moved-git-file'));
-  assert.equal(gate.stop(false, dir).json.decision, 'block');
+  const { json } = gate.stop(false, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /Result: did not run - git cannot tell which lines changed in \.claude\/worktrees\/feat/);
 });
 
 test("a merged branch is judged again when the project's HEAD moves back", (t) => {

@@ -118,6 +118,12 @@ test('GW-01 honest cases: different sides, a negated check or an unchanged line 
   assert.deepEqual(edited(old, `${old}${OK}\n`), []);
 });
 
+test('a test skipped when it runs is a skip, not a test without assertions; t. counts as an assertion', () => {
+  assert.deepEqual(fresh("it('a', function () { this.skip(); });"), [[1, 'GW-17']]);
+  assert.deepEqual(fresh("test('a', (ctx) => { ctx.skip(); run(); });"), [[1, 'GW-17']]);
+  assert.deepEqual(fresh("test('a', () => { t.ok(run()); });"), []);
+});
+
 test('a check turned off in the settings does not report', () => {
   const source = "it.skip('a', () => { expect(x).toBe(x); });\ntest('b', () => { run(); });";
   assert.deepEqual(fresh(source).map(([, gw]) => gw).sort(), ['GW-01', 'GW-17', 'GW-18']);
@@ -216,6 +222,12 @@ test('Python GW-01: a check whose two sides are the same is red; different sides
     'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertNotEqual(x, x)\n        self.assertEqual(x, y)\n']) {
     assert.deepEqual(python(null, source), [], source);
   }
+});
+
+test('Python: a skipped test is a skip, not a test without assertions', () => {
+  assert.deepEqual(python(null, 'import pytest\n\n\n@pytest.mark.skip\ndef test_a():\n    pass\n'), [[4, 'GW-17']]);
+  assert.deepEqual(python(null, 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.skipTest("x")\n'), [[6, 'GW-17']]);
+  assert.deepEqual(python(null, 'import pytest\n\n\ndef test_a():\n    pytest.skip("x")\n'), [[5, 'GW-17']]);
 });
 
 test('Python: a check turned off does not report; a file Python cannot read is an error, not a pass', () => {

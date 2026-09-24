@@ -335,6 +335,8 @@ function changesIn(tree, start, known) {
 // first-parent line that existed when the turn started (reachable from a commit in known), or from
 // nothing when there is none. Null when git cannot tell.
 function sinceKnown(root, now, known) {
+  // A folder that is not the top of its own checkout any more would be read as its parent repository.
+  if (now.tree && repoRoot(now.tree) !== now.tree) return null;
   try {
     const head = now.tree ? headCommit(now.tree) : now.commit;
     let base = null;
