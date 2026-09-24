@@ -62,10 +62,10 @@ for (const [file, { variable, placeholder }] of Object.entries(CONFIGS)) {
     const project = path.join(base, 'project');
     fs.mkdirSync(project);
     fs.writeFileSync(path.join(project, '.greenwashing.json'), JSON.stringify({ testCommand: 'echo ok' }));
-    const env = { ...process.env, TMPDIR: base, CLAUDE_PROJECT_DIR: project, [variable]: install };
-    if (variable === 'CLAUDE_PROJECT_DIR') {
-      fs.cpSync(path.join(ROOT, 'gate'), path.join(project, 'gate'), { recursive: true });
-    }
+    // The plugin runs the gate from its install folder; this repository runs it from the project.
+    const env = { ...process.env, TMPDIR: base, CLAUDE_PROJECT_DIR: project };
+    if (variable === 'CLAUDE_PLUGIN_ROOT') env.CLAUDE_PLUGIN_ROOT = install;
+    else fs.cpSync(path.join(ROOT, 'gate'), path.join(project, 'gate'), { recursive: true });
     const { hooks } = readJson(file);
     const input = JSON.stringify({ session_id: 'p', cwd: project, stop_hook_active: false });
     const run = (command) => spawnSync('sh', ['-c', command], { input, env, encoding: 'utf8' });
@@ -74,7 +74,9 @@ for (const [file, { variable, placeholder }] of Object.entries(CONFIGS)) {
     const stop = run(hooks.Stop[0].hooks[0].command);
     assert.equal(stop.status, 0, stop.stderr);
     // Not a git repository, so the tests run; "echo ok" prints no counts: blocked.
-    assert.equal(JSON.parse(stop.stdout).decision, 'block');
+    const output = JSON.parse(stop.stdout);
+    assert.equal(output.decision, 'block');
+    assert.match(output.reason, /Command: echo ok \(\.greenwashing\.json\)/);
   });
 }
 

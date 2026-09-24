@@ -16,25 +16,32 @@ const { verdict, decide } = require('./lib/verdict');
 
 const OUTPUT_LIMIT = 64 * 1024 * 1024;
 const GRACE_MS = 5000;
+const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
 
-// One file per session and project in the temp directory: the snapshot of the turn's start
-// and how many times in a row the gate has sent the agent back.
+// One file per session and project in a per-user folder of the temp directory: the snapshot the
+// turn is measured against, how many times in a row the gate has sent the agent back, and whether
+// a Stop has judged the turn (allowed or released it).
 function stateFile(input, dir) {
   const key = crypto.createHash('sha256').update(`${input.session_id || 'no-session'}\0${dir}`).digest('hex');
-  return path.join(os.tmpdir(), 'greenwashing-gate', `${key.slice(0, 32)}.json`);
+  const user = typeof process.getuid === 'function' ? process.getuid() : 'user';
+  return path.join(os.tmpdir(), `greenwashing-gate-${user}`, `${key.slice(0, 32)}.json`);
 }
 
 function loadState(file) {
   try {
     const state = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return { snapshot: state.snapshot || null, blocks: Number.isInteger(state.blocks) ? state.blocks : 0 };
+    return {
+      snapshot: state.snapshot || null,
+      blocks: Number.isInteger(state.blocks) ? state.blocks : 0,
+      judged: state.judged === true,
+    };
   } catch {
-    return { snapshot: null, blocks: 0 };
+    return { snapshot: null, blocks: 0, judged: false };
   }
 }
 
 function saveState(file, state) {
-  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   fs.writeFileSync(file, JSON.stringify(state));
 }
 
@@ -95,8 +102,7 @@ function committedHash(root, commit, file) {
   }
 }
 
-function snapshot(dir) {
-  const root = repoRoot(dir);
+function snapshot(root) {
   if (!root) return null;
   const head = headCommit(root);
   const dirty = {};
@@ -147,7 +153,9 @@ function killGroup(child) {
   }
 }
 
-// Runs the command in a shell, in its own process group, and collects stdout and stderr together.
+// Runs the command in a shell, in its own process group, with CI=true (so test scripts do not
+// start a watch mode), and collects stdout and stderr together. If the hook itself is stopped,
+// the command's whole process group is stopped with it.
 function runTests(dir, choice) {
   return new Promise((resolve) => {
     const run = { command: choice.command, source: choice.source, timeoutSeconds: choice.timeoutSeconds, exitCode: null, output: '' };
@@ -155,11 +163,18 @@ function runTests(dir, choice) {
     let size = 0;
     let child;
     try {
-      child = spawn(choice.command, { cwd: dir, shell: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
+      child = spawn(choice.command, {
+        cwd: dir, shell: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CI: 'true' },
+      });
     } catch (error) {
       resolve({ ...run, startError: error.message });
       return;
     }
+    const onSignal = (signal) => {
+      killGroup(child);
+      process.exit(128 + (os.constants.signals[signal] || 0));
+    };
+    for (const signal of SIGNALS) process.once(signal, onSignal);
     const collect = (chunk) => {
       size += chunk.length;
       if (size <= OUTPUT_LIMIT) chunks.push(chunk);
@@ -173,6 +188,7 @@ function runTests(dir, choice) {
       done = true;
       clearTimeout(timer);
       clearTimeout(grace);
+      for (const signal of SIGNALS) process.removeListener(signal, onSignal);
       killGroup(child);
       resolve({ ...run, output: Buffer.concat(chunks).toString('utf8'), ...fields });
     };
@@ -187,51 +203,87 @@ function runTests(dir, choice) {
   });
 }
 
-function projectDir(input) {
-  return process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd();
+function realpath(dir) {
+  try {
+    return fs.realpathSync(dir);
+  } catch {
+    return dir;
+  }
+}
+
+// The git folder that every worktree of one repository shares; a submodule or a nested clone has its own.
+function commonDir(root) {
+  try {
+    return realpath(path.resolve(root, git(root, ['rev-parse', '--git-common-dir']).toString('utf8').trim()));
+  } catch {
+    return null;
+  }
+}
+
+// project: where the session started (CLAUDE_PROJECT_DIR). tree: the git tree the agent works in -
+// the input's cwd follows Claude into another worktree of the project's repository, but not into
+// another repository (a submodule, a clone). testDir: where the tests run and .greenwashing.json is
+// read - the project's place inside that tree.
+function places(input) {
+  const project = realpath(process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd());
+  const home = repoRoot(project);
+  const here = input.cwd ? repoRoot(input.cwd) : null;
+  const tree = here && home && commonDir(here) === commonDir(home) ? here : home;
+  return { project, tree, testDir: tree ? path.join(tree, path.relative(home, project)) : project };
+}
+
+// The turn ends without running the tests: the user sees one line.
+function allow(file, state, message) {
+  saveState(file, { snapshot: state.snapshot, blocks: 0, judged: true });
+  return { systemMessage: message };
 }
 
 async function onStop(input) {
-  const dir = projectDir(input);
-  const file = stateFile(input, dir);
+  const { project, tree, testDir } = places(input);
+  const file = stateFile(input, project);
   const state = loadState(file);
   let changed = null;
   try {
-    changed = changedSince(state.snapshot);
+    // A snapshot of another tree (the agent moved into a worktree) says nothing about this one.
+    if (state.snapshot && state.snapshot.root === tree) changed = changedSince(state.snapshot);
   } catch {
     changed = null;
   }
   if (changed !== null) {
     const { code, docs } = classify(changed);
-    if (changed.length === 0 || code.length === 0) {
-      saveState(file, { snapshot: state.snapshot, blocks: 0 });
-      return {
-        systemMessage: changed.length === 0
-          ? 'greenwashing: no files changed this turn - tests not run'
-          : `greenwashing: only documentation changed (${docs.length} file${docs.length === 1 ? '' : 's'}) - tests not run`,
-      };
+    if (changed.length === 0) return allow(file, state, 'greenwashing: no files changed this turn - tests not run');
+    if (code.length === 0) {
+      return allow(file, state, `greenwashing: only documentation changed (${docs.length} file${docs.length === 1 ? '' : 's'}) - tests not run`);
     }
   }
-  const choice = chooseCommand(readRootFiles(dir), hasPythonFiles(dir));
+  const choice = chooseCommand(readRootFiles(testDir), hasPythonFiles(testDir));
+  if (!tree && choice.none) return allow(file, state, 'greenwashing: not a git repository and no test command - tests not run');
   const run = choice.error
     ? { command: '(none)', source: 'no test command', timeoutSeconds: choice.timeoutSeconds, configError: choice.error, output: '' }
-    : await runTests(dir, choice);
+    : await runTests(testDir, choice);
   return settle(file, state, run, verdict(run), input.stop_hook_active === true);
 }
 
 function settle(file, state, run, result, stopHookActive) {
   const decision = decide(run, result, state, stopHookActive);
-  saveState(file, { snapshot: state.snapshot, blocks: decision.state.blocks });
+  saveState(file, { snapshot: state.snapshot, blocks: decision.state.blocks, judged: decision.action !== 'block' });
   if (decision.action === 'block') return { decision: 'block', reason: decision.reason };
   return { systemMessage: decision.message };
 }
 
 function onPrompt(input) {
-  const dir = projectDir(input);
-  const file = stateFile(input, dir);
+  const { project, tree } = places(input);
+  const file = stateFile(input, project);
+  const state = loadState(file);
+  if (state.snapshot && !state.judged) {
+    // No Stop judged the last turn (the user interrupted it, or the API failed): its changes
+    // still count, so the start stays where it was. A new prompt still restarts the block count.
+    saveState(file, { ...state, blocks: 0 });
+    return;
+  }
   // First forget the last turn, so a snapshot cut short by the hook timeout reads as "unknown".
-  saveState(file, { snapshot: null, blocks: 0 });
-  saveState(file, { snapshot: snapshot(dir), blocks: 0 });
+  saveState(file, { snapshot: null, blocks: 0, judged: false });
+  saveState(file, { snapshot: snapshot(tree), blocks: 0, judged: false });
 }
 
 function readStdin() {
@@ -272,8 +324,7 @@ async function main() {
     output = await onStop(input);
   } catch (error) {
     // The gate itself failing is "did not run": block like any other red result.
-    const dir = projectDir(input);
-    const file = stateFile(input, dir);
+    const file = stateFile(input, realpath(process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()));
     const run = { command: '(gate)', source: 'greenwashing gate', timeoutSeconds: 0, configError: `the gate failed: ${error.message}`, output: '' };
     output = settle(file, loadState(file), run, verdict(run), input.stop_hook_active === true);
   }
