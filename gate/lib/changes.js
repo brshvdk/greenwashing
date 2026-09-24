@@ -4,7 +4,8 @@
 
 const path = require('path');
 
-const DOC_EXTENSIONS = ['.md', '.markdown', '.txt', '.rst', '.adoc'];
+// Not .txt: requirements.txt, CMakeLists.txt and test data are code (owner decision, PR 4 review).
+const DOC_EXTENSIONS = ['.md', '.markdown', '.rst', '.adoc'];
 
 function isDocumentation(file) {
   return DOC_EXTENSIONS.includes(path.extname(file).toLowerCase());

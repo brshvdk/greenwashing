@@ -4,10 +4,13 @@ const assert = require('node:assert/strict');
 const { isDocumentation, candidatePaths, changedPaths, classify } = require('../lib/changes');
 
 test('documentation is told by the file extension, in any case', () => {
-  for (const file of ['README.md', 'docs/guide.MD', 'notes.txt', 'index.rst', 'manual.adoc', 'a/b.markdown']) {
+  for (const file of ['README.md', 'docs/guide.MD', 'index.rst', 'manual.adoc', 'a/b.markdown']) {
     assert.equal(isDocumentation(file), true, file);
   }
-  for (const file of ['app.js', 'config.json', 'LICENSE', 'page.mdx', 'md.js', 'x.md.js', 'Makefile', '.greenwashing.json']) {
+  for (const file of ['app.js', 'config.json', 'LICENSE', 'page.mdx', 'md.js', 'x.md.js', 'Makefile', '.greenwashing.json',
+    'src/app.ts', 'ci.yml', 'config.yaml', 'pyproject.toml', 'run.sh', 'app.py',
+    // Owner decision: .txt is code (requirements, CMake lists, data the tests read).
+    'notes.txt', 'requirements.txt', 'CMakeLists.txt', 'data/stopwords.txt']) {
     assert.equal(isDocumentation(file), false, file);
   }
 });
@@ -29,6 +32,6 @@ test('a file missing from one side counts as absent there', () => {
 });
 
 test('changes split into code and documentation', () => {
-  assert.deepEqual(classify(['a.md', 'b.js', 'c.txt']), { code: ['b.js'], docs: ['a.md', 'c.txt'] });
+  assert.deepEqual(classify(['a.md', 'b.js', 'c.rst', 'd.txt']), { code: ['b.js', 'd.txt'], docs: ['a.md', 'c.rst'] });
   assert.deepEqual(classify(['a.md']), { code: [], docs: ['a.md'] });
 });

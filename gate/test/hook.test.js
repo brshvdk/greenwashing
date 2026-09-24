@@ -147,7 +147,7 @@ test('only documentation changed: the stop is allowed with one line, the tests a
   const dir = project(t, { 't.test.js': NODE_FAIL, 'README.md': 'a\n' });
   const gate = session(t, dir);
   gate.prompt();
-  write(dir, { 'README.md': 'b\n', 'docs/new.txt': 'c\n' });
+  write(dir, { 'README.md': 'b\n', 'docs/new.rst': 'c\n' });
   const { json } = gate.stop();
   assert.deepEqual(json, { systemMessage: 'greenwashing: only documentation changed (2 files) - tests not run' });
 });
