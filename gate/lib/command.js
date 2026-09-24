@@ -3,6 +3,9 @@
 
 const CONFIG_FILE = '.greenwashing.json';
 const DEFAULT_TIMEOUT_SECONDS = 600;
+// The Stop hook's own timeout in hooks/hooks.json and .claude/settings.json is this plus 60 s:
+// Claude Code cancels a hook that runs longer and lets the agent stop (gate/test/hooks-config.test.js).
+const MAX_TIMEOUT_SECONDS = 3600;
 const CONFIG_KEYS = ['testCommand', 'timeoutSeconds'];
 const HOW_TO = `add {"testCommand": "<the command that runs your tests>"} to ${CONFIG_FILE} in the project root`;
 
@@ -24,8 +27,9 @@ function readConfig(text) {
   if ('testCommand' in config && (typeof config.testCommand !== 'string' || !config.testCommand.trim())) {
     return { error: `${CONFIG_FILE}: testCommand must be a non-empty string` };
   }
-  if ('timeoutSeconds' in config && !(Number.isInteger(config.timeoutSeconds) && config.timeoutSeconds > 0)) {
-    return { error: `${CONFIG_FILE}: timeoutSeconds must be a positive whole number` };
+  if ('timeoutSeconds' in config && !(Number.isInteger(config.timeoutSeconds) && config.timeoutSeconds > 0
+    && config.timeoutSeconds <= MAX_TIMEOUT_SECONDS)) {
+    return { error: `${CONFIG_FILE}: timeoutSeconds must be a whole number from 1 to ${MAX_TIMEOUT_SECONDS}` };
   }
   return { testCommand: config.testCommand, timeoutSeconds: config.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS };
 }
@@ -68,4 +72,6 @@ function chooseCommand(files, hasPythonFiles) {
 
 const ROOT_FILES = [CONFIG_FILE, 'package.json', 'pytest.ini', 'conftest.py', ...PYTHON_MARKERS];
 
-module.exports = { chooseCommand, readConfig, pytestConfigured, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, HOW_TO };
+module.exports = {
+  chooseCommand, readConfig, pytestConfigured, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
+};

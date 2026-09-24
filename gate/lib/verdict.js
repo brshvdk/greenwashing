@@ -20,12 +20,14 @@ function countsText(sum) {
   return `${sum.passed} passed, ${sum.failed} failed, ${sum.skipped} skipped`;
 }
 
-// run: {command, source, timeoutSeconds, startError, timedOut, exitCode, output}.
+// run: {command, source, timeoutSeconds, configError, startError, timedOut, outputTooLarge, exitCode, output}.
 // Returns {outcome: 'passed' | 'failed' | 'did not run', why, gw, counts}.
 function verdict(run) {
   const didNotRun = (why, gw = 'GW-50', counts = null) => ({ outcome: 'did not run', why, gw, counts });
+  if (run.configError) return didNotRun(run.configError);
   if (run.startError) return didNotRun(`the command could not start: ${run.startError}`);
   if (run.timedOut) return didNotRun(`the command did not finish in ${run.timeoutSeconds} s and was stopped`);
+  if (run.outputTooLarge) return didNotRun(`the output was larger than ${run.outputTooLarge} bytes and was not read`);
   const summaries = parseSummaries(run.output);
   if (summaries.length === 0) {
     const notFound = run.exitCode === 127 ? 'the command was not found (exit code 127); ' : '';

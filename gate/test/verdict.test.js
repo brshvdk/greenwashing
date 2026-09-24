@@ -61,6 +61,14 @@ test('a command that could not start did not run', () => {
   assert.match(result.why, /could not start: spawn sh ENOENT/);
 });
 
+test('a config error or an output too large to read did not run', () => {
+  const config = verdict(run({ configError: 'no test command found; add it', exitCode: null }));
+  assert.deepEqual([config.outcome, config.why, config.gw], ['did not run', 'no test command found; add it', 'GW-50']);
+  const large = verdict(run({ outputTooLarge: 64, output: fixture('unittest-green') }));
+  assert.deepEqual([large.outcome, large.gw], ['did not run', 'GW-50']);
+  assert.match(large.why, /larger than 64 bytes and was not read/);
+});
+
 test('a timeout did not run, even with green counts printed before it', () => {
   const result = verdict(run({ timedOut: true, timeoutSeconds: 7, exitCode: null, output: fixture('unittest-green') }));
   assert.deepEqual(brief(result), ['did not run', 'GW-50']);

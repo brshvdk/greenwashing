@@ -53,9 +53,11 @@ test('a broken package.json is reported, not skipped', () => {
   assert.match(pick({ 'package.json': '{"scripts": ' }, true).error, /package\.json is not valid JSON/);
 });
 
-test('.greenwashing.json: the timeout defaults to 10 minutes', () => {
+test('.greenwashing.json: the timeout defaults to 10 minutes and goes up to an hour', () => {
   assert.deepEqual(readConfig(null), { timeoutSeconds: 600 });
   assert.deepEqual(readConfig('{"testCommand": "make test"}'), { testCommand: 'make test', timeoutSeconds: 600 });
+  assert.deepEqual(readConfig('{"timeoutSeconds": 3600}'), { testCommand: undefined, timeoutSeconds: 3600 });
+  assert.deepEqual(readConfig('{"timeoutSeconds": 1}'), { testCommand: undefined, timeoutSeconds: 1 });
 });
 
 test('.greenwashing.json: a config that cannot be trusted is an error, not a default', () => {
@@ -68,10 +70,11 @@ test('.greenwashing.json: a config that cannot be trusted is an error, not a def
     '{"testCommand": ""}': /testCommand must be a non-empty string/,
     '{"testCommand": "   "}': /testCommand must be a non-empty string/,
     '{"testCommand": ["make"]}': /testCommand must be a non-empty string/,
-    '{"timeoutSeconds": 0}': /timeoutSeconds must be a positive whole number/,
-    '{"timeoutSeconds": -5}': /timeoutSeconds must be a positive whole number/,
-    '{"timeoutSeconds": 1.5}': /timeoutSeconds must be a positive whole number/,
-    '{"timeoutSeconds": "600"}': /timeoutSeconds must be a positive whole number/,
+    '{"timeoutSeconds": 0}': /timeoutSeconds must be a whole number from 1 to 3600/,
+    '{"timeoutSeconds": -5}': /timeoutSeconds must be a whole number from 1 to 3600/,
+    '{"timeoutSeconds": 1.5}': /timeoutSeconds must be a whole number from 1 to 3600/,
+    '{"timeoutSeconds": "600"}': /timeoutSeconds must be a whole number from 1 to 3600/,
+    '{"timeoutSeconds": 3601}': /timeoutSeconds must be a whole number from 1 to 3600/,
   };
   for (const [text, message] of Object.entries(bad)) {
     assert.match(readConfig(text).error, message, text);
