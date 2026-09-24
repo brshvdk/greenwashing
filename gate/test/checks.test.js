@@ -48,6 +48,8 @@ test('GW-17: every skip, focus and expected-failure marker on an added line is r
     "test('a', (t) => { t.todo(); });", "test('a', { skip: true }, () => {});", "test('a', { only: true }, () => {});",
     "describe('s', { todo: 'later' }, () => {});", "// it('a', () => {", "// test('a', () => {", "/*\n * test.skip('a', () => {\n */",
     "suite.skip('s', () => {});", "context.only('s', () => {});", "specify.skip('a', () => {});", "bench.skip('b', () => {});",
+    // A quote inside a regular expression does not hide the rest of the line.
+    "expect(s).toMatch(/'/); it.skip('a', () => {});",
   ];
   for (const source of markers) {
     const found = fresh(source, { ...ALL, assertions: false }).filter(([, gw]) => gw === 'GW-17');
@@ -62,6 +64,7 @@ test('GW-17 honest cases: a marker the turn did not add, or code that only looks
     "test('a', { skip: false }, () => { expect(1 + 1).toBe(2); });", 'const r = fit(model, data);', "db.find().skip(10);",
     "cursor.skip(10).limit(5);", "expect(/it.skip\\(/.test(src)).toBe(true);", "const s = 'xit(\"a\")';", "// test (the helper) is slow",
     "// see test('a') in a.test.js is fine", "query({ skip: 10, take: 5 });", "items.only = true;", "const test = require('node:test');",
+    "expect(src).not.toMatch(/it.skip('a')/);",
   ];
   for (const source of lookalikes) {
     assert.deepEqual(fresh(source, { ...ALL, assertions: false }), [], source);
