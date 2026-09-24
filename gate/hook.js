@@ -157,8 +157,9 @@ function sighting(root) {
 }
 
 // The start of the turn in one tree: HEAD, a hash of every dirty file, and the text of each dirty
-// test file (a clean one's is in HEAD), for the lines the turn changes in it.
-function snapshot(root) {
+// test file (a clean one's is in HEAD), for the lines the turn changes in it. The project's settings
+// file counts as dirty whatever git says: git does not list it when it is ignored.
+function snapshot(root, settings) {
   if (!root) return null;
   const head = headCommit(root);
   const dirty = {};
@@ -168,6 +169,7 @@ function snapshot(root) {
     const text = testFileKind(file) ? worktreeText(root, file, TEXT_LIMIT) : null;
     if (text !== null) texts[file] = text;
   }
+  dirty[settings] = worktreeHash(root, settings);
   return { root, head, dirty, texts };
 }
 
@@ -318,6 +320,9 @@ function entered(starts, trees) {
 }
 
 const NO_DIFF = { files: [], before: () => null, after: () => null };
+
+// The project's settings file in its tree; rel: the project's place in its repository.
+const settingsPath = (rel) => (rel ? `${rel}/${CONFIG_FILE}` : CONFIG_FILE);
 
 // What changed in one tree since the start of the turn ({files, before, after} of turnDiff), or
 // null when that cannot be told. A tree the agent entered after the start counts as unchanged only
@@ -569,7 +574,7 @@ function quickChecks(checked, rel, deadline) {
   const findings = [];
   const python = [];
   for (const target of checked) {
-    const config = readConfig(target.diff.after(rel ? `${rel}/${CONFIG_FILE}` : CONFIG_FILE));
+    const config = readConfig(target.diff.after(settingsPath(rel)));
     if (config.error) return checksNotRun(config.error);
     if (!Object.values(config.checks).includes(true)) continue;
     for (const f of target.diff.files) {
@@ -641,7 +646,7 @@ function onPrompt(input) {
   const seen = {};
   for (const tree of [home, here]) {
     if (tree) {
-      starts[tree] = snapshot(tree);
+      starts[tree] = snapshot(tree, settingsPath(path.relative(home, project)));
       seen[tree] = sighting(tree);
     }
   }

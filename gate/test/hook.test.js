@@ -1325,6 +1325,25 @@ test('GW-114: .greenwashing.json changed during the turn blocks; changed between
   assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
 });
 
+test('GW-114 for a .greenwashing.json git ignores: changed or created during the turn blocks, alone too', (t) => {
+  const dir = project(t, { 'a.test.js': JEST_OK, '.gitignore': '.greenwashing.json\n' }, null);
+  const settings = (checks) => ({ '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, ...(checks ? { checks } : {}) }) });
+  const gate = session(t, dir);
+  // Created during the turn, with nothing else changed; removed again, nothing changed.
+  gate.prompt();
+  write(dir, settings());
+  assert.match(gate.stop().json.reason, /the gate's settings changed during this turn - you cannot finish yet\.\nChanged: \.greenwashing\.json\n/);
+  fs.unlinkSync(path.join(dir, '.greenwashing.json'));
+  assert.equal(gate.stop(true).json.systemMessage, 'greenwashing: no files changed this turn - tests not run');
+  // The user creates it between turns; the agent changes it during the next one.
+  write(dir, settings());
+  gate.prompt();
+  write(dir, { ...settings({ skips: false }), 'a.test.js': `${JEST_OK}// more\n` });
+  assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+  write(dir, settings());
+  assert.match(gate.stop(true).json.systemMessage, /^greenwashing: tests passed/);
+});
+
 test('Python test checks that cannot run are did not run: no python3 on PATH, or a file Python cannot read', (t) => {
   const bin = tempDir(t);
   for (const tool of ['git', 'sh']) fs.symlinkSync(spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim(), path.join(bin, tool));
