@@ -364,7 +364,9 @@ test('after a Stop judged the turn (green, docs only, released), the next prompt
 });
 
 test('when the agent works in another worktree of the repository, that worktree is tested', (t) => {
-  const dir = project(t, { 't.test.js': NODE_PASS });
+  // Claude Code's default place for worktrees, which its docs say to add to .gitignore: then the
+  // main checkout shows no change at all (code.claude.com/docs/en/worktrees).
+  const dir = project(t, { 't.test.js': NODE_PASS, '.gitignore': '.claude/worktrees/\n' });
   const gate = session(t, dir);
   gate.prompt();
   const tree = path.join(dir, '.claude', 'worktrees', 'feat');
