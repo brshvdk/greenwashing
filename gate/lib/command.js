@@ -4,7 +4,7 @@
 const CONFIG_FILE = '.greenwashing.json';
 const DEFAULT_TIMEOUT_SECONDS = 600;
 // The Stop hook's own timeout in hooks/hooks.json and .claude/settings.json is this plus 60 s:
-// Claude Code cancels a hook that runs longer and lets the agent stop (gate/test/hooks-config.test.js).
+// Claude Code cancels a hook that runs longer and lets the agent stop (gate/test/plugin.test.js).
 const MAX_TIMEOUT_SECONDS = 3600;
 const CONFIG_KEYS = ['testCommand', 'timeoutSeconds'];
 const HOW_TO = `add {"testCommand": "<the command that runs your tests>"} to ${CONFIG_FILE} in the project root`;
