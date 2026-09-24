@@ -1,0 +1,23 @@
+
+ RUN  v5.0.1 /project
+
+ ❯ g.test.js (0 test)
+
+⎯⎯⎯⎯⎯⎯ Failed Suites 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  g.test.js [ g.test.js ]
+ReferenceError: test is not defined
+ ❯ g.test.js:1:1
+      1| test('a', () => { expect(1).toBe(1); });
+       | ^
+      2| test('b', () => { expect(2).toBe(2); });
+      3|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  2 passed (2)
+   Start at  06:01:42
+   Duration  229ms (transform 46%, import 36%, worker 12%, tests 5%, environment 1%)
+

@@ -1,0 +1,28 @@
+test_a (test_m.T.test_a) ... ok
+test_b (test_m.T.test_b) ... ok
+test_c (test_m.T.test_c) ... FAIL
+test_d (test_m.T.test_d) ... skipped 'no'
+test_e (test_m.T.test_e) ... ERROR
+
+======================================================================
+ERROR: test_e (test_m.T.test_e)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/project/test_m.py", line 8, in test_e
+    def test_e(self): raise RuntimeError("boom")
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^
+RuntimeError: boom
+
+======================================================================
+FAIL: test_c (test_m.T.test_c)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/project/test_m.py", line 5, in test_c
+    def test_c(self): self.assertEqual(1, 2)
+                      ^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 1 != 2
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.001s
+
+FAILED (failures=1, errors=1, skipped=1)

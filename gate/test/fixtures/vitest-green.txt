@@ -1,0 +1,9 @@
+
+ RUN  v5.0.1 /project
+
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  06:06:03
+   Duration  352ms (transform 57%, import 26%, worker 10%, tests 7%)
+
