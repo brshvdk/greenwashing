@@ -232,6 +232,20 @@ test('a new user prompt starts the count again', (t) => {
   assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
 });
 
+test('a stop that Claude Code says is not continuing after a block starts the count again', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  gate.stop(false);
+  gate.stop(true);
+  // No new prompt, but stop_hook_active is false: a fresh chain of three blocks.
+  assert.equal(gate.stop(false).json.decision, 'block');
+  assert.equal(gate.stop(true).json.decision, 'block');
+  assert.equal(gate.stop(true).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+});
+
 test('without a recorded start of the turn, the tests run', (t) => {
   const dir = project(t, { 't.test.js': NODE_FAIL });
   const gate = session(t, dir);
