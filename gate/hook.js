@@ -5,16 +5,23 @@
 // the turn changed code, it runs the tests and blocks the stop unless they passed. This file only
 // does I/O (hook JSON, git, files, the test process); every decision is made in lib/.
 
-const { spawn, execFileSync } = require('node:child_process');
+const { spawn, spawnSync, execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { candidatePaths, changedPaths, classify } = require('./lib/changes');
+const { checkJs, testFileKind } = require('./lib/checks');
 const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS } = require('./lib/command');
+const { lineChanges } = require('./lib/diff');
 const { verdict, decide } = require('./lib/verdict');
 
 const OUTPUT_LIMIT = 64 * 1024 * 1024;
+// The start text of a test file that is dirty when the turn starts is kept up to this size; past it
+// every line of the file counts as changed.
+const TEXT_LIMIT = 1024 * 1024;
+const PYTHON_CHECKS = path.join(__dirname, 'lib', 'python_checks.py');
+const PYTHON_CHECKS_SECONDS = 60;
 const GRACE_MS = 5000;
 const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
 
@@ -114,9 +121,25 @@ function worktreeHash(root, file) {
 }
 
 function committedHash(root, commit, file) {
+  const text = committedBlob(root, commit, file);
+  return text === null ? null : hash(text);
+}
+
+function committedBlob(root, commit, file) {
   if (!commit) return null;
   try {
-    return hash(git(root, ['cat-file', 'blob', `${commit}:${file}`]));
+    return git(root, ['cat-file', 'blob', `${commit}:${file}`]);
+  } catch {
+    return null;
+  }
+}
+
+// A file's text in the working tree, or null when it is not a regular file of at most `limit` bytes.
+function worktreeText(root, file, limit = OUTPUT_LIMIT) {
+  const full = path.join(root, file);
+  try {
+    const stat = fs.lstatSync(full);
+    return stat.isFile() && stat.size <= limit ? fs.readFileSync(full, 'utf8') : null;
   } catch {
     return null;
   }
@@ -133,26 +156,40 @@ function sighting(root) {
   return { branch, head: headCommit(root) };
 }
 
+// The start of the turn in one tree: HEAD, a hash of every dirty file, and the text of each dirty
+// test file (a clean one's is in HEAD), for the lines the turn changes in it.
 function snapshot(root) {
   if (!root) return null;
   const head = headCommit(root);
   const dirty = {};
-  for (const file of dirtyPaths(root)) dirty[file] = worktreeHash(root, file);
-  return { root, head, dirty };
+  const texts = {};
+  for (const file of dirtyPaths(root)) {
+    dirty[file] = worktreeHash(root, file);
+    const text = testFileKind(file) ? worktreeText(root, file, TEXT_LIMIT) : null;
+    if (text !== null) texts[file] = text;
+  }
+  return { root, head, dirty, texts };
 }
 
-// The files whose content differs from the start of the turn, or null when that cannot be told.
-function changedSince(start) {
-  if (!start || repoRoot(start.root) !== start.root) return null;
-  const head = headCommit(start.root);
-  const now = candidatePaths(Object.keys(start.dirty), dirtyPaths(start.root), committedPaths(start.root, start.head, head));
+// What differs from a start ({head, dirty, texts}) in a working tree ({tree}) or a commit
+// ({commit}); git runs in root. Returns {files, before(file), after(file)}: the changed files and
+// their texts then and now (null: the file did not exist, or its start text was not kept).
+function turnDiff(root, start, now) {
+  const head = now.tree ? headCommit(now.tree) : now.commit;
+  const texts = start.texts || {};
+  const candidates = candidatePaths(Object.keys(start.dirty), now.tree ? dirtyPaths(now.tree) : [], committedPaths(root, start.head, head));
   const before = {};
   const after = {};
-  for (const file of now) {
-    before[file] = file in start.dirty ? start.dirty[file] : committedHash(start.root, start.head, file);
-    after[file] = worktreeHash(start.root, file);
+  for (const file of candidates) {
+    before[file] = file in start.dirty ? start.dirty[file] : committedHash(root, start.head, file);
+    after[file] = now.tree ? worktreeHash(now.tree, file) : committedHash(root, now.commit, file);
   }
-  return changedPaths(before, after);
+  const text = (blob) => (blob === null ? null : blob.toString('utf8'));
+  return {
+    files: changedPaths(before, after),
+    before: (file) => (file in start.dirty ? texts[file] ?? null : text(committedBlob(root, start.head, file))),
+    after: (file) => (now.tree ? worktreeText(now.tree, file) : text(committedBlob(root, now.commit, file))),
+  };
 }
 
 function readRootFiles(dir) {
@@ -280,13 +317,34 @@ function entered(starts, trees) {
   return all;
 }
 
-// The files of one tree whose content differs from the start of the turn, or null when that cannot
-// be told. A tree the agent entered after the start counts as unchanged only while it is clean and
-// on a commit a worktree or a branch pointed at when the turn started.
+const NO_DIFF = { files: [], before: () => null, after: () => null };
+
+// What changed in one tree since the start of the turn ({files, before, after} of turnDiff), or
+// null when that cannot be told. A tree the agent entered after the start counts as unchanged only
+// while it is clean and on a commit a worktree or a branch pointed at when the turn started.
 function changesIn(tree, start, known) {
   try {
-    if (start) return changedSince(start);
-    return known.includes(headCommit(tree)) && dirtyPaths(tree).length === 0 ? [] : null;
+    if (start) return repoRoot(start.root) === start.root ? turnDiff(start.root, start, { tree: start.root }) : null;
+    return known.includes(headCommit(tree)) && dirtyPaths(tree).length === 0 ? NO_DIFF : null;
+  } catch {
+    return null;
+  }
+}
+
+// For a tree or commit the gate has no start for: what differs from the newest commit on its
+// first-parent line that existed when the turn started (reachable from a commit in known), or from
+// nothing when there is none. Null when git cannot tell.
+function sinceKnown(root, now, known) {
+  try {
+    const head = now.tree ? headCommit(now.tree) : now.commit;
+    let base = null;
+    if (head) {
+      const input = known.map((commit) => `^${commit}\n`).join('');
+      const fresh = execFileSync('git', ['-C', root, 'rev-list', '--first-parent', '--count', '--ignore-missing', '--stdin', head],
+        { input, stdio: ['pipe', 'pipe', 'ignore'] }).toString('utf8').trim();
+      base = commitOf(root, `${head}~${fresh}`);
+    }
+    return turnDiff(root, { head: base, dirty: {} }, now);
   } catch {
     return null;
   }
@@ -391,12 +449,11 @@ async function runAtCommit(home, project, target, deadline) {
 }
 
 // Runs the tests of each target in turn and stops at the first result that is not green. A
-// target is a folder to test, a commit to test in a temporary checkout, or an error. All runs of
-// one Stop share the project's timeout (and each keeps its own), so a Stop never spends more than
-// MAX_TIMEOUT_SECONDS on tests - the Stop hook's own timeout is 60 s above it.
-async function runAll(targets, project, home, budgetSeconds) {
+// target is a folder to test, a commit to test in a temporary checkout, or an error. The checks and
+// all runs of one Stop share the project's timeout (deadline; each run keeps its own timeout too),
+// so a Stop never spends more than MAX_TIMEOUT_SECONDS - the Stop hook's own timeout is 60 s above it.
+async function runAll(targets, project, home, deadline) {
   const runs = [];
-  const deadline = Date.now() + budgetSeconds * 1000;
   for (const target of targets) {
     let run;
     if (target.error) run = notRun(target.where, target.error);
@@ -422,7 +479,12 @@ async function onStop(input) {
   if (!home) {
     // Outside git nothing tells what changed, so the tests run whenever there are any.
     const choice = chooseCommand(readRootFiles(project), hasPythonTests(project));
-    if (!choice.none) return settle(file, state, await runAll([{ dir: project }], project, null, choice.timeoutSeconds), active);
+    if (!choice.none) {
+      // Nothing tells which test lines changed either, so the quick checks cannot run: the user sees it.
+      const outcome = settle(file, state, await runAll([{ dir: project }], project, null, Date.now() + choice.timeoutSeconds * 1000), active);
+      if (outcome.systemMessage) outcome.systemMessage += '; quick checks of changed tests not run (not a git repository)';
+      return outcome;
+    }
     if (!inCheckout(project)) return allow(file, state, 'greenwashing: not a git repository and no test command - tests not run');
     const configError = 'git cannot read the repository this folder is in, so the gate cannot tell what changed (run git status here to see why)';
     return settle(file, state, [{ command: '(none)', source: 'git', timeoutSeconds: 0, configError, output: '' }], active);
@@ -432,6 +494,9 @@ async function onStop(input) {
   const seen = { ...state.seen };
   const pending = [];
   const removed = [];
+  // What the quick checks read: for each tree with code changes and each removed worktree's
+  // commit, its changes since the start (null: git cannot tell) and how to name its files.
+  const checked = [];
   let docs = 0;
   for (const [tree, start] of Object.entries(starts)) {
     if (!fs.existsSync(tree)) {
@@ -445,25 +510,101 @@ async function onStop(input) {
       } else if (!left.nothing) {
         const branch = left.branch ? `branch ${left.branch.replace(/^refs\/heads\//, '')}` : 'no branch';
         removed.push({ commit: left.commit, where: `a temporary checkout of ${left.commit.slice(0, 12)} (${branch}), the last commit of the removed worktree ${name}` });
+        const now = { commit: left.commit };
+        let diff = null;
+        try {
+          diff = start ? turnDiff(home, start, now) : sinceKnown(home, now, state.known);
+        } catch {
+          // Stays null: git cannot tell what the commit changed.
+        }
+        checked.push({ diff, label: `the removed worktree ${name}`, show: (f) => `${f} (last commit of the removed worktree ${name})` });
       }
       continue;
     }
     seen[tree] = sighting(tree);
     const changed = changesIn(tree, start, state.known);
-    const split = changed === null ? null : classify(changed);
-    if (split === null || split.code.length > 0) pending.push(tree);
-    else docs += split.docs.length;
+    const split = changed === null ? null : classify(changed.files);
+    if (split === null || split.code.length > 0) {
+      pending.push(tree);
+      checked.push({ diff: changed || sinceKnown(tree, { tree }, state.known), label: path.relative(project, tree) || 'the project', show: (f) => path.relative(project, path.join(tree, f)) });
+    } else docs += split.docs.length;
   }
   const next = { ...state, starts, seen };
   if (pending.length === 0 && removed.length === 0) {
     return allow(file, next, docs === 0 ? 'greenwashing: no files changed this turn - tests not run'
       : `greenwashing: only documentation changed (${docs} file${docs === 1 ? '' : 's'}) - tests not run`);
   }
-  // The tests run at the project's place in each tree (the project can be a subfolder of its
-  // repository), within the timeout the project sets.
+  // The checks, then the tests at the project's place in each tree (the project can be a subfolder
+  // of its repository), within the timeout the project sets.
   const budget = readConfig(readRootFiles(project)[CONFIG_FILE]).timeoutSeconds || DEFAULT_TIMEOUT_SECONDS;
+  const deadline = Date.now() + budget * 1000;
+  const problem = quickChecks(checked, path.relative(home, project), deadline);
+  if (problem) return settle(file, next, [problem], active);
   const targets = [...pending.map((tree) => ({ dir: path.join(tree, path.relative(home, project)) })), ...removed];
-  return settle(file, next, await runAll(targets, project, home, budget), active);
+  return settle(file, next, await runAll(targets, project, home, deadline), active);
+}
+
+const CHECKS_SOURCE = 'the gate\'s checks of the changed test lines';
+const checksNotRun = (why) => ({ kind: 'checks', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', configError: why });
+
+// The quick checks on the test lines the turn added or changed. First, .greenwashing.json must not
+// have changed (GW-114); then each changed test file is read for new skips (GW-17), tests with no
+// assertion (GW-18) and checks whose sides are the same (GW-01), as the project's config turns
+// them on. rel: the project's place in its repository. Returns a red run, or null when all is clear.
+function quickChecks(checked, rel, deadline) {
+  const edited = [];
+  for (const target of checked) {
+    if (!target.diff) return checksNotRun(`git cannot tell which lines changed in ${target.label}`);
+    for (const f of target.diff.files) if (path.basename(f) === CONFIG_FILE) edited.push(target.show(f));
+  }
+  if (edited.length) return { kind: 'config', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', files: edited };
+  const findings = [];
+  const python = [];
+  for (const target of checked) {
+    const config = readConfig(target.diff.after(rel ? `${rel}/${CONFIG_FILE}` : CONFIG_FILE));
+    if (config.error) return checksNotRun(config.error);
+    if (!Object.values(config.checks).includes(true)) continue;
+    for (const f of target.diff.files) {
+      const kind = testFileKind(f);
+      const text = kind ? target.diff.after(f) : null;
+      if (text === null) continue;
+      const changes = lineChanges(target.diff.before(f), text);
+      if (kind === 'js') {
+        for (const found of checkJs(text, changes, config.checks)) findings.push({ file: target.show(f), ...found });
+      } else {
+        python.push({ file: target.show(f), text, added: [...changes.added], gaps: [...changes.gaps], checks: config.checks });
+      }
+    }
+  }
+  if (python.length) {
+    const result = pythonChecks(python, deadline);
+    if (result.error) return checksNotRun(`the Python test checks could not run: ${result.error}`);
+    if (result.errors.length) {
+      return checksNotRun(`the Python test checks could not read ${result.errors.map((e) => `${e.file} - ${e.error}`).join('; ')}`);
+    }
+    findings.push(...result.findings);
+  }
+  return findings.length ? { kind: 'checks', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', findings } : null;
+}
+
+// python_checks.py under `python3 -I` (the files' own folder cannot shadow the standard library):
+// {findings, errors}, or {error} when it could not run.
+function pythonChecks(files, deadline) {
+  const seconds = Math.min(PYTHON_CHECKS_SECONDS, Math.ceil((deadline - Date.now()) / 1000));
+  if (seconds < 1) return { error: 'no time was left: the timeout was used up' };
+  const result = spawnSync('python3', ['-I', PYTHON_CHECKS], {
+    input: JSON.stringify({ files }), cwd: os.tmpdir(), timeout: seconds * 1000, maxBuffer: OUTPUT_LIMIT, stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  if (result.error) return { error: result.error.code === 'ENOENT' ? 'python3 was not found on PATH' : result.error.message };
+  const stderr = result.stderr.toString('utf8').trim().split('\n').slice(-3).join(' ');
+  if (result.status !== 0) return { error: `python3 exited with code ${result.status}${stderr ? `: ${stderr}` : ''}` };
+  try {
+    const out = JSON.parse(result.stdout.toString('utf8'));
+    if (Array.isArray(out.findings) && Array.isArray(out.errors)) return out;
+  } catch {
+    // Not JSON: said below.
+  }
+  return { error: 'python3 printed no findings list' };
 }
 
 function settle(file, state, runs, stopHookActive) {

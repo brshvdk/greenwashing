@@ -8,6 +8,7 @@ const CATALOG = 'https://github.com/brshvdk/greenwashing/blob/main/CATALOG.md';
 const MAX_BLOCKS = 3;
 const TAIL_LINES = 20;
 const FAILED_NAMES = 10;
+const FINDINGS = 20;
 // Claude Code caps a hook's text fields at 10,000 characters; a tail line can be a whole file.
 const TAIL_LINE_CHARS = 300;
 
@@ -26,10 +27,17 @@ function countsText(sum) {
 // Where a run was, when not in the project itself (another worktree of its repository).
 const place = (run) => (run.where ? ` in ${run.where}` : '');
 
-// run: {command, source, where, timeoutSeconds, configError, startError, timedOut, outputTooLarge, exitCode, output}.
+// run: {command, source, where, timeoutSeconds, configError, startError, timedOut, outputTooLarge, exitCode, output};
+// the gate's checks of the changed test lines add kind 'checks' with findings [{file, line, gw, what}],
+// or kind 'config' with files: the .greenwashing.json files the turn changed.
 // Returns {outcome: 'passed' | 'failed' | 'did not run', why, gw, counts}.
 function verdict(run) {
   const didNotRun = (why, gw = 'GW-50', counts = null) => ({ outcome: 'did not run', why, gw, counts });
+  if (run.kind === 'config') return { outcome: 'failed', why: `${run.files.join(', ')} changed during this turn`, gw: 'GW-114', counts: null };
+  if (run.findings) {
+    const count = run.findings.length;
+    return { outcome: 'failed', why: `${count} problem${count === 1 ? '' : 's'} in the test lines this turn added or changed`, gw: null, counts: null };
+  }
   if (run.configError) return didNotRun(run.configError);
   if (run.startError) return didNotRun(`the command could not start: ${run.startError}`);
   if (run.timedOut) return didNotRun(`the command did not finish in ${run.timeoutSeconds} s and was stopped`);
@@ -71,8 +79,29 @@ function failedNames(output) {
 
 // The reason the agent reads when the gate sends it back.
 function blockReason(run, result) {
+  if (run.kind === 'config') {
+    return [
+      'greenwashing gate: the gate\'s settings changed during this turn - you cannot finish yet.',
+      `Changed: ${run.files.join(', ')}`,
+      'A human changes the gate\'s settings between turns, not the agent during one: undo the change, or leave it to the user.',
+      `See GW-114 in ${CATALOG}`,
+    ].join('\n');
+  }
+  if (run.findings) {
+    const listed = run.findings.slice(0, FINDINGS).map((f) => `- ${f.file}:${f.line}: ${cut(f.what)} (${f.gw})`);
+    if (run.findings.length > FINDINGS) listed.push(`- and ${run.findings.length - FINDINGS} more`);
+    return [
+      'greenwashing gate: the changed tests can pass without testing anything - you cannot finish yet.',
+      'Found in the test lines this turn added or changed:',
+      ...listed,
+      `See each entry in ${CATALOG}`,
+      'Fix the tests. What is meant stays red until a human accepts it: between turns, a human can turn a check off in '
+        + '.greenwashing.json, for example {"checks": {"skips": false}} (skips, assertions, selfComparisons).',
+    ].join('\n');
+  }
+  const subject = run.kind === 'checks' ? 'checks of the changed tests' : 'tests';
   const parts = [
-    `greenwashing gate: the tests ${result.outcome === 'failed' ? 'failed' : 'did not run'} - you cannot finish yet.`,
+    `greenwashing gate: the ${subject} ${result.outcome === 'failed' ? 'failed' : 'did not run'} - you cannot finish yet.`,
     `Command: ${run.command} (${run.source})`,
   ];
   if (run.where) parts.push(`Folder: ${run.where}`);
@@ -103,7 +132,7 @@ function decide(runs, results, state, stopHookActive) {
   if (blocks >= MAX_BLOCKS) {
     return {
       action: 'release',
-      message: `greenwashing: TESTS DID NOT PASS - WORK NOT ACCEPTED. The gate sent the agent back ${blocks} times in a row `
+      message: `greenwashing: ${run.kind ? 'CHECKS' : 'TESTS'} DID NOT PASS - WORK NOT ACCEPTED. The gate sent the agent back ${blocks} times in a row `
         + `and now lets it stop so it does not loop. Last result: ${result.outcome}`
         + `${result.why ? ` - ${result.why}` : ''} (${run.command}${place(run)}).`,
       state: { blocks: 0 },
@@ -112,4 +141,4 @@ function decide(runs, results, state, stopHookActive) {
   return { action: 'block', reason: blockReason(run, result), state: { blocks: blocks + 1 } };
 }
 
-module.exports = { verdict, decide, blockReason, MAX_BLOCKS, TAIL_LINES, TAIL_LINE_CHARS, FAILED_NAMES, CATALOG };
+module.exports = { verdict, decide, blockReason, MAX_BLOCKS, TAIL_LINES, TAIL_LINE_CHARS, FAILED_NAMES, FINDINGS, CATALOG };

@@ -9,11 +9,11 @@ const os = require('node:os');
 const path = require('node:path');
 
 const HOOK = path.join(__dirname, '..', 'hook.js');
-const NODE_PASS = "const test = require('node:test');\ntest('ok', () => {});\n";
+const NODE_PASS = "const test = require('node:test');\nconst assert = require('node:assert');\ntest('ok', () => assert.equal(1 + 1, 2));\n";
 const NODE_FAIL = "const test = require('node:test');\nconst assert = require('node:assert');\ntest('bad', () => assert.equal(1, 2));\n";
 const NODE_EMPTY = "const test = require('node:test');\ntest.skip('later', () => {});\n";
 const NODE_CMD = 'node --test --test-reporter=tap t.test.js';
-const PY_PASS = 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1, 1)\n';
+const PY_PASS = 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1 + 1, 2)\n';
 const PY_FAIL = 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1, 2)\n';
 // A command that prints the counts of a green unittest run without running anything.
 const GREEN_ECHO = "printf 'Ran 1 test in 0.1s\\n\\nOK\\n'";
@@ -105,7 +105,8 @@ test('green tests let the agent stop with one line naming the command and the co
 });
 
 test('zero tests ran: blocked as did not run, GW-08', (t) => {
-  const dir = project(t, { 't.test.js': NODE_PASS });
+  // The skip check is off, so the skipped test reaches the test run.
+  const dir = project(t, { 't.test.js': NODE_PASS, '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD, checks: { skips: false } }) }, null);
   const gate = session(t, dir);
   gate.prompt();
   write(dir, { 't.test.js': NODE_EMPTY });
@@ -285,7 +286,9 @@ test('outside a git repository, the tests run', (t) => {
   write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }), 't.test.js': NODE_PASS });
   const gate = session(t, dir);
   gate.prompt();
-  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - .*: 1 passed, 0 failed, 0 skipped$/);
+  // Nothing tells which test lines changed either, and the user reads that the checks did not run.
+  assert.match(gate.stop().json.systemMessage,
+    /^greenwashing: tests passed - .*: 1 passed, 0 failed, 0 skipped; quick checks of changed tests not run \(not a git repository\)$/);
 });
 
 test('a Python project without a test command runs unittest', (t) => {
@@ -610,13 +613,27 @@ test('a removed worktree whose branch the project merged is not tested again', (
 });
 
 test('a removed worktree whose commit cannot be tested: did not run, and the checkout is still removed', (t) => {
-  const { dir, tree, gate } = seenWorktree(t);
-  write(tree, { '.greenwashing.json': '{"testCommand": ' });
-  git(tree, 'commit', '-qam', 'broken config');
+  const packageJson = JSON.stringify({ name: 'demo', scripts: { test: 'node --test --test-reporter=tap' } });
+  const { dir, tree, gate } = seenWorktree(t, { 't.test.js': NODE_PASS, 'package.json': packageJson }, null);
+  write(tree, { 'package.json': '{"scripts": ' });
+  git(tree, 'commit', '-qam', 'broken package.json');
   git(dir, 'worktree', 'remove', tree);
   const { json } = gate.stop(false, dir);
   assert.equal(json.decision, 'block');
-  assert.match(json.reason, /Result: did not run - \.greenwashing\.json is not valid JSON/);
+  assert.match(json.reason, /Result: did not run - package\.json is not valid JSON/);
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+test('a removed worktree whose commit changed .greenwashing.json: blocked before any test runs (GW-114)', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  git(tree, 'commit', '-qam', 'green on paper');
+  git(dir, 'worktree', 'remove', tree);
+  const { json } = gate.stop(false, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /the gate's settings changed during this turn/);
+  assert.match(json.reason, /Changed: \.greenwashing\.json \(last commit of the removed worktree \.claude\/worktrees\/feat\)/);
+  assert.match(json.reason, /See GW-114 in /);
   assert.deepEqual(leftovers(gate, dir), []);
 });
 
@@ -815,8 +832,8 @@ test("a removed worktree of a project in a subfolder is tested at the project's 
 
 test('when the hook is stopped during a temporary checkout, the checkout is removed too', async (t) => {
   const started = path.join(tempDir(t), 'started');
-  const { dir, tree, gate } = seenWorktree(t);
-  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: `touch ${JSON.stringify(started)}; sleep 30` }) });
+  const { dir, tree, gate } = seenWorktree(t, { 'run.sh': 'true\n' }, 'sh run.sh');
+  write(tree, { 'run.sh': `touch ${JSON.stringify(started)}; sleep 30\n` });
   git(tree, 'commit', '-qam', 'slow');
   git(dir, 'worktree', 'remove', tree);
   const hook = spawn(process.execPath, [HOOK, 'stop'], { env: gate.env, stdio: ['pipe', 'ignore', 'ignore'] });
@@ -1002,7 +1019,9 @@ test('Python files git does not track yet make a Python project; outside git, a 
   write(plain, { 'test_a.py': PY_PASS });
   const other = session(t, plain);
   other.prompt();
-  assert.deepEqual(other.stop().json, { systemMessage: 'greenwashing: tests passed - python3 -m unittest discover: 1 passed, 0 failed, 0 skipped' });
+  assert.deepEqual(other.stop().json, {
+    systemMessage: 'greenwashing: tests passed - python3 -m unittest discover: 1 passed, 0 failed, 0 skipped; quick checks of changed tests not run (not a git repository)',
+  });
 });
 
 test('a JavaScript project with a helper Python script runs npm test, no testCommand needed', (t) => {
@@ -1205,4 +1224,155 @@ test('a prompt that could not record its start leaves no older start behind: the
   assert.match(gate.prompt().stderr, /could not record the start of the turn/);
   fs.writeFileSync(index, good);
   assert.equal(gate.stop().json.decision, 'block');
+});
+
+// The quick checks on the test lines a turn added or changed. The test command only prints green
+// counts, so what decides is the checks alone.
+const JEST_OK = "test('adds', () => {\n  expect(add(1, 2)).toBe(3);\n});\n";
+const PY_OK = 'def test_adds():\n    assert add(1, 2) == 3\n';
+
+test('the block for a failing run names the failed tests', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.match(gate.stop().json.reason, /\nFailed tests \(1\):\n- bad\nLast 20 lines of output:/);
+});
+
+test('GW-17, GW-18, GW-01: each problem in the added test lines blocks, with file, line and entry', (t) => {
+  const cases = {
+    'a.test.js': [`${JEST_OK}test.skip('saves', () => {\n  expect(save()).toBe(true);\n});\n`, /- a\.test\.js:4: test\.skip - the test does not run as written \(GW-17\)/],
+    'b.test.js': [`${JEST_OK}it('saves the user', async () => {\n  await save(user);\n});\n`, /- b\.test\.js:4: the test 'saves the user' has no assertion \(GW-18\)/],
+    'c.test.js': [`${JEST_OK}test('limit', () => {\n  expect(result.limit).toBe(result.limit);\n});\n`, /- c\.test\.js:5: expect\(result\.limit\)\.toBe\(result\.limit\) - both sides are the same \(GW-01\)/],
+    'test_d.py': [`${PY_OK}\n\n@pytest.mark.skip(reason="later")\ndef test_saves():\n    assert save()\n`, /- test_d\.py:5: pytest\.mark\.skip - the test does not run as written \(GW-17\)/],
+    'test_e.py': [`${PY_OK}\n\ndef test_saves():\n    save(user)\n`, /- test_e\.py:5: test_saves has no assertion \(GW-18\)/],
+    'test_f.py': [`${PY_OK}\n\ndef test_limit():\n    assert result.limit == result.limit\n`, /- test_f\.py:6: assert result\.limit == result\.limit - both sides are the same \(GW-01\)/],
+  };
+  for (const [name, [text, finding]] of Object.entries(cases)) {
+    const start = name.endsWith('.py') ? PY_OK : JEST_OK;
+    const dir = project(t, { [name]: start }, GREEN_ECHO);
+    const gate = session(t, dir);
+    gate.prompt();
+    write(dir, { [name]: text });
+    const { json } = gate.stop();
+    assert.equal(json.decision, 'block', name);
+    assert.match(json.reason, /the changed tests can pass without testing anything/, name);
+    assert.match(json.reason, finding, name);
+    // The honest version of the same file passes.
+    gate.prompt();
+    write(dir, { [name]: `${start}${name.endsWith('.py') ? '\n\ndef test_saves():\n    assert save(user) is True\n' : "test('saves', () => {\n  expect(save(user)).toBe(true);\n});\n"}` });
+    assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/, name);
+  }
+});
+
+test('honest cases: an old skip, a test with an assertion and different sides pass', (t) => {
+  const old = `it.skip('old', () => {});\n${JEST_OK}`;
+  const dir = project(t, { 'a.test.js': old, 'test_b.py': `import pytest\n\n\n@pytest.mark.skip\ndef test_old():\n    pass\n\n\n${PY_OK}` }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, {
+    'a.test.js': `${old}test('sums', () => {\n  expect(x).toBe(y);\n});\n`,
+    'test_b.py': `import pytest\n\n\n@pytest.mark.skip\ndef test_old():\n    pass\n\n\n${PY_OK}\n\ndef test_sums():\n    assert x == y\n`,
+  });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+});
+
+test('a check turned off in .greenwashing.json does not block', (t) => {
+  const config = (checks) => JSON.stringify({ testCommand: GREEN_ECHO, checks });
+  const change = `${JEST_OK}it.skip('a', () => { run(); });\ntest('b', () => { expect(x).toBe(x); });\n`;
+  const found = (checks) => {
+    const dir = project(t, { 'a.test.js': JEST_OK, '.greenwashing.json': config(checks) }, null);
+    const gate = session(t, dir);
+    gate.prompt();
+    write(dir, { 'a.test.js': change });
+    const { json } = gate.stop();
+    return json.decision === 'block' ? [...json.reason.matchAll(/\((GW-\d+)\)$/gm)].map((m) => m[1]).sort() : [];
+  };
+  assert.deepEqual(found({}), ['GW-01', 'GW-17']);
+  assert.deepEqual(found({ skips: false }), ['GW-01']);
+  assert.deepEqual(found({ selfComparisons: false }), ['GW-17']);
+  assert.deepEqual(found({ skips: false, selfComparisons: false }), []);
+});
+
+test('GW-114: .greenwashing.json changed during the turn blocks; changed between turns it does not', (t) => {
+  const dir = project(t, { 'a.test.js': JEST_OK }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, checks: { skips: false } }), 'a.test.js': `${JEST_OK}// more\n` });
+  const { json } = gate.stop();
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /the gate's settings changed during this turn - you cannot finish yet\.\nChanged: \.greenwashing\.json\n/);
+  assert.match(json.reason, /See GW-114 in /);
+  // Reverted in the same turn: nothing changed.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  assert.match(gate.stop(true).json.systemMessage, /^greenwashing: tests passed/);
+  // The user edits it between turns, before the next prompt: the turn after it is not blocked.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, checks: { skips: false } }) });
+  gate.prompt();
+  write(dir, { 'a.test.js': `${JEST_OK}it.skip('later', () => {});\n` });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+});
+
+test('Python test checks that cannot run are did not run: no python3 on PATH, or a file Python cannot read', (t) => {
+  const bin = tempDir(t);
+  for (const tool of ['git', 'sh']) fs.symlinkSync(spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim(), path.join(bin, tool));
+  const dir = project(t, { 'test_a.py': PY_OK }, GREEN_ECHO);
+  const gate = session(t, dir, { env: { PATH: bin } });
+  gate.prompt();
+  write(dir, { 'test_a.py': `${PY_OK}# more\n` });
+  const { json } = gate.stop();
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /the checks of the changed tests did not run/);
+  assert.match(json.reason, /Result: did not run - the Python test checks could not run: python3 was not found on PATH/);
+
+  const broken = project(t, { 'test_a.py': PY_OK }, GREEN_ECHO);
+  const other = session(t, broken);
+  other.prompt();
+  write(broken, { 'test_a.py': 'def test_a(:\n' });
+  assert.match(other.stop().json.reason, /the Python test checks could not read test_a\.py - Python could not read it \(SyntaxError/);
+});
+
+test('the checks read every tree the turn changed: a worktree, a removed worktree\'s commit, a tree entered during the turn', (t) => {
+  // The agent works in a worktree.
+  const { dir, tree } = withWorktree(t, { 'a.test.js': JEST_OK });
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  git(dir, 'commit', '-qam', 'green echo');
+  git(tree, 'merge', '-q', 'master');
+  const gate = session(t, dir);
+  gate.prompt(tree);
+  write(tree, { 'a.test.js': `${JEST_OK}xit('later', () => {});\n` });
+  assert.match(gate.stop(false, tree).json.reason, /- \.claude\/worktrees\/feat\/a\.test\.js:4: xit - the test does not run \(GW-17\)/);
+
+  // The same skip, committed in the worktree, which is then removed.
+  const seen = seenWorktree(t, { 'a.test.js': JEST_OK }, GREEN_ECHO);
+  write(seen.tree, { 'a.test.js': `${JEST_OK}xit('later', () => {});\n` });
+  git(seen.tree, 'commit', '-qam', 'skip');
+  git(seen.dir, 'worktree', 'remove', seen.tree);
+  assert.match(seen.gate.stop(false, seen.dir).json.reason,
+    /- a\.test\.js \(last commit of the removed worktree \.claude\/worktrees\/feat\):4: xit - the test does not run \(GW-17\)/);
+
+  // A worktree the agent enters after the prompt: an old skip on its branch is not the turn's, the new one is.
+  const old = project(t, { 'a.test.js': JEST_OK, '.gitignore': '.claude/worktrees/\n' }, GREEN_ECHO);
+  git(old, 'branch', 'old');
+  const late = path.join(old, '.claude', 'worktrees', 'old');
+  git(old, 'worktree', 'add', '-q', late, 'old');
+  write(late, { 'a.test.js': `xit('before', () => {});\n${JEST_OK}` });
+  git(late, 'commit', '-qam', 'an old skip');
+  const entered = session(t, old);
+  entered.prompt();
+  write(late, { 'a.test.js': `xit('before', () => {});\n${JEST_OK}test.only('new', () => { expect(a).toBe(1); });\n` });
+  git(late, 'commit', '-qam', 'focus');
+  const { json } = entered.stop(false, late);
+  assert.match(json.reason, /a\.test\.js:5: test\.only - the test does not run as written \(GW-17\)/);
+  assert.doesNotMatch(json.reason, /xit/);
+});
+
+test('a test file that was dirty when the turn started: only the lines the turn changed count', (t) => {
+  const dir = project(t, { 'a.test.js': JEST_OK }, GREEN_ECHO);
+  // The user's own skip, not committed, before the prompt.
+  write(dir, { 'a.test.js': `${JEST_OK}it.skip('mine', () => {});\n` });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': `${JEST_OK}it.skip('mine', () => {});\ntest('b', () => {\n  expect(b()).toBe(2);\n});\n` });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
 });
