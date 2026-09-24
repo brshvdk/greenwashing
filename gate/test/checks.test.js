@@ -444,6 +444,7 @@ test('Python GW-17: __test__ = False, a new test in a class or module that never
   // __test__ = False counts where it is added: a base class keeps it while its subclasses run its tests.
   const base = 'class BaseTests:\n    __test__ = False\n\n    def test_a(self):\n        assert f()\n\n\nclass TestReal(BaseTests):\n    __test__ = True\n';
   assert.deepEqual(python(base, base.replace('        assert f()\n', '        assert f()\n\n    def test_b(self):\n        assert g()\n')), []);
+  assert.deepEqual(python(null, 'class TestReal(BaseTests):\n    __test__ = True\n'), []);
   // A class marked by its own pytestmark, and a module whose pytestmark list holds a skip.
   const classMark = 'import pytest\n\n\nclass TestOld:\n    pytestmark = pytest.mark.skip\n\n    def test_a(self):\n        assert f()\n';
   assert.deepEqual(python(classMark, `${classMark}\n    def test_b(self):\n        assert g()\n`), [[10, 'GW-17']]);
