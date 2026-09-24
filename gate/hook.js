@@ -332,13 +332,13 @@ function isAncestor(root, commit, of) {
   }
 }
 
-// Removes the gate's own temporary checkout and nothing else (`git worktree prune` would also
-// drop the user's worktrees whose folder is away); a folder git does not know is deleted.
+// Removes the gate's own temporary checkout and nothing else: `git worktree prune` would also drop
+// the user's worktrees whose folder is away.
 function removeWorktree(root, dir) {
   try {
     git(root, ['worktree', 'remove', '--force', dir]);
   } catch {
-    fs.rmSync(dir, { recursive: true, force: true });
+    // Not a worktree: git never made it, or removed it itself when the checkout failed.
   }
   checkouts.delete(dir);
 }
@@ -375,7 +375,8 @@ async function runIn(dir, where, deadline) {
 // The tests of a commit no tree has checked out any more: in a temporary worktree of the
 // repository, removed afterwards whatever the outcome.
 async function runAtCommit(home, project, target, deadline) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'greenwashing-gate-check-'));
+  // A new path: git makes the folder, and removes it again when the checkout fails.
+  const dir = path.join(os.tmpdir(), `greenwashing-gate-check-${crypto.randomBytes(8).toString('hex')}`);
   checkouts.set(dir, home);
   try {
     try {
