@@ -675,6 +675,21 @@ test('a worktree first seen at the prompt after an interrupted turn is still che
   assert.match(gate.stop(false, dir).json.systemMessage, /^greenwashing: tests passed - .* in a temporary checkout of [0-9a-f]{12} \(branch feat\)/);
 });
 
+test("a removed worktree of a project in a subfolder is tested at the project's place in the checkout", (t) => {
+  const repo = project(t, { 'app/t.test.js': NODE_PASS, 'app/.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }), '.gitignore': '.claude/worktrees/\n' }, null);
+  const tree = path.join(repo, '.claude', 'worktrees', 'feat');
+  git(repo, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  const app = path.join(repo, 'app');
+  const gate = session(t, app);
+  gate.prompt(tree);
+  write(tree, { 'app/t.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'red');
+  git(repo, 'worktree', 'remove', tree);
+  const { json } = gate.stop(false, app);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /the removed worktree \.\.\/\.claude\/worktrees\/feat\nResult: failed - 1 failed/);
+});
+
 test('when the hook is stopped during a temporary checkout, the checkout is removed too', async (t) => {
   const started = path.join(tempDir(t), 'started');
   const { dir, tree, gate } = seenWorktree(t);
