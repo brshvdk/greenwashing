@@ -1328,11 +1328,14 @@ test('GW-114: .greenwashing.json changed during the turn blocks; changed between
 test('a test file moved in the turn is read against the file it was: an old skip in it is not new, a new one is', (t) => {
   const old = `${JEST_OK}it.skip('old', () => {});\n`;
   const py = `import pytest\n\n\n@pytest.mark.skip\n${PY_OK}`;
-  const dir = project(t, { 'a.test.js': old, 'test_a.py': py }, GREEN_ECHO);
+  const other = "test('subtracts', () => {\n  expect(sub(3, 2)).toBe(1);\n});\nit.skip('other old', () => {});\n";
+  const dir = project(t, { 'a.test.js': old, 'd.test.js': other, 'test_a.py': py }, GREEN_ECHO);
   const gate = session(t, dir);
   gate.prompt();
+  // Two moved at once: each is read against its own old file.
   fs.mkdirSync(path.join(dir, 'src', '__tests__'), { recursive: true });
   fs.renameSync(path.join(dir, 'a.test.js'), path.join(dir, 'src', '__tests__', 'a.test.js'));
+  fs.renameSync(path.join(dir, 'd.test.js'), path.join(dir, 'src', '__tests__', 'd.test.js'));
   fs.renameSync(path.join(dir, 'test_a.py'), path.join(dir, 'src', 'test_b.py'));
   assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
   gate.prompt();
@@ -1364,6 +1367,14 @@ test('GW-114 for a .greenwashing.json git ignores: changed or created during the
   assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
   write(dir, settings());
   assert.match(gate.stop(true).json.systemMessage, /^greenwashing: tests passed/);
+  // A project in a subfolder: its own settings file.
+  const repo = project(t, { 'app/a.test.js': JEST_OK, '.gitignore': '.greenwashing.json\n' }, null);
+  const app = path.join(repo, 'app');
+  write(app, settings());
+  const sub = session(t, app);
+  sub.prompt();
+  write(app, settings({ skips: false }));
+  assert.match(sub.stop().json.reason, /Changed: \.greenwashing\.json\n/);
 });
 
 test('Python test checks that cannot run are did not run: no python3 on PATH, or a file Python cannot read', (t) => {
