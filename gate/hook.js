@@ -13,7 +13,7 @@ const path = require('node:path');
 const { candidatePaths, changedPaths, classify } = require('./lib/changes');
 const { checkJs, testFileKind } = require('./lib/checks');
 const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CONFIG_FILE, CHECKS, DEFAULT_TIMEOUT_SECONDS } = require('./lib/command');
-const { lineChanges } = require('./lib/diff');
+const { lineChanges, splitLines } = require('./lib/diff');
 const { verdict, decide } = require('./lib/verdict');
 
 const OUTPUT_LIMIT = 64 * 1024 * 1024;
@@ -577,11 +577,13 @@ function quickChecks(checked, rel, deadline) {
     const config = readConfig(target.diff.after(settingsPath(rel)));
     if (config.error) return checksNotRun(config.error);
     if (!Object.values(config.checks).includes(true)) continue;
-    for (const f of target.diff.files) {
-      const kind = testFileKind(f);
-      const text = kind ? target.diff.after(f) : null;
+    const tests = target.diff.files.filter(testFileKind)
+      .map((f) => ({ f, kind: testFileKind(f), before: target.diff.before(f), text: target.diff.after(f) }));
+    const deleted = tests.filter((t) => t.text === null && t.before !== null);
+    for (const { f, kind, before, text } of tests) {
       if (text === null) continue;
-      const changes = lineChanges(target.diff.before(f), text);
+      const start = before !== null ? before : movedFrom(deleted.filter((t) => t.kind === kind).map((t) => t.before), text);
+      const changes = lineChanges(start, text);
       if (kind === 'js') {
         for (const found of checkJs(text, changes, config.checks)) findings.push({ file: target.show(f), ...found });
       } else {
@@ -598,6 +600,27 @@ function quickChecks(checked, rel, deadline) {
     findings.push(...result.findings);
   }
   return findings.length ? { kind: 'checks', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', findings } : null;
+}
+
+// A new test file that keeps, in order, at least half of its lines from a test file the turn
+// deleted is that file moved: it is read against the deleted file's text (returned; null: none).
+function movedFrom(deleted, text) {
+  const lines = splitLines(text);
+  let best = null;
+  for (const old of deleted) {
+    // The most lines in common, in any order, first: one line diff per new file.
+    const left = new Map();
+    for (const line of splitLines(old)) left.set(line, (left.get(line) || 0) + 1);
+    let common = 0;
+    for (const line of lines) {
+      if (left.get(line) > 0) {
+        left.set(line, left.get(line) - 1);
+        common += 1;
+      }
+    }
+    if (!best || common > best.common) best = { old, common };
+  }
+  return best && lineChanges(best.old, text).added.size * 2 <= lines.length ? best.old : null;
 }
 
 // python_checks.py under `python3 -I` (the files' own folder cannot shadow the standard library):

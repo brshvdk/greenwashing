@@ -1325,6 +1325,28 @@ test('GW-114: .greenwashing.json changed during the turn blocks; changed between
   assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
 });
 
+test('a test file moved in the turn is read against the file it was: an old skip in it is not new, a new one is', (t) => {
+  const old = `${JEST_OK}it.skip('old', () => {});\n`;
+  const py = `import pytest\n\n\n@pytest.mark.skip\n${PY_OK}`;
+  const dir = project(t, { 'a.test.js': old, 'test_a.py': py }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  fs.mkdirSync(path.join(dir, 'src', '__tests__'), { recursive: true });
+  fs.renameSync(path.join(dir, 'a.test.js'), path.join(dir, 'src', '__tests__', 'a.test.js'));
+  fs.renameSync(path.join(dir, 'test_a.py'), path.join(dir, 'src', 'test_b.py'));
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  gate.prompt();
+  git(dir, 'add', '-A');
+  git(dir, 'mv', 'src/__tests__/a.test.js', 'b.test.js');
+  write(dir, { 'b.test.js': `${old}it.only('new', () => { expect(f()).toBe(1); });\n` });
+  const { json } = gate.stop();
+  assert.match(json.reason, /\n- b\.test\.js:5: it\.only - only this test runs \(GW-17\)\nSee each/);
+  // Mostly new lines: a new file, not a moved one.
+  fs.unlinkSync(path.join(dir, 'b.test.js'));
+  write(dir, { 'c.test.js': `it.skip('old', () => {});\n${JEST_OK}test('more', () => {\n  expect(add(2, 2)).toBe(4);\n});\n` });
+  assert.match(gate.stop(true).json.reason, /\n- c\.test\.js:1: it\.skip - the test does not run \(GW-17\)\nSee each/);
+});
+
 test('GW-114 for a .greenwashing.json git ignores: changed or created during the turn blocks, alone too', (t) => {
   const dir = project(t, { 'a.test.js': JEST_OK, '.gitignore': '.greenwashing.json\n' }, null);
   const settings = (checks) => ({ '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, ...(checks ? { checks } : {}) }) });
