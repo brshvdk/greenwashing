@@ -57,7 +57,7 @@ function git(root, args) {
 
 function repoRoot(dir) {
   try {
-    return realpath(git(dir, ['rev-parse', '--show-toplevel']).toString('utf8').trim());
+    return git(dir, ['rev-parse', '--show-toplevel']).toString('utf8').trim();
   } catch {
     return null;
   }

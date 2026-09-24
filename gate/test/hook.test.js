@@ -201,6 +201,8 @@ test('a file already edited before the turn and left alone is not a change', (t)
   const gate = session(t, dir);
   gate.prompt();
   assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: no files changed this turn - tests not run' });
+  // A second Stop without a prompt still measures from the start, not from "unknown".
+  assert.deepEqual(gate.stop().json, NO_CHANGES);
   write(dir, { 'app.js': '3;\n' });
   assert.equal(gate.stop().json.decision, 'block');
 });
@@ -551,6 +553,8 @@ test('another repository inside the project (a submodule, a clone) never stands 
   git(nested, 'init', '-q');
   const gate = session(t, dir);
   gate.prompt();
+  // Only looking into it is no change, and its own tests are not the gate's business.
+  assert.deepEqual(gate.stop(false, nested).json, NO_CHANGES);
   write(dir, { 't.test.js': NODE_FAIL });
   const { json } = gate.stop(false, nested);
   assert.equal(json.decision, 'block');
