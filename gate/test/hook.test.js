@@ -526,7 +526,7 @@ test('the project folder missing in a worktree is did not run, and the worktree 
   write(tree, { 'other.txt': 'y\n' });
   const { json } = gate.stop(false, tree);
   assert.equal(json.decision, 'block');
-  assert.match(json.reason, /the project's folder \.\.\/\.claude\/worktrees\/other\/app does not exist in this tree/);
+  assert.match(json.reason, /\nFolder: \.\.\/\.claude\/worktrees\/other\/app\nResult: did not run - the project's folder is missing there/);
   assert.equal(gate.stop(true, app).json.decision, 'block');
 });
 
@@ -555,6 +555,278 @@ test('a run in a worktree keeps the timeout its own config sets', (t) => {
   const { json } = gate.stop(false, tree);
   assert.equal(json.decision, 'block');
   assert.match(json.reason, /did not finish in 2 s and was stopped/);
+});
+
+// The temporary checkouts the gate made and has not removed: folders in the session's temp
+// directory, or worktrees git still lists.
+function leftovers(gate, dir) {
+  const folders = fs.readdirSync(gate.tmp).filter((name) => name.startsWith('greenwashing-gate-check-'));
+  const listed = git(dir, 'worktree', 'list', '--porcelain').split('\n').filter((line) => line.includes('greenwashing-gate-check-'));
+  return [...folders, ...listed];
+}
+
+// A project and a worktree of it on branch feat, both seen by the gate at the prompt.
+function seenWorktree(t, files = { 't.test.js': NODE_PASS }, testCommand = NODE_CMD) {
+  const dir = project(t, { ...files, '.gitignore': '.claude/worktrees/\n' }, testCommand);
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  const gate = session(t, dir);
+  gate.prompt(tree);
+  return { dir, tree, gate };
+}
+
+test('a worktree removed after a red commit: that commit is tested in a temporary checkout, and blocks', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'red');
+  const red = git(tree, 'rev-parse', 'HEAD').trim();
+  git(dir, 'worktree', 'remove', tree);
+  const { json } = gate.stop(false, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, new RegExp(`\\nFolder: a temporary checkout of ${red.slice(0, 12)} \\(branch feat\\), the last commit of the removed worktree \\.claude/worktrees/feat\\nResult: failed - 1 failed`));
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+test('a worktree removed after a green commit: the temporary checkout passes and the stop is allowed', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
+  git(tree, 'commit', '-qam', 'green');
+  git(dir, 'worktree', 'remove', tree);
+  assert.match(gate.stop(false, dir).json.systemMessage,
+    /^greenwashing: tests passed - node --test --test-reporter=tap t\.test\.js in a temporary checkout of [0-9a-f]{12} \(branch feat\), the last commit of the removed worktree \.claude\/worktrees\/feat: 1 passed, 0 failed, 0 skipped$/);
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+test('a removed worktree whose branch the project merged is not tested again', (t) => {
+  const log = path.join(tempDir(t), 'ran-in');
+  const { dir, tree, gate } = seenWorktree(t, { 't.test.js': NODE_PASS }, `pwd >> ${JSON.stringify(log)}; ${NODE_CMD}`);
+  write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
+  git(tree, 'commit', '-qam', 'green');
+  git(dir, 'merge', '-q', 'feat');
+  git(dir, 'worktree', 'remove', tree);
+  assert.match(gate.stop(false, dir).json.systemMessage, /^greenwashing: tests passed - pwd >> .*: 1 passed, 0 failed, 0 skipped$/);
+  // The project ran its tests for the merge; nothing ran in a temporary checkout.
+  assert.deepEqual(fs.readFileSync(log, 'utf8').trim().split('\n'), [fs.realpathSync(dir)]);
+});
+
+test('a removed worktree whose commit cannot be tested: did not run, and the checkout is still removed', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { '.greenwashing.json': '{"testCommand": ' });
+  git(tree, 'commit', '-qam', 'broken config');
+  git(dir, 'worktree', 'remove', tree);
+  const { json } = gate.stop(false, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /Result: did not run - \.greenwashing\.json is not valid JSON/);
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+test('a removed worktree whose branch and commits are gone: did not run', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'red');
+  // The gate sees the red commit, then the worktree, its branch and the commit disappear.
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+  git(dir, 'worktree', 'remove', tree);
+  git(dir, 'branch', '-q', '-D', 'feat');
+  git(dir, 'reflog', 'expire', '--expire=now', '--all');
+  git(dir, 'gc', '-q', '--prune=now');
+  const { json } = gate.stop(true, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /Result: did not run - the worktree \.claude\/worktrees\/feat was removed and the commit it left cannot be found/);
+});
+
+test('a removed worktree of an old branch it did not change leaves nothing to test', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, '.gitignore': '.claude/worktrees/\n' });
+  const tree = path.join(dir, '.claude', 'worktrees', 'old');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'old');
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'old red work, not in the project');
+  const gate = session(t, dir);
+  gate.prompt(tree);
+  git(dir, 'worktree', 'remove', tree);
+  assert.deepEqual(gate.stop(false, dir).json, NO_CHANGES);
+});
+
+test('a removed worktree whose branch was deleted, its commit kept on another branch: that commit is tested', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'red');
+  const red = git(tree, 'rev-parse', 'HEAD').trim();
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+  git(dir, 'branch', 'keep', 'feat');
+  git(dir, 'worktree', 'remove', tree);
+  git(dir, 'branch', '-q', '-D', 'feat');
+  const { json } = gate.stop(true, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, new RegExp(`\\nFolder: a temporary checkout of ${red.slice(0, 12)} \\(no branch\\), the last commit of the removed worktree`));
+  assert.match(json.reason, /Result: failed - 1 failed/);
+});
+
+test('a discarded experiment - worktree removed, branch deleted, nothing holds the commit - leaves nothing to test', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'red experiment');
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+  git(dir, 'worktree', 'remove', tree);
+  git(dir, 'branch', '-q', '-D', 'feat');
+  assert.deepEqual(gate.stop(true, dir).json, NO_CHANGES);
+});
+
+test('a detached worktree whose red commit another branch keeps is tested when removed', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, '.gitignore': '.claude/worktrees/\n' });
+  const tree = path.join(dir, '.claude', 'worktrees', 'loose');
+  git(dir, 'worktree', 'add', '-q', '--detach', tree);
+  const gate = session(t, dir);
+  gate.prompt(tree);
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'red');
+  assert.equal(gate.stop(false, tree).json.decision, 'block');
+  git(tree, 'branch', 'keep');
+  git(dir, 'worktree', 'remove', tree);
+  const { json } = gate.stop(true, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /\(no branch\), the last commit of the removed worktree \.claude\/worktrees\/loose\nResult: failed - 1 failed/);
+});
+
+test("a removed worktree's commit shares the stop's timeout with the project's own run", (t) => {
+  const config = JSON.stringify({ testCommand: `sleep 2; ${GREEN_ECHO}`, timeoutSeconds: 3 });
+  const { dir, tree, gate } = seenWorktree(t, { 'app.js': '1;\n', '.greenwashing.json': config }, null);
+  write(tree, { 'app.js': '2;\n' });
+  git(tree, 'commit', '-qam', 'work');
+  git(dir, 'worktree', 'remove', tree);
+  write(dir, { 'app.js': '3;\n' });
+  // Each run alone is green in 2 s; the project's and the removed worktree's do not fit in 3 s.
+  assert.equal(gate.stop(false, dir).json.decision, 'block');
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+test('a commit that cannot be checked out: did not run, and no checkout is left', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
+  git(tree, 'commit', '-qam', 'green');
+  git(dir, 'worktree', 'remove', tree);
+  // A post-checkout hook that fails makes `git worktree add` fail for the gate's checkout.
+  write(dir, { '.git/hooks/post-checkout': '#!/bin/sh\nexit 1\n' });
+  fs.chmodSync(path.join(dir, '.git', 'hooks', 'post-checkout'), 0o755);
+  const { json } = gate.stop(false, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /Result: did not run - commit [0-9a-f]{40} could not be checked out/);
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+test('a worktree git no longer knows (its .git file moved away) is still tested as a folder', (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': NODE_FAIL });
+  fs.renameSync(path.join(tree, '.git'), path.join(tree, 'moved-git-file'));
+  assert.equal(gate.stop(false, dir).json.decision, 'block');
+});
+
+test("a merged branch is judged again when the project's HEAD moves back", (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  const start = git(dir, 'rev-parse', 'HEAD').trim();
+  write(tree, { 't.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'red');
+  git(dir, 'merge', '-q', 'feat');
+  git(dir, 'worktree', 'remove', tree);
+  assert.equal(gate.stop(false, dir).json.decision, 'block');
+  git(dir, 'reset', '-q', '--hard', start);
+  const { json } = gate.stop(true, dir);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /temporary checkout of [0-9a-f]{12} \(branch feat\)/);
+});
+
+test("removing the temporary checkout leaves the user's other worktrees alone", (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  // A worktree of the user's whose folder is away (an unmounted drive): git lists it as prunable.
+  const away = path.join(tempDir(t), 'usb');
+  git(dir, 'worktree', 'add', '-q', away, '-b', 'usb');
+  fs.renameSync(away, `${away}-unmounted`);
+  write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
+  git(tree, 'commit', '-qam', 'green');
+  git(dir, 'worktree', 'remove', tree);
+  assert.match(gate.stop(false, dir).json.systemMessage, /^greenwashing: tests passed/);
+  assert.match(git(dir, 'worktree', 'list', '--porcelain'), new RegExp(`worktree ${fs.realpathSync(path.dirname(away)).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/usb\n`));
+});
+
+test('a worktree on a remote branch that existed when the turn started is not a change', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, '.gitignore': '.claude/worktrees/\n' });
+  const main = git(dir, 'rev-parse', '--abbrev-ref', 'HEAD').trim();
+  git(dir, 'checkout', '-q', '-b', 'pr');
+  write(dir, { 't.test.js': NODE_FAIL });
+  git(dir, 'commit', '-qam', 'red pull request');
+  git(dir, 'update-ref', 'refs/remotes/origin/pr-1', 'HEAD');
+  git(dir, 'checkout', '-q', main);
+  git(dir, 'branch', '-q', '-D', 'pr');
+  const gate = session(t, dir);
+  gate.prompt();
+  // The agent opens the pull request in a worktree to review it, and changes nothing.
+  const tree = path.join(dir, '.claude', 'worktrees', 'review');
+  git(dir, 'worktree', 'add', '-q', '--detach', tree, 'origin/pr-1');
+  assert.deepEqual(gate.stop(false, tree).json, NO_CHANGES);
+});
+
+test('a worktree first seen at the prompt after an interrupted turn is still checked when removed', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, '.gitignore': '.claude/worktrees/\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  // No Stop: the user interrupts while the agent is in the worktree, then writes again.
+  gate.prompt(tree);
+  write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
+  git(tree, 'commit', '-qam', 'green');
+  git(dir, 'worktree', 'remove', tree);
+  assert.match(gate.stop(false, dir).json.systemMessage, /^greenwashing: tests passed - .* in a temporary checkout of [0-9a-f]{12} \(branch feat\)/);
+});
+
+test('a signal while the temporary checkout is being made removes it too', async (t) => {
+  const started = path.join(tempDir(t), 'started');
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
+  git(tree, 'commit', '-qam', 'green');
+  git(dir, 'worktree', 'remove', tree);
+  // A slow post-checkout hook keeps `git worktree add` busy when the signal comes.
+  write(dir, { '.git/hooks/post-checkout': `#!/bin/sh\ntouch ${JSON.stringify(started)}\nsleep 2\n` });
+  fs.chmodSync(path.join(dir, '.git', 'hooks', 'post-checkout'), 0o755);
+  const hook = spawn(process.execPath, [HOOK, 'stop'], { env: gate.env, stdio: ['pipe', 'ignore', 'ignore'] });
+  const exited = new Promise((resolve) => hook.on('exit', (code) => resolve(code)));
+  hook.stdin.end(JSON.stringify(gate.stopInput(false, dir)));
+  for (let i = 0; i < 100 && !fs.existsSync(started); i += 1) await sleep(100);
+  assert.ok(fs.existsSync(started), 'the checkout never started');
+  hook.kill('SIGTERM');
+  assert.equal(await exited, 143);
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+test("a removed worktree of a project in a subfolder is tested at the project's place in the checkout", (t) => {
+  const repo = project(t, { 'app/t.test.js': NODE_PASS, 'app/.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }), '.gitignore': '.claude/worktrees/\n' }, null);
+  const tree = path.join(repo, '.claude', 'worktrees', 'feat');
+  git(repo, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  const app = path.join(repo, 'app');
+  const gate = session(t, app);
+  gate.prompt(tree);
+  write(tree, { 'app/t.test.js': NODE_FAIL });
+  git(tree, 'commit', '-qam', 'red');
+  git(repo, 'worktree', 'remove', tree);
+  const { json } = gate.stop(false, app);
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /the removed worktree \.\.\/\.claude\/worktrees\/feat\nResult: failed - 1 failed/);
+});
+
+test('when the hook is stopped during a temporary checkout, the checkout is removed too', async (t) => {
+  const started = path.join(tempDir(t), 'started');
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: `touch ${JSON.stringify(started)}; sleep 30` }) });
+  git(tree, 'commit', '-qam', 'slow');
+  git(dir, 'worktree', 'remove', tree);
+  const hook = spawn(process.execPath, [HOOK, 'stop'], { env: gate.env, stdio: ['pipe', 'ignore', 'ignore'] });
+  const exited = new Promise((resolve) => hook.on('exit', (code) => resolve(code)));
+  hook.stdin.end(JSON.stringify(gate.stopInput(false, dir)));
+  for (let i = 0; i < 100 && !fs.existsSync(started); i += 1) await sleep(100);
+  assert.ok(fs.existsSync(started), 'the tests never started');
+  hook.kill('SIGTERM');
+  assert.equal(await exited, 143);
+  assert.deepEqual(leftovers(gate, dir), []);
 });
 
 test('a worktree removed during the turn leaves nothing to test', (t) => {
@@ -707,7 +979,8 @@ test('a project in a subfolder of its repository is tested from that subfolder, 
 
 test('outside a git repository with no test command, the stop is allowed with one line', (t) => {
   const dir = tempDir(t);
-  write(dir, { 'main.go': 'package main\n' });
+  // A Python helper that is no test does not make the folder a Python project.
+  write(dir, { 'main.go': 'package main\n', 'helper.py': 'print("helper")\n' });
   const gate = session(t, dir);
   gate.prompt();
   assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: not a git repository and no test command - tests not run' });
@@ -730,6 +1003,48 @@ test('Python files git does not track yet make a Python project; outside git, a 
   const other = session(t, plain);
   other.prompt();
   assert.deepEqual(other.stop().json, { systemMessage: 'greenwashing: tests passed - python3 -m unittest discover: 1 passed, 0 failed, 0 skipped' });
+});
+
+test('a JavaScript project with a helper Python script runs npm test, no testCommand needed', (t) => {
+  const dir = project(t, {
+    'package.json': JSON.stringify({ name: 'demo', scripts: { test: 'node --test --test-reporter=tap' } }),
+    'sum.test.js': NODE_PASS,
+    'scripts/helper.py': 'print("helper")\n',
+  }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'sum.test.js': `${NODE_PASS}// touched\n` });
+  assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: tests passed - npm test: 1 passed, 0 failed, 0 skipped' });
+});
+
+test('a JavaScript project with a pytest section in pyproject.toml, setup.cfg or tox.ini needs a testCommand', (t) => {
+  for (const [name, text] of [['pyproject.toml', '[tool.pytest.ini_options]\n'], ['setup.cfg', '[tool:pytest]\n'], ['tox.ini', '[pytest]\n']]) {
+    const dir = project(t, {
+      'package.json': JSON.stringify({ name: 'demo', scripts: { test: 'node --test --test-reporter=tap' } }),
+      'sum.test.js': NODE_PASS,
+      [name]: text,
+    }, null);
+    const gate = session(t, dir);
+    gate.prompt();
+    write(dir, { 'sum.test.js': `${NODE_PASS}// touched\n` });
+    assert.match(gate.stop().json.reason, /package\.json has a test script and the project also has Python tests/, name);
+  }
+});
+
+test('a JavaScript project with Python tests (test_*.py or *_test.py) needs a testCommand', (t) => {
+  for (const tests of ['tests/test_x.py', 'x_test.py']) {
+    const dir = project(t, {
+      'package.json': JSON.stringify({ name: 'demo', scripts: { test: 'node --test --test-reporter=tap' } }),
+      'sum.test.js': NODE_PASS,
+      [tests]: PY_PASS,
+    }, null);
+    const gate = session(t, dir);
+    gate.prompt();
+    write(dir, { 'sum.test.js': `${NODE_PASS}// touched\n` });
+    const { json } = gate.stop();
+    assert.equal(json.decision, 'block', tests);
+    assert.match(json.reason, /package\.json has a test script and the project also has Python tests/, tests);
+  }
 });
 
 test('the tests run with CI=true, which test scripts check before they start a watch mode', (t) => {

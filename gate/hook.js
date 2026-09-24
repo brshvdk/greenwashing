@@ -11,19 +11,31 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { candidatePaths, changedPaths, classify } = require('./lib/changes');
-const { chooseCommand, readConfig, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS } = require('./lib/command');
+const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS } = require('./lib/command');
 const { verdict, decide } = require('./lib/verdict');
 
 const OUTPUT_LIMIT = 64 * 1024 * 1024;
 const GRACE_MS = 5000;
 const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
 
+// While a Stop runs: the test command running now and the temporary checkouts (folder ->
+// repository), so that a signal to the hook stops and removes them too.
+let running = null;
+const checkouts = new Map();
+
+function onSignal(signal) {
+  if (running) killGroup(running);
+  for (const [dir, root] of checkouts) removeWorktree(root, dir);
+  process.exit(128 + (os.constants.signals[signal] || 0));
+}
+
 // One file per session and project in a per-user folder of the temp directory. starts: the start of
 // the turn in every git tree the turn has seen - a snapshot, or null for a tree the agent entered
-// after the start; known: the commits the worktrees and branches of the repository pointed at when
-// the turn started; blocks: how many times in a row the gate has sent the agent back; judged: a Stop
-// has allowed or released the turn.
-const NO_STATE = { starts: {}, known: [], blocks: 0, judged: false };
+// after the start; seen: the branch and commit each of those trees had when the gate last saw it;
+// known: the commits the worktrees and branches of the repository pointed at when the turn started;
+// blocks: how many times in a row the gate has sent the agent back; judged: a Stop has allowed or
+// released the turn.
+const NO_STATE = { starts: {}, seen: {}, known: [], blocks: 0, judged: false };
 
 function stateFile(input, dir) {
   const key = crypto.createHash('sha256').update(`${input.session_id || 'no-session'}\0${dir}`).digest('hex');
@@ -35,9 +47,10 @@ function loadState(file) {
   try {
     const state = JSON.parse(fs.readFileSync(file, 'utf8'));
     const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
-    if (!isObject(state.starts) || !Array.isArray(state.known)) return NO_STATE;
+    if (!isObject(state.starts) || !isObject(state.seen) || !Array.isArray(state.known)) return NO_STATE;
     return {
       starts: state.starts,
+      seen: state.seen,
       known: state.known,
       blocks: Number.isInteger(state.blocks) ? state.blocks : 0,
       judged: state.judged === true,
@@ -109,6 +122,17 @@ function committedHash(root, commit, file) {
   }
 }
 
+// The branch a tree has checked out (null when its HEAD is detached) and its commit.
+function sighting(root) {
+  let branch = null;
+  try {
+    branch = git(root, ['symbolic-ref', '-q', 'HEAD']).toString('utf8').trim();
+  } catch {
+    // Detached HEAD.
+  }
+  return { branch, head: headCommit(root) };
+}
+
 function snapshot(root) {
   if (!root) return null;
   const head = headCommit(root);
@@ -143,11 +167,12 @@ function readRootFiles(dir) {
   return files;
 }
 
-function hasPythonFiles(dir) {
+// Python test files git knows of, tracked or not ignored; outside git, the folder's own files only.
+function hasPythonTests(dir) {
   try {
-    return git(dir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.py']).length > 0;
+    return nulList(git(dir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.py'])).some(isPythonTest);
   } catch {
-    return fs.readdirSync(dir).some((name) => name.endsWith('.py'));
+    return fs.readdirSync(dir).some(isPythonTest);
   }
 }
 
@@ -162,7 +187,7 @@ function killGroup(child) {
 
 // Runs the command in a shell, in its own process group, with CI=true (test scripts that check it
 // skip their watch mode), and collects stdout and stderr together. If the hook itself is stopped,
-// the command's whole process group is stopped with it.
+// the command's whole process group is stopped with it (onSignal).
 function runTests(dir, choice) {
   return new Promise((resolve) => {
     const run = { command: choice.command, source: choice.source, timeoutSeconds: choice.timeoutSeconds, exitCode: null, output: '' };
@@ -177,11 +202,7 @@ function runTests(dir, choice) {
       resolve({ ...run, startError: error.message });
       return;
     }
-    const onSignal = (signal) => {
-      killGroup(child);
-      process.exit(128 + (os.constants.signals[signal] || 0));
-    };
-    for (const signal of SIGNALS) process.once(signal, onSignal);
+    running = child;
     const collect = (chunk) => {
       size += chunk.length;
       if (size <= OUTPUT_LIMIT) chunks.push(chunk);
@@ -195,7 +216,7 @@ function runTests(dir, choice) {
       done = true;
       clearTimeout(timer);
       clearTimeout(grace);
-      for (const signal of SIGNALS) process.removeListener(signal, onSignal);
+      running = null;
       killGroup(child);
       resolve({ ...run, output: Buffer.concat(chunks).toString('utf8'), ...fields });
     };
@@ -234,7 +255,7 @@ function knownCommits(root) {
   try {
     const heads = nulList(git(root, ['worktree', 'list', '--porcelain', '-z']))
       .filter((line) => line.startsWith('HEAD ')).map((line) => line.slice('HEAD '.length));
-    const tips = git(root, ['for-each-ref', '--format=%(objectname)', 'refs/heads']).toString('utf8').split('\n').filter(Boolean);
+    const tips = git(root, ['for-each-ref', '--format=%(objectname)', 'refs/heads', 'refs/remotes']).toString('utf8').split('\n').filter(Boolean);
     return [...new Set([...heads, ...tips])];
   } catch {
     // None known: a worktree the agent enters later counts as changed.
@@ -271,6 +292,57 @@ function changesIn(tree, start, known) {
   }
 }
 
+// What a worktree removed during the turn left behind: the tip of the branch it had when the gate
+// last saw it (or, with that branch gone too, the commit it had then). Nothing to test when that
+// commit existed when the turn started, is already in the project's HEAD, or - its branch gone - no
+// branch or tag holds it any more (the work was thrown away).
+function leftBehind(home, last, known) {
+  const tip = last && last.branch && commitOf(home, last.branch);
+  const commit = tip || commitOf(home, last && last.head);
+  if (!commit) return { error: 'the commit it left cannot be found' };
+  if (known.includes(commit) || isAncestor(home, commit, 'HEAD')) return { nothing: true };
+  if (!tip && !isReferenced(home, commit)) return { nothing: true };
+  return { commit, branch: tip ? last.branch : null };
+}
+
+// A branch, remote branch or tag contains the commit.
+function isReferenced(root, commit) {
+  try {
+    return git(root, ['for-each-ref', '--contains', commit, '--count=1', '--format=%(refname)']).length > 0;
+  } catch {
+    return true;
+  }
+}
+
+function commitOf(root, name) {
+  if (!name) return null;
+  try {
+    return git(root, ['rev-parse', '--verify', '--quiet', `${name}^{commit}`]).toString('utf8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function isAncestor(root, commit, of) {
+  try {
+    git(root, ['merge-base', '--is-ancestor', commit, of]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Removes the gate's own temporary checkout and nothing else: `git worktree prune` would also drop
+// the user's worktrees whose folder is away.
+function removeWorktree(root, dir) {
+  try {
+    git(root, ['worktree', 'remove', '--force', dir]);
+  } catch {
+    // Not a worktree: git never made it, or removed it itself when the checkout failed.
+  }
+  checkouts.delete(dir);
+}
+
 // A .git at or above the folder - a file pointing to a repository, or a folder with a HEAD: it is
 // in a git checkout even when git cannot read it.
 function inCheckout(dir) {
@@ -285,25 +357,51 @@ function inCheckout(dir) {
   }
 }
 
-// Runs the tests in each folder in turn and stops at the first result that is not green. All runs
-// of one Stop share the project's timeout (and each keeps its own), so a Stop never spends more
-// than MAX_TIMEOUT_SECONDS on tests - the Stop hook's own timeout is 60 s above it.
-async function runAll(dirs, project, budgetSeconds) {
+// A run that did not start: the reason says why.
+const notRun = (where, configError, fields = {}) => ({ command: '(none)', source: 'no test command', where, timeoutSeconds: 0, output: '', configError, ...fields });
+
+// The tests at dir, within the deadline and the timeout the folder's own config sets.
+async function runIn(dir, where, deadline) {
+  if (!fs.existsSync(dir)) return notRun(where, "the project's folder is missing there");
+  const choice = chooseCommand(readRootFiles(dir), hasPythonTests(dir));
+  if (choice.error) return notRun(where, choice.error);
+  const timeoutSeconds = Math.min(choice.timeoutSeconds, Math.ceil((deadline - Date.now()) / 1000));
+  if (timeoutSeconds < 1) {
+    return notRun(where, 'no time was left for these tests: the runs before them used the whole timeout', { command: choice.command, source: choice.source });
+  }
+  return { ...(await runTests(dir, { ...choice, timeoutSeconds })), where };
+}
+
+// The tests of a commit no tree has checked out any more: in a temporary worktree of the
+// repository, removed afterwards whatever the outcome.
+async function runAtCommit(home, project, target, deadline) {
+  // A new path: git makes the folder, and removes it again when the checkout fails.
+  const dir = path.join(os.tmpdir(), `greenwashing-gate-check-${crypto.randomBytes(8).toString('hex')}`);
+  checkouts.set(dir, home);
+  try {
+    try {
+      git(home, ['worktree', 'add', '--detach', '--quiet', dir, target.commit]);
+    } catch {
+      return notRun(target.where, `commit ${target.commit} could not be checked out`);
+    }
+    return await runIn(path.join(dir, path.relative(home, project)), target.where, deadline);
+  } finally {
+    removeWorktree(home, dir);
+  }
+}
+
+// Runs the tests of each target in turn and stops at the first result that is not green. A
+// target is a folder to test, a commit to test in a temporary checkout, or an error. All runs of
+// one Stop share the project's timeout (and each keeps its own), so a Stop never spends more than
+// MAX_TIMEOUT_SECONDS on tests - the Stop hook's own timeout is 60 s above it.
+async function runAll(targets, project, home, budgetSeconds) {
   const runs = [];
   const deadline = Date.now() + budgetSeconds * 1000;
-  for (const dir of dirs) {
-    const where = path.relative(project, dir);
-    const none = (fields) => ({ command: '(none)', source: 'no test command', where, timeoutSeconds: 0, output: '', ...fields });
+  for (const target of targets) {
     let run;
-    if (!fs.existsSync(dir)) {
-      run = none({ configError: `the project's folder ${where} does not exist in this tree` });
-    } else {
-      const choice = chooseCommand(readRootFiles(dir), hasPythonFiles(dir));
-      const timeoutSeconds = Math.min(choice.timeoutSeconds, Math.ceil((deadline - Date.now()) / 1000));
-      if (choice.error) run = none({ configError: choice.error });
-      else if (timeoutSeconds < 1) run = { ...none({ configError: 'no time was left for these tests: the runs before them used the whole timeout' }), command: choice.command, source: choice.source };
-      else run = { ...(await runTests(dir, { ...choice, timeoutSeconds })), where };
-    }
+    if (target.error) run = notRun(target.where, target.error);
+    else if (target.commit) run = await runAtCommit(home, project, target, deadline);
+    else run = await runIn(target.dir, path.relative(project, target.dir), deadline);
     runs.push(run);
     if (verdict(run).outcome !== 'passed') break;
   }
@@ -323,37 +421,49 @@ async function onStop(input) {
   const active = input.stop_hook_active === true;
   if (!home) {
     // Outside git nothing tells what changed, so the tests run whenever there are any.
-    const choice = chooseCommand(readRootFiles(project), hasPythonFiles(project));
-    if (!choice.none) return settle(file, state, await runAll([project], project, choice.timeoutSeconds), active);
+    const choice = chooseCommand(readRootFiles(project), hasPythonTests(project));
+    if (!choice.none) return settle(file, state, await runAll([{ dir: project }], project, null, choice.timeoutSeconds), active);
     if (!inCheckout(project)) return allow(file, state, 'greenwashing: not a git repository and no test command - tests not run');
     const configError = 'git cannot read the repository this folder is in, so the gate cannot tell what changed (run git status here to see why)';
     return settle(file, state, [{ command: '(none)', source: 'git', timeoutSeconds: 0, configError, output: '' }], active);
   }
   // Every tree the turn has seen, with the project's and the one the agent is in now.
   const starts = entered(state.starts, [home, here]);
+  const seen = { ...state.seen };
   const pending = [];
+  const removed = [];
   let docs = 0;
   for (const [tree, start] of Object.entries(starts)) {
     if (!fs.existsSync(tree)) {
-      // A worktree removed during the turn: nothing is left there to test.
-      delete starts[tree];
+      // A worktree removed during the turn: what it left in its branch is tested, unless the
+      // project already holds it or it is older than the turn.
+      // Judged again at every Stop of the turn: the project's HEAD may still move.
+      const left = leftBehind(home, seen[tree], state.known);
+      const name = path.relative(project, tree);
+      if (left.error) {
+        removed.push({ where: name, error: `the worktree ${name} was removed and ${left.error}` });
+      } else if (!left.nothing) {
+        const branch = left.branch ? `branch ${left.branch.replace(/^refs\/heads\//, '')}` : 'no branch';
+        removed.push({ commit: left.commit, where: `a temporary checkout of ${left.commit.slice(0, 12)} (${branch}), the last commit of the removed worktree ${name}` });
+      }
       continue;
     }
+    seen[tree] = sighting(tree);
     const changed = changesIn(tree, start, state.known);
     const split = changed === null ? null : classify(changed);
     if (split === null || split.code.length > 0) pending.push(tree);
     else docs += split.docs.length;
   }
-  const next = { ...state, starts };
-  if (pending.length === 0) {
+  const next = { ...state, starts, seen };
+  if (pending.length === 0 && removed.length === 0) {
     return allow(file, next, docs === 0 ? 'greenwashing: no files changed this turn - tests not run'
       : `greenwashing: only documentation changed (${docs} file${docs === 1 ? '' : 's'}) - tests not run`);
   }
   // The tests run at the project's place in each tree (the project can be a subfolder of its
   // repository), within the timeout the project sets.
   const budget = readConfig(readRootFiles(project)[CONFIG_FILE]).timeoutSeconds || DEFAULT_TIMEOUT_SECONDS;
-  const dirs = pending.map((tree) => path.join(tree, path.relative(home, project)));
-  return settle(file, next, await runAll(dirs, project, budget), active);
+  const targets = [...pending.map((tree) => ({ dir: path.join(tree, path.relative(home, project)) })), ...removed];
+  return settle(file, next, await runAll(targets, project, home, budget), active);
 }
 
 function settle(file, state, runs, stopHookActive) {
@@ -371,14 +481,22 @@ function onPrompt(input) {
     // No Stop judged the last turn (the user interrupted it, or the API failed): its changes still
     // count, so its starts stay and a tree the agent is in now joins without one. A new prompt
     // still restarts the block count.
-    saveState(file, { ...state, starts: entered(state.starts, [home, here]), blocks: 0 });
+    const seen = { ...state.seen };
+    for (const tree of [home, here]) if (tree) seen[tree] = sighting(tree);
+    saveState(file, { ...state, starts: entered(state.starts, [home, here]), seen, blocks: 0 });
     return;
   }
   // First forget the last turn, so a snapshot cut short by the hook timeout reads as "unknown".
   saveState(file, NO_STATE);
   const starts = {};
-  for (const tree of [home, here]) if (tree) starts[tree] = snapshot(tree);
-  saveState(file, { starts, known: home ? knownCommits(home) : [], blocks: 0, judged: false });
+  const seen = {};
+  for (const tree of [home, here]) {
+    if (tree) {
+      starts[tree] = snapshot(tree);
+      seen[tree] = sighting(tree);
+    }
+  }
+  saveState(file, { starts, seen, known: home ? knownCommits(home) : [], blocks: 0, judged: false });
 }
 
 function readStdin() {
@@ -413,6 +531,7 @@ async function main() {
     }
     return;
   }
+  for (const signal of SIGNALS) process.on(signal, onSignal);
   let output;
   try {
     if (inputError) throw new Error(inputError);
