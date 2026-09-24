@@ -1,11 +1,12 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { chooseCommand, readConfig, ROOT_FILES } = require('../lib/command');
+const { chooseCommand, readConfig, isPythonTest, ROOT_FILES } = require('../lib/command');
 
 // Every root file the rules look at is absent unless the case names it.
 const files = (present = {}) => ({ ...Object.fromEntries(ROOT_FILES.map((name) => [name, null])), ...present });
-const pick = (present, hasPy = false) => chooseCommand(files(present), hasPy);
+// hasTests: the project has Python test files (test_*.py, *_test.py).
+const pick = (present, hasTests = false) => chooseCommand(files(present), hasTests);
 
 test('the command in .greenwashing.json wins over everything else', () => {
   const choice = pick({ '.greenwashing.json': '{"testCommand": "make check", "timeoutSeconds": 30}', 'package.json': '{"scripts": {"test": "jest"}}', 'pytest.ini': '' }, true);
@@ -17,17 +18,30 @@ test('without it, the test script of package.json runs through npm', () => {
     { command: 'npm test', source: 'package.json scripts.test', timeoutSeconds: 600 });
 });
 
-test('a package.json test script next to Python code needs an explicit command (npm test alone leaves one untested)', () => {
+test('a package.json test script next to Python tests or Python test settings needs an explicit command', () => {
+  const npm = { 'package.json': '{"scripts": {"test": "jest"}}' };
   const both = [
-    [{ 'package.json': '{"scripts": {"test": "jest"}}' }, true],
-    [{ 'package.json': '{"scripts": {"test": "jest"}}', 'requirements.txt': 'x\n' }, false],
-    [{ 'package.json': '{"scripts": {"test": "jest"}}', 'tests/conftest.py': '' }, false],
+    [npm, true],
+    [{ ...npm, 'pytest.ini': '' }, false],
+    [{ ...npm, 'conftest.py': '' }, false],
+    [{ ...npm, 'tests/conftest.py': '' }, false],
+    [{ ...npm, 'pyproject.toml': '[tool.pytest.ini_options]\naddopts = "-q"\n' }, false],
+    [{ ...npm, 'setup.cfg': '[tool:pytest]\n' }, false],
+    [{ ...npm, 'tox.ini': '[pytest]\n' }, false],
   ];
-  for (const [present, hasPy] of both) {
-    const choice = pick(present, hasPy);
+  for (const [present, hasTests] of both) {
+    const choice = pick(present, hasTests);
     assert.equal(choice.command, undefined, JSON.stringify(present));
-    assert.match(choice.error, /package\.json has a test script and the project also has Python code.*add \{"testCommand"/, JSON.stringify(present));
+    assert.match(choice.error, /package\.json has a test script and the project also has Python tests.*add \{"testCommand"/, JSON.stringify(present));
     assert.equal(choice.none, undefined);
+  }
+});
+
+test('Python code that is not tests, or Python packaging files, leave a JavaScript project on npm test', () => {
+  const npm = { 'package.json': '{"scripts": {"test": "jest"}}' };
+  for (const extra of [{}, { 'requirements.txt': 'requests\n' }, { 'setup.py': '' }, { 'Pipfile': '' },
+    { 'pyproject.toml': '[project]\nname = "x"\n' }, { 'setup.cfg': '[metadata]\n' }, { 'tox.ini': '[tox]\n' }]) {
+    assert.equal(pick({ ...npm, ...extra }).command, 'npm test', JSON.stringify(extra));
   }
 });
 
@@ -70,11 +84,22 @@ test('pytest runs when the project configures it', () => {
   }
 });
 
-test('any other Python project runs unittest', () => {
-  for (const present of [{ 'pyproject.toml': '[project]\nname = "x"\n' }, { 'setup.py': '' }, { 'requirements.txt': 'requests\n' }, { 'Pipfile': '' }, { 'setup.cfg': '[metadata]\n' }, { 'tox.ini': '[tox]\n' }]) {
-    assert.equal(pick(present).command, 'python3 -m unittest discover', JSON.stringify(present));
+test("a Python test file is named test_*.py or *_test.py, in any folder", () => {
+  for (const file of ['test_x.py', 'tests/test_x.py', 'x_test.py', 'pkg/sub/x_test.py', 'test_.py']) {
+    assert.equal(isPythonTest(file), true, file);
   }
+  for (const file of ['helper.py', 'scripts/helper.py', 'setup.py', 'conftest.py', 'latest_x.py', 'test.py', 'testing.py',
+    'contest.py', 'x_tests.py', 'test_x.pyc', 'test_x.py.bak', 'Test_x.py', 'tests/helper.py', 'test_dir/helper.py']) {
+    assert.equal(isPythonTest(file), false, file);
+  }
+});
+
+test('Python tests with no pytest settings run under unittest; packaging files alone are no tests', () => {
   assert.equal(pick({}, true).command, 'python3 -m unittest discover');
+  assert.equal(pick({ 'requirements.txt': 'requests\n' }, true).command, 'python3 -m unittest discover');
+  for (const present of [{ 'pyproject.toml': '[project]\nname = "x"\n' }, { 'setup.py': '' }, { 'requirements.txt': 'requests\n' }, { 'Pipfile': '' }, { 'setup.cfg': '[metadata]\n' }, { 'tox.ini': '[tox]\n' }]) {
+    assert.equal(pick(present).none, true, JSON.stringify(present));
+  }
 });
 
 test('an explicit timeout also applies to a command found on its own', () => {

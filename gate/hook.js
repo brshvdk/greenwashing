@@ -11,7 +11,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { candidatePaths, changedPaths, classify } = require('./lib/changes');
-const { chooseCommand, readConfig, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS } = require('./lib/command');
+const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS } = require('./lib/command');
 const { verdict, decide } = require('./lib/verdict');
 
 const OUTPUT_LIMIT = 64 * 1024 * 1024;
@@ -143,11 +143,12 @@ function readRootFiles(dir) {
   return files;
 }
 
-function hasPythonFiles(dir) {
+// Python test files git knows of, tracked or not ignored; outside git, the folder's own files only.
+function hasPythonTests(dir) {
   try {
-    return git(dir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.py']).length > 0;
+    return nulList(git(dir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.py'])).some(isPythonTest);
   } catch {
-    return fs.readdirSync(dir).some((name) => name.endsWith('.py'));
+    return fs.readdirSync(dir).some(isPythonTest);
   }
 }
 
@@ -298,7 +299,7 @@ async function runAll(dirs, project, budgetSeconds) {
     if (!fs.existsSync(dir)) {
       run = none({ configError: `the project's folder ${where} does not exist in this tree` });
     } else {
-      const choice = chooseCommand(readRootFiles(dir), hasPythonFiles(dir));
+      const choice = chooseCommand(readRootFiles(dir), hasPythonTests(dir));
       const timeoutSeconds = Math.min(choice.timeoutSeconds, Math.ceil((deadline - Date.now()) / 1000));
       if (choice.error) run = none({ configError: choice.error });
       else if (timeoutSeconds < 1) run = { ...none({ configError: 'no time was left for these tests: the runs before them used the whole timeout' }), command: choice.command, source: choice.source };
@@ -323,7 +324,7 @@ async function onStop(input) {
   const active = input.stop_hook_active === true;
   if (!home) {
     // Outside git nothing tells what changed, so the tests run whenever there are any.
-    const choice = chooseCommand(readRootFiles(project), hasPythonFiles(project));
+    const choice = chooseCommand(readRootFiles(project), hasPythonTests(project));
     if (!choice.none) return settle(file, state, await runAll([project], project, choice.timeoutSeconds), active);
     if (!inCheckout(project)) return allow(file, state, 'greenwashing: not a git repository and no test command - tests not run');
     const configError = 'git cannot read the repository this folder is in, so the gate cannot tell what changed (run git status here to see why)';

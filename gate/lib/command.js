@@ -11,7 +11,12 @@ const HOW_TO = `add {"testCommand": "<the command that runs your tests>"} to ${C
 // What `npm init` writes when there are no tests.
 const NPM_PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
 const PYTEST_FILES = ['pytest.ini', 'pytest.toml', '.pytest.toml', 'conftest.py', 'tests/conftest.py', 'test/conftest.py'];
-const PYTHON_MARKERS = ['pyproject.toml', 'setup.py', 'setup.cfg', 'requirements.txt', 'Pipfile', 'tox.ini'];
+// Files that can hold a pytest section.
+const PYTEST_SECTION_FILES = ['pyproject.toml', 'setup.cfg', 'tox.ini'];
+
+// A Python test file, by pytest's default names: test_*.py or *_test.py. Other Python files (a
+// helper script, setup.py) do not make a project Python (owner decision, PR 4b).
+const isPythonTest = (file) => /^test_.*\.py$|_test\.py$/.test(file.split('/').pop());
 
 // A byte order mark at the start is not part of the JSON (JSON.parse refuses it).
 const withoutBom = (text) => text.replace(/^\uFEFF/, '');
@@ -49,10 +54,10 @@ function pytestConfigured(files) {
 }
 
 // files: {name: text, or null when absent} for the root files the rules look at;
-// hasPythonFiles: the project has any .py file.
+// hasPythonTests: the project has a Python test file (isPythonTest).
 // Returns {command, source, timeoutSeconds} or {error, timeoutSeconds}; `none` marks the one
 // error that means "nothing here to test" rather than a broken setup.
-function chooseCommand(files, hasPythonFiles) {
+function chooseCommand(files, hasPythonTests) {
   const config = readConfig(files[CONFIG_FILE]);
   if (config.error) return { error: config.error, timeoutSeconds: DEFAULT_TIMEOUT_SECONDS };
   const { timeoutSeconds } = config;
@@ -67,9 +72,9 @@ function chooseCommand(files, hasPythonFiles) {
     }
     npmTest = Boolean(scripts) && typeof scripts.test === 'string' && ![NPM_PLACEHOLDER, ''].includes(scripts.test.trim());
   }
-  const python = hasPythonFiles || PYTHON_MARKERS.some((name) => files[name] !== null) || pytestConfigured(files);
+  const python = hasPythonTests || pytestConfigured(files);
   if (npmTest && python) {
-    return { error: `package.json has a test script and the project also has Python code, so npm test alone would leave one of them untested; ${HOW_TO}`, timeoutSeconds };
+    return { error: `package.json has a test script and the project also has Python tests, so npm test alone would leave one of them untested; ${HOW_TO}`, timeoutSeconds };
   }
   if (npmTest) return { command: 'npm test', source: 'package.json scripts.test', timeoutSeconds };
   if (pytestConfigured(files)) return { command: 'python3 -m pytest', source: 'pytest configured', timeoutSeconds };
@@ -77,8 +82,8 @@ function chooseCommand(files, hasPythonFiles) {
   return { error: `no test command found; ${HOW_TO}`, none: true, timeoutSeconds };
 }
 
-const ROOT_FILES = [...new Set([CONFIG_FILE, 'package.json', ...PYTEST_FILES, ...PYTHON_MARKERS])];
+const ROOT_FILES = [CONFIG_FILE, 'package.json', ...PYTEST_FILES, ...PYTEST_SECTION_FILES];
 
 module.exports = {
-  chooseCommand, readConfig, pytestConfigured, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
+  chooseCommand, readConfig, pytestConfigured, isPythonTest, ROOT_FILES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
 };

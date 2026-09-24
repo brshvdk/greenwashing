@@ -732,6 +732,34 @@ test('Python files git does not track yet make a Python project; outside git, a 
   assert.deepEqual(other.stop().json, { systemMessage: 'greenwashing: tests passed - python3 -m unittest discover: 1 passed, 0 failed, 0 skipped' });
 });
 
+test('a JavaScript project with a helper Python script runs npm test, no testCommand needed', (t) => {
+  const dir = project(t, {
+    'package.json': JSON.stringify({ name: 'demo', scripts: { test: 'node --test --test-reporter=tap' } }),
+    'sum.test.js': NODE_PASS,
+    'scripts/helper.py': 'print("helper")\n',
+  }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'sum.test.js': `${NODE_PASS}// touched\n` });
+  assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: tests passed - npm test: 1 passed, 0 failed, 0 skipped' });
+});
+
+test('a JavaScript project with Python tests (test_*.py or *_test.py) needs a testCommand', (t) => {
+  for (const tests of ['tests/test_x.py', 'x_test.py']) {
+    const dir = project(t, {
+      'package.json': JSON.stringify({ name: 'demo', scripts: { test: 'node --test --test-reporter=tap' } }),
+      'sum.test.js': NODE_PASS,
+      [tests]: PY_PASS,
+    }, null);
+    const gate = session(t, dir);
+    gate.prompt();
+    write(dir, { 'sum.test.js': `${NODE_PASS}// touched\n` });
+    const { json } = gate.stop();
+    assert.equal(json.decision, 'block', tests);
+    assert.match(json.reason, /package\.json has a test script and the project also has Python tests/, tests);
+  }
+});
+
 test('the tests run with CI=true, which test scripts check before they start a watch mode', (t) => {
   const dir = project(t, { 'ci.js': "if (process.env.CI === 'true') console.log('Ran 1 test in 0.1s\\n\\nOK');\n" }, 'node ci.js');
   const gate = session(t, dir, { env: { CI: 'false' } });
