@@ -1,18 +1,16 @@
 # SESSION
 
 ## Current step
-Step 1, PR 3 - the skill: `skills/greenwashing/SKILL.md` (text from the owner, verbatim), `tests/test_skill.py`, two American spellings in `CATALOG.md` (GW-13, GW-73), map. PR 2c (#8) merged as 2e14dcd.
+Step 1, PR 4 - the gate: a Claude Code Stop hook that runs the project's tests when the turn changed code, and blocks the end of the turn when they fail or did not really run; packaged as a plugin (marketplace in this repository, with the skill); the gate on this repository. PR 3 (#9, the skill) merged as 30881e9.
 
 ## Progress
-- [x] SKILL.md as given; catalog edits (two lines)
-- [x] `tests/test_skill.py`; own mutation wave (fresh bytecode caches): 13 file mutants red, 1 control green, 25 checker mutants red, 0 did not run
-- [x] path and limits checked against the docs (fetched 2026-09-23): `skills` npm README 1.7.0, "Skill Discovery" lists `skills/` (flat layout `skills/<name>/SKILL.md`); agentskills.io/specification: name 1-64, `a-z0-9-`, no hyphen at the start or end, no `--`, equals the folder; description 1-1024, non-empty; platform.claude.com Agent Skills overview: 64 / 1024. skills.sh unreadable: every path redirects (308) to www.skills.sh, which the proxy denies (403, example.com as control)
-- [x] the spec's hyphen rules for `name` added to the checker; own wave on the first (two-class) pattern, fresh bytecode caches: 12 mutants red, 1 control green
-- [x] live install, `DISABLE_TELEMETRY=1 npx -y skills@1.7.0 add <clean copy of 440f071> --skill greenwashing -a claude-code -y` in an empty project: "Found 1 skill", copied to `.claude/skills/greenwashing/SKILL.md` (`cmp`: identical) plus `skills-lock.json` (`sourceType: local`); nothing installed globally
-- [x] fresh-context review: no leaks; realistic survivors (empty quoted or null description, folded description of any length) and false alarms (quoted name, CRLF, BOM) re-run, confirmed, fixed; map items fixed; adversarial ones listed in the report
-- [x] second fresh-context review (hyphen rules, doc claims, own mutations): doc claims and the live install confirmed (its own offline re-run); one hole in this session's first pattern re-run and confirmed (the second character class, after a hyphen, was untested: three weaker patterns stayed green), fixed with one class; own wave on the new pattern (fresh bytecode caches): 24 mutants red, 2 controls green, 1 equivalent (`+` to `*`: an empty name never equals the folder, shown by a probe); pre-existing items listed in the report
-- [ ] PR to main; three checks green
-(6 of 7 done)
+- [ ] hook and plugin formats checked against code.claude.com
+- [ ] gate code and `node --test` tests, each rule proven by mutation
+- [ ] plugin and marketplace; gate wired into `.claude/settings.json`; `.greenwashing.json`
+- [ ] `.greenwashing.json` guarded by Safety net; Node test step in CI
+- [ ] live gate runs on temporary projects; fresh-context reviews
+- [ ] map, PR; `checks` and `leak-check` green, Safety net red by design
+(0 of 6 done)
 
 ## Decisions made (and why)
 - Owner: the three adversarial cases from the first PR 3 review (a number written another way, a number in words, a repeated frontmatter key) stay unfixed.
@@ -39,8 +37,7 @@ Step 1, PR 3 - the skill: `skills/greenwashing/SKILL.md` (text from the owner, v
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-All PR 3 work is committed on `claude/hopeful-pascal-i0o22j` (the first session's six commits on `claude/kind-albattani-304252` plus this session's); the PR to main comes from it. Waiting for CI and the owner's merge.
-Next step after this PR: PR 4 - the gate: running the tests.
+PR 4 started from main at 30881e9.
 
 ## Known issues / traps
 - Open, owner decision (second review): a block value in `name` (`name: >`) is not tested; with the name dropped from the block check the skill still fails, only the reported rule changes to "bad name". Stricter patterns that need a letter somewhere or allow at most N hyphens also stay green (false alarms only).
