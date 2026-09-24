@@ -564,3 +564,27 @@ test('when the hook itself is stopped, it stops the tests it started', async (t)
   await sleep(3000);
   assert.equal(fs.existsSync(late), false, 'the tests kept running after the hook was stopped');
 });
+
+test('one session id in two projects: each project keeps its own start', (t) => {
+  const tmp = tempDir(t);
+  const one = project(t, { 't.test.js': NODE_PASS });
+  const two = project(t, { 't.test.js': NODE_PASS });
+  const first = session(t, one, { tmp });
+  session(t, two, { tmp }).prompt();
+  first.prompt();
+  session(t, two, { tmp }).prompt();
+  assert.deepEqual(first.stop().json, NO_CHANGES);
+});
+
+test('a prompt that could not record its start leaves no older start behind: the tests run', (t) => {
+  const dir = project(t, { 't.test.js': NODE_FAIL });
+  const gate = session(t, dir);
+  gate.prompt();
+  assert.deepEqual(gate.stop().json, NO_CHANGES);
+  const index = path.join(dir, '.git', 'index');
+  const good = fs.readFileSync(index);
+  fs.writeFileSync(index, 'not an index');
+  assert.match(gate.prompt().stderr, /could not record the start of the turn/);
+  fs.writeFileSync(index, good);
+  assert.equal(gate.stop().json.decision, 'block');
+});
