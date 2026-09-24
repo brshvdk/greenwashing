@@ -155,6 +155,18 @@ test('a timeout: blocked as did not run, and the processes the command started a
   assert.equal(fs.existsSync(marker), false, 'a process of the timed-out command kept running');
 });
 
+test('the timeout is the configured number of seconds: counts printed after it do not count', (t) => {
+  const dir = project(t, { 'app.js': '1;\n' }, 'x');
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: `sleep 1.6; ${GREEN_ECHO}`, timeoutSeconds: 1 }) });
+  git(dir, 'commit', '-qam', 'config');
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'app.js': '2;\n' });
+  const { json } = gate.stop();
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /did not finish in 1 s and was stopped/);
+});
+
 test('only documentation changed: the stop is allowed with one line, the tests are not run', (t) => {
   const dir = project(t, { 't.test.js': NODE_FAIL, 'README.md': 'a\n' });
   const gate = session(t, dir);
