@@ -434,6 +434,9 @@ test('Python GW-17: __test__ = False, a new test in a class or module that never
   const named = 'import os\n\nimport pytest\n\nneeds_sandbox = pytest.mark.skipif(not os.environ.get("SANDBOX"), reason="x")\n\n\n';
   assert.deepEqual(python(named, `${named}@needs_sandbox\ndef test_pays():\n    assert pay()\n`), [[8, 'GW-17']]);
   assert.deepEqual(python(named, `${named}def test_pays():\n    assert pay()\n`), []);
+  // A module importorskip returns is no marker: a new test that uses it is not a skip.
+  const imported = 'import pytest\n\nsqlite3 = pytest.importorskip("sqlite3")\n\n\ndef test_a():\n    assert sqlite3.connect(":memory:")\n';
+  assert.deepEqual(python(imported, `${imported}\n\ndef test_b():\n    assert sqlite3.sqlite_version\n`), []);
   // A test under a named skip does not run: a skip, not also a test without assertions.
   assert.deepEqual(python(named, `${named}@needs_sandbox\ndef test_pays():\n    pay()\n`), [[8, 'GW-17']]);
   // A new skipped class or module is one finding, not one more for each test in it.

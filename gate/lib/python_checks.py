@@ -28,6 +28,8 @@ SKIPS = {
 PASSES_WHEN_FAILING = {"pytest.mark.xfail", "pytest.xfail", "unittest.expectedFailure", "unittest.case.expectedFailure"}
 # Markers after which the test does not run: it is a skip, not a test without assertions.
 NOT_RUN = SKIPS - PASSES_WHEN_FAILING
+# Calls that skip or fail where they run: what they return (importorskip's module) is no marker.
+AT_ONCE = {"pytest.skip", "pytest.xfail", "pytest.importorskip", "unittest.SkipTest", "unittest.case.SkipTest"}
 # Markers whose condition may let the tests run: on a class or module they do not make it a suite
 # that never runs.
 CONDITIONAL = {"pytest.mark.skipif", "unittest.skipIf", "unittest.skipUnless", "unittest.case.skipIf", "unittest.case.skipUnless"}
@@ -97,7 +99,7 @@ def marker_names(tree, names):
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
             found = [dotted(n, names) for n in ast.walk(node.value) if isinstance(n, (ast.Name, ast.Attribute))]
-            marker = next((name for name in found if name in SKIPS), None)
+            marker = next((name for name in found if name in SKIPS - AT_ONCE), None)
             if marker and node.targets[0].id != "pytestmark":
                 given[node.targets[0].id] = marker
     return given
