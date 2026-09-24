@@ -9,9 +9,10 @@ Step 1, PR 4 - the gate: a Claude Code Stop hook that runs the project's tests w
 - [x] plugin and marketplace (`.claude-plugin/`, `hooks/hooks.json`); the gate wired into `.claude/settings.json`; `.greenwashing.json`
 - [x] `.greenwashing.json` guarded by Safety net; "Gate tests" step in CI
 - [x] own mutation wave (88 mutants at 269cd1e, 4 worktrees): 82 red; survivors R1m, R3e, R3f, R5h closed by new tests (each re-run red); C6 stricter (a skipped-only suite), C7 equivalent (TAP is the default off a terminal); live gate runs on temporary projects; real plugin install in an isolated CLAUDE_CONFIG_DIR
-- [x] fresh-context reviews accepted by re-running: leaks (none; the reviewer's planted controls were found), false passes and false alarms (13 + 12; the main ones reproduced), test holes (38 surviving mutants). Fixed in three pieces (parser and verdict; command choice and the docs list; the hook), four points by owner decision; wave 3 re-ran the reviewers' serious survivors and mutants of the new hook logic (results in the PR)
+- [x] fresh-context reviews accepted by re-running: leaks (none; the reviewer's planted controls were found), false passes and false alarms (13 + 12; the main ones reproduced), test holes (38 surviving mutants). Fixed in three pieces (parser and verdict; command choice and the docs list; the hook), four points by owner decision; wave 3 (53 mutants at 43f3e23, 3 worktrees, controls green first and last): the reviewers' serious survivors re-expressed on the new code and mutants of the new hook logic, 51 red; survivors H13 (timeout doubled) and N19 (start not checked to be the same tree) closed by tests, red at abd4784
+- [ ] final fresh-context review of the changes after the first reviews (running)
 - [ ] PR; `checks` and `leak-check` green, Safety net red by design
-(6 of 7 done)
+(6 of 8 done)
 gate on this repo: not yet observed live
 
 ## Decisions made (and why)
