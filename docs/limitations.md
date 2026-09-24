@@ -22,7 +22,7 @@ The gate (`gate/`) is a Claude Code Stop hook: when a turn changed code, it runs
 
 - **`node --test` and `process.exit`.** A test file with no tests reads as one passing test. So does a file whose code under test calls `process.exit(0)`.
 - **`pytest.exit`.** `pytest.exit(..., returncode=0)` reads as passed.
-- **Fewer tests.** An agent can narrow the test script or leave a `.only` in a test. The gate then gets green counts for the tests that still run.
+- **Fewer tests.** A new `.only` or skip in a test file is red (GW-17), but an agent can still narrow the test script, exclude files in the runner's config (jest `testPathIgnorePatterns`, pytest `-k` or `collect_ignore`), delete a failing test, or rename it so the runner no longer collects it. The gate then gets green counts for the tests that still run.
 - **`skipIf(CI)`.** The gate runs the tests with `CI=true`, so a test skipped in CI counts as skipped, not failed.
 - **Summary-like output.** A test that prints a line looking like a runner summary adds counts.
 - **vitest `Tests  no tests`.** The result is right (did not run), but the reason is "no test counts" instead of GW-08.
@@ -35,6 +35,21 @@ The gate (`gate/`) is a Claude Code Stop hook: when a turn changed code, it runs
 - **Other Python test names.** Only `test_*.py` and `*_test.py` files, or pytest settings, make a project Python. Tests kept only in files like `tests.py` or `testing.py` need a `testCommand`.
 - **Python tests without pytest settings.** They run under `python3 -m unittest discover`. That runs only `unittest.TestCase` tests in `test*.py` files; pytest-style test functions and `*_test.py` files are left out. Set `testCommand`.
 - **jest and `CI=true`.** jest fails a new snapshot instead of writing it, and an explicit `jest --watchAll` still waits for the timeout.
+
+## The quick checks of changed tests
+
+Before the tests, the gate reads the test lines the turn added or changed. These are the limits of that reading.
+
+- **Which files are tests.** Only what jest, vitest and `node --test` collect by default (`*.test.*`, `*.spec.*`, `*-test.*`, `*_test.*`, `test-*`, `test.js`, files under `__tests__/` or `test/`) and Python `test_*.py` and `*_test.py`. Tests under `tests/` with a jest config that points there, `conftest.py` and runner config are not read.
+- **A helper that asserts under another name.** A test that checks only through its own helper (`checkUser(u)`, `verify(response)`) reads as "no assertion". Calls named `assert...` or `expect...`, `t.` and the test function's first parameter count. Otherwise turn the check off: `"checks": {"assertions": false}` in `.greenwashing.json`.
+- **A test function defined elsewhere.** `test('saves', savesTheUser)` is not read; only an inline function is.
+- **Same sides, by text.** GW-01 compares the text of both sides (JavaScript without spaces and comments, Python by its syntax tree). Two different expressions that always hold the same value are not seen, and the same call on both sides (`expect(f()).toBe(f())`, a determinism check) is reported.
+- **Moved test files.** A test file moved or renamed in the turn is new: every line of it counts, so an old skip in it is reported.
+- **Not a parser.** The JavaScript and TypeScript reading is a scanner for strings, comments, templates and regular expressions. Unusual code (JSX text with a quote in it, a regular expression right after `)`) can make it misread a line.
+- **Python.** The Python checks run `python3` from PATH, which must read the project's syntax. No `python3`, or a file it cannot read, is did not run.
+- **Outside git.** Nothing tells which lines changed, so the checks do not run; the allow line says so.
+- **Big or linked files.** A test file over 1 MiB that was dirty when the turn started counts as all new. A test file that is a symlink is not read.
+- **The gate's settings.** A change to any `.greenwashing.json` in a checked tree during the turn blocks (GW-114), also when the user made it while the agent worked, or after a blocked turn the user then interrupted. The user changes it between turns, after a turn the gate let end.
 
 ## Time, turns and sessions
 
@@ -52,4 +67,4 @@ The gate (`gate/`) is a Claude Code Stop hook: when a turn changed code, it runs
 - **Signals.** A signal to the hook ends it with a non-blocking error, and the turn ends ungated. An example is a `pkill` the agent started. A hook killed with SIGKILL during a temporary checkout leaves that checkout in the temp folder and in `git worktree list`; remove it with `git worktree remove`.
 - **A gate that cannot start.** Claude Code treats the hook's error as non-blocking when `node` is not on PATH or `gate/hook.js` has moved.
 - **Documentation by extension.** A turn that changes only `.md .markdown .rst .adoc` files skips the tests, even when tests read those files. In this repository that is true of `CATALOG.md` and `SKILL.md`.
-- **The block message.** It shows the last 20 lines of the output. With the TAP reporter the failing test's name is usually higher up, so the agent may need to rerun the tests to see which one failed.
+- **The block message.** It names up to 10 failed tests, read from TAP, pytest, jest, vitest and unittest output, and shows the last 20 lines. Other output gives no names: the `spec` reporter of `node --test` (its default on Node 23 and later, also when the output is not a terminal) and other runners.

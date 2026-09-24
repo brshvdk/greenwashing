@@ -1,27 +1,19 @@
 # SESSION
 
 ## Current step
-Step 1, PR 4b - the owner's decisions after PR 4: close the removed-worktree loophole, count a project as Python only by its Python tests or test config, move the gate's limits to `docs/limitations.md`. PR 4 (#10, the gate and the plugin) merged as a23285a.
+Step 1, PR 5 - the gate's quick checks of the test lines a turn added or changed: new skip, focus or expected-failure markers (GW-17), new or changed tests with no assertion (GW-18), checks whose two sides are the same (GW-01), for JS/TS and Python; `.greenwashing.json` changed during a turn blocks (GW-114); the block names the failed tests; catalog entries GW-17 and GW-18. PR 4b merged as a8f1df1 (PR 11; the live check of the gate on this repository and its quotes are in that PR's description).
 
 ## Progress
-- [x] live check of the gate on this repository (2026-09-24, this session). A test broken in `gate/test/changes.test.js` (not committed); the turn end at 16:15 UTC was blocked with (verbatim; the 20 tail lines of TAP output that follow end in `# fail 1`):
-  ```
-  greenwashing gate: the tests failed - you cannot finish yet.
-  Command: python3 -I -m unittest discover -s tests && node --test --test-reporter=tap gate/test/*.test.js (.greenwashing.json)
-  Result: failed - 1 failed
-  Counts: 303 passed, 1 failed, 0 skipped
-  Last 20 lines of output:
-  ```
-  The file restored by copying; the next turn end at 16:16 UTC was allowed with `greenwashing: no files changed this turn - tests not run` (the turn's net change was zero, so no tests ran - by design). After this PR's code changes, the turn end at 16:37 UTC was allowed with `greenwashing: tests passed - python3 -I -m unittest discover -s tests && node --test --test-reporter=tap gate/test/*.test.js: 318 passed, 0 failed, 0 skipped`. The gate had already been running in this session since 06:41 UTC (Claude Code picked up `.claude/settings.json` mid-session); its allows are in the session transcript, for example `greenwashing: tests passed - python3 -I -m unittest discover -s tests && node --test --test-reporter=tap gate/test/*.test.js: 304 passed, 0 failed, 0 skipped` (15:52 UTC).
-- [x] removed-worktree loophole: the commit a removed worktree left is tested in a temporary worktree (removed in every outcome, also on a signal); older or merged commits are not; a commit that cannot be found is did not run
-- [x] Python counts only with Python test files (`test_*.py`, `*_test.py`) or pytest settings; a helper `.py` or packaging files do not
-- [x] `docs/limitations.md`; SESSION.md keeps only a pointer to it
-- [x] wave 6 (27 mutants of both rules at 271a538, 3 worktrees, controls green first and last): 26 red; W17 (a removed worktree's commit tested at the checkout's root, not the project's place) closed by a test, red at 3113026; tests for both rules were written first and failed on the old code; live runs of both rules on temporary projects
-- [x] fresh-context review of this PR and of 7db9327..28aa8a6 (not reviewed in PR 4), accepted by re-running its main finds: 39 mutants (31 red, 8 holes), 10 false passes, 5 false alarms, 1 data-destroying side effect, 2 leftover checkouts, 4 wrong limitation lines, no mentions. Fixed at 4c57e5e: removing the checkout ran `git worktree prune`, which dropped the user's worktrees whose folder was away (reproduced); a discarded experiment kept blocking; a worktree on a fetched pull request blocked; merge-then-reset let a removed worktree's commit through; a signal during `git worktree add` left the checkout; the 8 test holes. The other bypasses are exotic (renamed or reset branches, worktree moves, `merge -s ours`) and went to `docs/limitations.md` only (owner rule)
-- [x] wave 7 (18 mutants at 5833afb: the review's green mutants and mutants of its fixes; controls green first and last): 16 red. R6 (the time left rounded instead of rounded up) survives: a sub-second boundary, not pinned on purpose. C2 (no hand-made removal of the checkout folder) survived because git removes the folder itself when the checkout fails (live run), so that fallback was dead code: removed at f247bf2, where git makes the folder at a new random path. Wave 8 at f247bf2 (3 mutants of the removal: `git worktree remove` skipped, no removal after the run, the checkout hidden from the signal handler; controls green first and last): 3 red. At f247bf2: gate tests 206/206 on Node 20.20.2, 21.7.3 and 22.22.2, unit tests 122 OK, ruff clean, live hook runs of both rules repeated with the same results, leak-check references passed (gitleaks and patterns did not run, exit 2)
-- [x] PR https://github.com/brshvdk/greenwashing/pull/11: at 9f7ad31 leak-check, checks (ruff clean, 122 unit tests OK, gate tests 206/206 on Node 22.23.2 with git 2.55.0) and Safety net green; 7 files, no guarded file
-(8 of 8 done)
-gate on this repo: observed live
+- [x] catalog GW-17 and GW-18 (owner's text, after GW-16); `tests/test_skill.py` used GW-17 as a missing id, now GW-19
+- [x] failed test names before the output tail (TAP with parent names, pytest FAILED/ERROR, jest, vitest, unittest), real nested fixtures of jest 30.5.2, vitest 5.0.1, node --test 22
+- [x] line diff (`gate/lib/diff.js`, Myers, property test against a longest common subsequence)
+- [x] config `checks` (`skips`, `assertions`, `selfComparisons`), one list in `command.js`
+- [x] the checks: `gate/lib/checks.js` (JS/TS scanner), `gate/lib/python_checks.py` (ast, `python3 -I`); hook wiring: start texts of dirty test files, every checked tree, a removed worktree's commit, a tree entered later against its newest known first-parent commit; GW-114 first
+- [x] live hook runs on temporary projects with real jest 30.5.2 and pytest 9.1.1: 22 cases (each owner marker, no assertion, same sides; JS and Python) blocked, the 22 honest versions allowed with real counts; `.greenwashing.json` changed in a turn blocked, undone in the same turn allowed, turned off by the user between turns allowed
+- [x] false-alarm probe: the three checks on every test file of this repository as if every line were new: 8 JS files (192 test call sites) and 5 Python files (122 test functions), 0 findings; positive control (a planted skip and an assertion-free test in each file) 13 of 13; no test here passes only by the `t.` rule
+- [ ] wave 9 (76 mutants at 75d019b, running)
+- [ ] fresh-context review of PR 5 (running)
+- [ ] PR; all three checks green (no guarded file touched)
 
 ## Decisions made (and why)
 - Owner (PR 4): the contradictions and silences the docs critic found (which shell runs a hook, an unquoted placeholder example, Stop on timeout, exit 2 with continue:false, trust for plugin hooks and cloud sessions) do not change the hook format; continue.
@@ -30,6 +22,10 @@ gate on this repo: observed live
 - Outside git, "no test command -> allow" applies only when no `.git` file and no `.git` folder with a HEAD is at or above the folder: a checkout git refuses to read (for example "dubious ownership") is did not run, not "not a git repository"; an empty `.git` folder is not a checkout.
 - A tree entered after the start is unchanged while clean and on a commit that a worktree or a branch pointed at when the turn started (second review): content that existed before the turn, so a worktree made only to look at an old branch is not blocked.
 - PR 4b: a removed worktree is judged by the commit its branch holds (else its last seen commit while a branch or tag holds it), tested in a temporary worktree removed with `git worktree remove --force` on that folder only - never `git worktree prune` (it drops the user's worktrees whose folder is away). Git makes that folder at a new random path and removes it itself when the checkout fails (live run, git 2.43), so the gate never deletes a folder by hand. New exotic bypasses go to `docs/limitations.md` only, without code (owner rule for v0.1).
+- Owner (PR 4b): the temporary checkout of a removed worktree's commit stays without ignored files (`node_modules`, `.venv`); it is in `docs/limitations.md`.
+- PR 5 (owner's spec; names and additions chosen here): the settings keys are `skips`, `assertions`, `selfComparisons` (the owner gave `skips`); GW-114 always blocks and cannot be turned off; beyond the owner's lists, the same mechanisms count too - JS `.todo`, `.failing`, `.fails`, `.skipIf`, `.runIf`, node:test `{ skip | only | todo }` options, `t.skip()`/`ctx.skip()`/`this.skip()`; Python `pytest.xfail()`, `pytest.importorskip()`, `unittest.expectedFailure`, `SkipTest`; a test skipped when it runs is a skip (GW-17), not a test without assertions; calls named `assert*`/`expect*` and the test function's first parameter count as assertions (fewer false alarms from helpers); Python GW-01 compares syntax trees (`ast.dump`), JS drops spaces and comments and keeps string text.
+- Test files are what the runners collect by default, taken from live runs (jest 30.5.2 `--listTests`, vitest 5.0.1 `list`, `node --test` on Node 20 and 22): jestjs.io, vitest.dev, docs.pytest.org and docs.python.org are blocked by the egress proxy; nodejs.org was read; pytest and unittest markers from `pytest --markers` and `pydoc`.
+- The checks run before the tests and share the Stop's timeout; changed lines that cannot be told are did not run; outside git the checks cannot run and the allow line says so (blocking there could never be cleared).
 - The project's `timeoutSeconds` bounds the test time of one Stop across all trees, and each run also keeps its own config's timeout; the time left is rounded up to whole seconds (a run gets at least 1 s while any is left; this sub-second boundary is not pinned by a test).
 - From the review, without an owner question (each a false pass or a false alarm reproduced by a run): npm's `npm init` placeholder is no test script; a UTF-8 BOM is dropped before JSON; pytest counts as configured also by `conftest.py` in the root, `tests/` or `test/` and by `pytest.toml`/`.pytest.toml`; jest/vitest "No tests found, exiting with code N" is a zero-test run (GW-08); vitest's `Errors  N error` is did not run; every summary of several runs counts; tail lines are cut at 300 characters (Claude Code caps a hook's text at 10,000); state lives in a per-user `0700` folder; a hook stopped by a signal stops its tests.
 - Stop hook timeout 3660 s, test timeout at most 3600 s (default 600): Claude Code cancels a hook at its timeout, discards its output and the stop goes through (hooks.md: "cancels ... discarding the hook's output").
@@ -63,15 +59,14 @@ gate on this repo: observed live
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-PR 4b is on `claude/hopeful-pascal-i0o22j`, restarted from main at a23285a after PR 4 was merged. Next steps:
-1. PR 4b (https://github.com/brshvdk/greenwashing/pull/11): waits for the owner's merge and the answer on the temporary checkout's ignored files (Known issues).
-2. Then PR 5: fast checks for JS/TS and Python.
+PR 5 is on `claude/hopeful-pascal-i0o22j`, restarted from main at a8f1df1 after PR 4b was merged. Next steps:
+1. PR 5: review and wave results, limitations, PR, all three checks green; the owner merges.
+2. Then PR 6: the mutation command.
 
 ## Known issues / traps
 - Gate limits: `docs/limitations.md` (user-facing, one list; keep it true when the gate changes). The traps for working on the gate stay in the map.
-- Open, owner decision (PR 4b review): the temporary checkout of a removed worktree's commit has no ignored files, so a test command that needs `node_modules` or a virtual environment reads as did not run there and blocks (reproduced; red, not a false pass). A possible fix: link the project's `node_modules`, `.venv` and `venv` into the checkout.
 - Subagent worktrees (`.claude/worktrees/`) are nested repositories to git: each shows as one untracked folder entry, and tree walks must skip folders with their own `.git`.
-- The CI "Gate tests" step, like the unit tests step, passes a suite whose tests are all skipped (mutant C6 survives as the stricter variant); PR 5.
+- The CI "Gate tests" step, like the unit tests step, passes a suite whose tests are all skipped (mutant C6 survives as the stricter variant); CI stays as is (owner: no CI changes in PR 5), while the gate on this repository now blocks a new skip in a changed test file (GW-17).
 - Open, owner decision (second review): a block value in `name` (`name: >`) is not tested; with the name dropped from the block check the skill still fails, only the reported rule changes to "bad name". Stricter patterns that need a letter somewhere or allow at most N hyphens also stay green (false alarms only).
 - Open, owner decision: the skill test checks the Agent Skills spec only. Claude's API also forbids `anthropic` and `claude` in `name` and XML tags in `name` and `description` (platform.claude.com Agent Skills overview), and Claude Code skips a skill folder named `synced` (code.claude.com skills docs); the skill passes all three today (checked by grep with a positive control), no test holds it.
 - PRs from forks do not get repository secrets, so their pattern scan reports "did not run" (red). The owner decides the policy for external PRs before launch.
