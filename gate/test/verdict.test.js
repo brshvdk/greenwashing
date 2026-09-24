@@ -86,9 +86,20 @@ test('only skipped tests: zero tests ran', () => {
 });
 
 test('a non-zero exit with no failed test did not run', () => {
-  const result = verdict(run({ exitCode: 3, output: fixture('unittest-green') }));
-  assert.deepEqual(brief(result), ['did not run', 'GW-50']);
-  assert.match(result.why, /exited with code 3 although no test failed/);
+  // Exit 1 with green counts: vitest after an unhandled error, jest under a coverage threshold.
+  for (const exitCode of [1, 3]) {
+    const result = verdict(run({ exitCode, output: fixture('unittest-green') }));
+    assert.deepEqual(brief(result), ['did not run', 'GW-50']);
+    assert.match(result.why, new RegExp(`exited with code ${exitCode} although no test failed`));
+  }
+});
+
+test('a test file that could not run is red even when the command exits 0 (a script ending in "|| true")', () => {
+  for (const name of ['jest-broken-suite', 'vitest-broken-file']) {
+    const result = verdict(run({ exitCode: 0, output: fixture(name) }));
+    assert.deepEqual(brief(result), ['did not run', 'GW-50'], name);
+    assert.match(result.why, /1 test file\(s\) could not run/, name);
+  }
 });
 
 test('green: counts of every run are added up', () => {

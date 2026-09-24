@@ -179,6 +179,16 @@ test('a file already edited before the turn and left alone is not a change', (t)
   assert.equal(gate.stop().json.decision, 'block');
 });
 
+test('a change committed and then undone in the working tree is not a change', (t) => {
+  const dir = project(t, { 't.test.js': NODE_FAIL, 'app.js': '1;\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'app.js': '2;\n' });
+  git(dir, 'commit', '-qam', 'change');
+  write(dir, { 'app.js': '1;\n' });
+  assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: no files changed this turn - tests not run' });
+});
+
 test('new, deleted and reverted files count as changes', (t) => {
   for (const change of [
     (dir) => write(dir, { 'new.js': 'x;\n' }),
