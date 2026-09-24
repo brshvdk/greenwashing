@@ -18,6 +18,17 @@ const OUTPUT_LIMIT = 64 * 1024 * 1024;
 const GRACE_MS = 5000;
 const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
 
+// While a Stop runs: the test command running now and the temporary checkouts (folder ->
+// repository), so that a signal to the hook stops and removes them too.
+let running = null;
+const checkouts = new Map();
+
+function onSignal(signal) {
+  if (running) killGroup(running);
+  for (const [dir, root] of checkouts) removeWorktree(root, dir);
+  process.exit(128 + (os.constants.signals[signal] || 0));
+}
+
 // One file per session and project in a per-user folder of the temp directory. starts: the start of
 // the turn in every git tree the turn has seen - a snapshot, or null for a tree the agent entered
 // after the start; seen: the branch and commit each of those trees had when the gate last saw it;
@@ -176,7 +187,7 @@ function killGroup(child) {
 
 // Runs the command in a shell, in its own process group, with CI=true (test scripts that check it
 // skip their watch mode), and collects stdout and stderr together. If the hook itself is stopped,
-// the command's whole process group is stopped with it.
+// the command's whole process group is stopped with it (onSignal).
 function runTests(dir, choice) {
   return new Promise((resolve) => {
     const run = { command: choice.command, source: choice.source, timeoutSeconds: choice.timeoutSeconds, exitCode: null, output: '' };
@@ -191,12 +202,7 @@ function runTests(dir, choice) {
       resolve({ ...run, startError: error.message });
       return;
     }
-    const onSignal = (signal) => {
-      killGroup(child);
-      for (const [dir, root] of checkouts) removeWorktree(root, dir);
-      process.exit(128 + (os.constants.signals[signal] || 0));
-    };
-    for (const signal of SIGNALS) process.once(signal, onSignal);
+    running = child;
     const collect = (chunk) => {
       size += chunk.length;
       if (size <= OUTPUT_LIMIT) chunks.push(chunk);
@@ -210,7 +216,7 @@ function runTests(dir, choice) {
       done = true;
       clearTimeout(timer);
       clearTimeout(grace);
-      for (const signal of SIGNALS) process.removeListener(signal, onSignal);
+      running = null;
       killGroup(child);
       resolve({ ...run, output: Buffer.concat(chunks).toString('utf8'), ...fields });
     };
@@ -249,7 +255,7 @@ function knownCommits(root) {
   try {
     const heads = nulList(git(root, ['worktree', 'list', '--porcelain', '-z']))
       .filter((line) => line.startsWith('HEAD ')).map((line) => line.slice('HEAD '.length));
-    const tips = git(root, ['for-each-ref', '--format=%(objectname)', 'refs/heads']).toString('utf8').split('\n').filter(Boolean);
+    const tips = git(root, ['for-each-ref', '--format=%(objectname)', 'refs/heads', 'refs/remotes']).toString('utf8').split('\n').filter(Boolean);
     return [...new Set([...heads, ...tips])];
   } catch {
     // None known: a worktree the agent enters later counts as changed.
@@ -288,12 +294,24 @@ function changesIn(tree, start, known) {
 
 // What a worktree removed during the turn left behind: the tip of the branch it had when the gate
 // last saw it (or, with that branch gone too, the commit it had then). Nothing to test when that
-// commit existed when the turn started or is already in the project's HEAD.
+// commit existed when the turn started, is already in the project's HEAD, or - its branch gone - no
+// branch or tag holds it any more (the work was thrown away).
 function leftBehind(home, last, known) {
-  const commit = (last && last.branch && commitOf(home, last.branch)) || commitOf(home, last && last.head);
+  const tip = last && last.branch && commitOf(home, last.branch);
+  const commit = tip || commitOf(home, last && last.head);
   if (!commit) return { error: 'the commit it left cannot be found' };
   if (known.includes(commit) || isAncestor(home, commit, 'HEAD')) return { nothing: true };
-  return { commit, branch: last.branch };
+  if (!tip && !isReferenced(home, commit)) return { nothing: true };
+  return { commit, branch: tip ? last.branch : null };
+}
+
+// A branch, remote branch or tag contains the commit.
+function isReferenced(root, commit) {
+  try {
+    return git(root, ['for-each-ref', '--contains', commit, '--count=1', '--format=%(refname)']).length > 0;
+  } catch {
+    return true;
+  }
 }
 
 function commitOf(root, name) {
@@ -314,16 +332,13 @@ function isAncestor(root, commit, of) {
   }
 }
 
-// Temporary checkouts in use: folder -> repository.
-const checkouts = new Map();
-
-// Deletes the folder, then lets git forget the worktree whose folder is gone.
+// Removes the gate's own temporary checkout and nothing else (`git worktree prune` would also
+// drop the user's worktrees whose folder is away); a folder git does not know is deleted.
 function removeWorktree(root, dir) {
-  fs.rmSync(dir, { recursive: true, force: true });
   try {
-    git(root, ['worktree', 'prune']);
+    git(root, ['worktree', 'remove', '--force', dir]);
   } catch {
-    // The repository itself is gone.
+    fs.rmSync(dir, { recursive: true, force: true });
   }
   checkouts.delete(dir);
 }
@@ -421,15 +436,13 @@ async function onStop(input) {
     if (!fs.existsSync(tree)) {
       // A worktree removed during the turn: what it left in its branch is tested, unless the
       // project already holds it or it is older than the turn.
+      // Judged again at every Stop of the turn: the project's HEAD may still move.
       const left = leftBehind(home, seen[tree], state.known);
       const name = path.relative(project, tree);
-      if (left.nothing) {
-        delete starts[tree];
-        delete seen[tree];
-      } else if (left.error) {
+      if (left.error) {
         removed.push({ where: name, error: `the worktree ${name} was removed and ${left.error}` });
-      } else {
-        const branch = left.branch ? `branch ${left.branch.replace(/^refs\/heads\//, '')}` : 'detached HEAD';
+      } else if (!left.nothing) {
+        const branch = left.branch ? `branch ${left.branch.replace(/^refs\/heads\//, '')}` : 'no branch';
         removed.push({ commit: left.commit, where: `a temporary checkout of ${left.commit.slice(0, 12)} (${branch}), the last commit of the removed worktree ${name}` });
       }
       continue;
@@ -517,6 +530,7 @@ async function main() {
     }
     return;
   }
+  for (const signal of SIGNALS) process.on(signal, onSignal);
   let output;
   try {
     if (inputError) throw new Error(inputError);

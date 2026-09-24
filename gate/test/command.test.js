@@ -89,7 +89,7 @@ test("a Python test file is named test_*.py or *_test.py, in any folder", () => 
     assert.equal(isPythonTest(file), true, file);
   }
   for (const file of ['helper.py', 'scripts/helper.py', 'setup.py', 'conftest.py', 'latest_x.py', 'test.py', 'testing.py',
-    'contest.py', 'x_tests.py', 'test_x.pyc', 'test_x.py.bak', 'Test_x.py', 'tests/helper.py', 'test_dir/helper.py']) {
+    'contest.py', 'x_tests.py', 'test_x.pyc', 'test_x.py.bak', 'x_test.py.bak', 'Test_x.py', 'tests/helper.py', 'test_dir/helper.py']) {
     assert.equal(isPythonTest(file), false, file);
   }
 });
