@@ -625,7 +625,7 @@ test("a worktree's own .greenwashing.json is ignored: its tests run with the pro
   write(dir, { 'app.js': '1;\n' });
   write(tree, { 'app.js': '2;\n' });
   assert.equal(gate.stop(false, tree).json.systemMessage, "greenwashing: tests passed - printf 'Ran 1 test in 0.1s\\n\\nOK\\n': 1 passed, 0 failed, 0 skipped; "
-    + "printf 'Ran 1 test in 0.1s\\n\\nOK\\n' in .claude/worktrees/feat (its own .greenwashing.json ignored, the project's used): 1 passed, 0 failed, 0 skipped");
+    + "printf 'Ran 1 test in 0.1s\\n\\nOK\\n' in .claude/worktrees/feat (its own .greenwashing.json ignored): 1 passed, 0 failed, 0 skipped");
   // Red in the worktree: the block says it too.
   write(tree, { 't.test.js': NODE_FAIL, '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
   git(tree, 'commit', '-qam', 'red, and a green echo of its own');
@@ -635,7 +635,7 @@ test("a worktree's own .greenwashing.json is ignored: its tests run with the pro
   write(dir, { 'app.js': '3;\n' });
   write(tree, { 'app.js': '4;\n' });
   const { json } = gate.stop(false, tree);
-  assert.match(json.reason, /\nFolder: \.claude\/worktrees\/feat\nSettings: the project's \.greenwashing\.json; the one in this folder is ignored\n/);
+  assert.match(json.reason, /\nFolder: \.claude\/worktrees\/feat\nSettings: the project folder's; the \.greenwashing\.json in this folder is ignored\n/);
   assert.match(json.reason, /Counts: 0 passed, 1 failed, 0 skipped/);
 });
 
@@ -662,7 +662,7 @@ test("an ignored .greenwashing.json in a worktree changes nothing: not a setting
   gate.prompt(tree);
   write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: 'false' }), 'app.js': '1;\n' });
   assert.match(gate.stop(false, tree).json.systemMessage,
-    /^greenwashing: tests passed - .* in \.claude\/worktrees\/feat \(its own \.greenwashing\.json ignored, the project's used\): 1 passed/);
+    /^greenwashing: tests passed - .* in \.claude\/worktrees\/feat \(its own \.greenwashing\.json ignored\): 1 passed/);
   // Committed there and the worktree removed: its commit is no settings change either.
   git(tree, 'add', 'app.js');
   git(tree, 'commit', '-qm', 'app');

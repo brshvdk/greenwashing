@@ -287,7 +287,7 @@ test('GW-17: a suite that a condition on CI skips never runs under the gate; a p
   const ci = {
     'skipIf(process.env.CI)': '', "skipIf(process.env['CI'])": '', 'skipIf(!!process.env.CI === true)': '', 'runIf(!process.env.CI)': '',
     'runIf(process.env.CI)': '', 'skipIf(import.meta.env.CI)': '', 'skipIf(isCI)': 'const isCI = Boolean(process.env.CI);\n',
-    'skipIf(CI)': 'const { CI } = process.env;\n', "skipIf(Deno.env.get('CI'))": '',
+    'skipIf(CI)': 'const { CI } = process.env;\n', "skipIf(Deno.env.get('CI'))": '', 'skipIf(onCi)': 'let onCi = process.env.CI === "true";\n',
   };
   for (const [marker, above] of Object.entries(ci)) {
     const found = checkJs(suite(marker, two, above), lineChanges(suite(marker, one, above), suite(marker, two, above)), ALL, suite(marker, one, above));
@@ -540,12 +540,18 @@ test('Python GW-17: a class or module that a condition on CI skips never runs un
     '@pytest.mark.skipif(condition=os.getenv("CI") == "true", reason="x")': '', '@pytest.mark.skipif("os.environ.get(\'CI\')", reason="x")': '',
     '@pytest.mark.skipif(IS_CI, reason="x")': 'IS_CI = bool(os.getenv("CI"))\n', '@unittest.skipIf(os.environ["CI"], "x")': '',
     '@unittest.skipUnless(not os.getenv("CI"), "x")': '', '@ci_only': 'ci_only = pytest.mark.skipif(os.getenv("CI"), reason="x")\n',
+    '@pytest.mark.skipif(settings.CI, reason="x")': 'import settings\n',
   };
   for (const [mark, above] of Object.entries(ci)) {
     const found = python(cls(mark, '', above), cls(mark, two, above));
     assert.equal(found.length, 1, mark);
     assert.equal(found[0][1], 'GW-17', mark);
   }
+  // The finding says why.
+  const mark0 = '@pytest.mark.skipif(os.getenv("CI"), reason="x")';
+  const request = { files: [{ file: 'test_x.py', text: cls(mark0, two), before: cls(mark0, ''), ...(() => { const c = lineChanges(cls(mark0, ''), cls(mark0, two)); return { added: [...c.added], gaps: [...c.gaps] }; })(), checks: ALL }], entries: CHECKS };
+  const out = JSON.parse(spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], { input: JSON.stringify(request), encoding: 'utf8' }).stdout);
+  assert.equal(out.findings[0].what, 'a test inside a class marked pytest.mark.skipif on CI - whether it runs depends on CI (the gate runs the tests with CI=true)');
   const honest = {
     '@pytest.mark.skipif(sys.platform == "win32", reason="flaky on CI")': '', '@pytest.mark.skipif(sys.version_info < (3, 12), reason="x")': '',
     '@unittest.skipIf(os.environ.get("CIRCLE_X"), "x")': '', '@pytest.mark.skipif(ON_WINDOWS, reason="x")': 'ON_WINDOWS = sys.platform == "win32"  # CI\n',

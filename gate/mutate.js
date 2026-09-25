@@ -15,17 +15,17 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const {
-  chooseCommand, readConfig, pythonOf, CONFIG_FILE, MUTANT_LIMITS,
+  chooseCommand, readConfig, pythonOf, CONFIG_FILE, MUTANT_LIMITS, MUTANT_MAX,
 } = require('./lib/command');
 const { verdict } = require('./lib/verdict');
 const { lines: outputLines } = require('./lib/parse');
 const {
-  codeKind, addedLines, ownLines, jsMutants, fromLines, apply, stillParses, describe, choose, report, OUTCOMES, DEPENDENCY_FOLDERS,
+  codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, stillParses, describe, choose, report, OUTCOMES, OPERATORS, DEPENDENCY_FOLDERS,
 } = require('./lib/mutants');
 const { rootFiles, readRootFiles, hasPythonTests, runTests, stopTests, OUTPUT_LIMIT } = require('./runner');
 
 const PYTHON_MUTANTS = path.join(__dirname, 'lib', 'python_mutants.py');
-const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
+const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT'];
 // The default branches a change is measured against, in this order, when --base is not given.
 const MAIN_BRANCHES = ['origin/main', 'origin/master', 'main', 'master'];
 const USAGE = 'usage: node mutate.js [--base <ref>] [--limit <n>] [--timeout <seconds>] [--run-timeout <seconds>] [--project <folder>]';
@@ -37,11 +37,33 @@ const RUN_ENV = { PYTHONDONTWRITEBYTECODE: '1' };
 // The temporary copy, removed in every outcome: at the end, on an error, and on a signal.
 let copy = null;
 
+// Returns null, or why the copy could not be removed.
 function removeCopy() {
-  if (copy) {
+  if (!copy) return null;
+  const dir = copy;
+  copy = null;
+  try {
     // rm does not follow the links to the dependency folders: it removes the links.
-    fs.rmSync(copy, { recursive: true, force: true });
-    copy = null;
+    fs.rmSync(dir, { recursive: true, force: true });
+    return null;
+  } catch {
+    // A folder the tests left without write permission: made writable again, never through a link.
+    const open = (at) => {
+      try {
+        if (!fs.lstatSync(at).isDirectory()) return;
+        fs.chmodSync(at, 0o700);
+        for (const name of fs.readdirSync(at)) open(path.join(at, name));
+      } catch {
+        // Said below if the copy still cannot be removed.
+      }
+    };
+    open(dir);
+    try {
+      fs.rmSync(dir, { recursive: true, force: true });
+      return null;
+    } catch (error) {
+      return `the copy could not be removed: ${error.message}`;
+    }
   }
 }
 
@@ -66,7 +88,7 @@ function parseArgs(argv) {
     if (name in options) return { error: `${argv[i]} given twice` };
     const value = argv[i + 1];
     if (['limit', 'timeoutSeconds', 'runTimeoutSeconds'].includes(name)) {
-      if (!/^[1-9]\d*$/.test(value)) return { error: `${argv[i]} takes a whole number from 1` };
+      if (!/^[1-9]\d*$/.test(value) || Number(value) > MUTANT_MAX) return { error: `${argv[i]} takes a whole number from 1 to ${MUTANT_MAX}` };
       options[name] = Number(value);
     } else options[name] = value;
   }
@@ -150,12 +172,16 @@ function pythonMutants(files, python) {
   try {
     out = JSON.parse(result.stdout.toString('utf8'));
   } catch {
-    return { error: `${python} printed no list of breaks` };
+    // Said below.
   }
-  const text = Object.fromEntries(files.map((f) => [f.file, f.text.replace(/^﻿/, '')]));
-  const bom = Object.fromEntries(files.map((f) => [f.file, f.text.startsWith('﻿') ? 1 : 0]));
-  const mutants = out.mutants.map((edit) => ({ file: edit.file, ...fromLines(text[edit.file], [edit])[0] }))
-    .map((m) => ({ ...m, start: m.start + bom[m.file], end: m.end + bom[m.file] }));
+  if (!out || !Array.isArray(out.mutants) || !Array.isArray(out.errors)) return { error: `${python} printed no list of breaks` };
+  const text = Object.fromEntries(files.map((f) => [f.file, f.text.replace(/^\uFEFF/, '')]));
+  const bom = Object.fromEntries(files.map((f) => [f.file, f.text.startsWith('\uFEFF') ? 1 : 0]));
+  const place = (at) => Array.isArray(at) && at.length === 2 && at.every(Number.isInteger) && at[0] >= 1;
+  // An edit that names no file of the list or no place is kept as one of no kind: touches() drops it.
+  const mutants = out.mutants.map((edit) => (edit && Object.hasOwn(text, edit.file) && place(edit.start) && place(edit.end)
+    ? { file: edit.file, ...fromLines(text[edit.file], [edit])[0] } : { file: null, op: null }))
+    .map((m) => (m.file === null ? m : { ...m, start: m.start + bom[m.file], end: m.end + bom[m.file] }));
   return { mutants, errors: out.errors };
 }
 
@@ -266,10 +292,16 @@ async function run(argv) {
   for (const { file, text, lines } of files.filter((f) => f.kind === 'js')) {
     for (const m of jsMutants(text, lines)) if (stillParses(file, text, apply(text, m))) all.push({ file, ...m });
   }
-  const python = pythonMutants(files.filter((f) => f.kind === 'python'), pythonOf(config, project));
+  const interpreter = pythonOf(config, project);
+  const python = pythonMutants(files.filter((f) => f.kind === 'python'), interpreter);
   if (python.error) problems.push(`the Python files could not be read: ${python.error}`);
   else {
-    all.push(...python.mutants);
+    // Only breaks of a known kind on a changed line: the interpreter is the project's to choose.
+    const known = python.mutants.filter((m) => files.some((f) => f.file === m.file && touches(f.text, m, f.lines)));
+    all.push(...known);
+    if (known.length < python.mutants.length) {
+      problems.push(`${python.mutants.length - known.length} of the breaks ${interpreter} gave were not of a known kind on a changed line, and were not tried`);
+    }
     for (const e of python.errors) problems.push(`${e.file}: ${e.error}`);
   }
   const lineCount = files.reduce((sum, f) => sum + f.lines.size, 0);
@@ -288,9 +320,14 @@ async function run(argv) {
   const dir = makeCopy(home);
   const at = path.join(dir, rel);
   const runIn = (seconds) => runTests(at, { ...choice, timeoutSeconds: seconds }, RUN_ENV);
+  // The report once the copy is gone: a copy that cannot be removed is said, and is did not run.
+  const done = (fields) => {
+    const left = removeCopy();
+    return report({ header, results: [], notTried: 0, ...fields, problems: [...problems, ...(fields.problems || []), ...(left ? [left] : [])] });
+  };
   const left = () => Math.min(limits.runTimeoutSeconds, Math.ceil((deadline - Date.now()) / 1000));
   if (left() < 1) {
-    return report({ header, control: 'Control: not run', results: [], notTried: chosen.length, problems: [...problems, `no time was left for the control run: the time for everything is ${limits.timeoutSeconds} s (--timeout)`] });
+    return done({ control: 'Control: not run', notTried: chosen.length, problems: [`no time was left for the control run: the time for everything is ${limits.timeoutSeconds} s (--timeout)`] });
   }
   // The control: the tests on the unchanged copy must be green, or no break can be judged.
   const control = await runIn(left());
@@ -300,7 +337,7 @@ async function run(argv) {
   if (green.outcome !== 'passed') {
     const why = 'the tests are not green on an unchanged copy of the working tree, so no break can be judged'
       + ' (the copy holds the files git lists, with node_modules, .venv and venv linked)';
-    return report({ header, control: [controlLine, ...tail(control.output).map((line) => `  | ${line}`)].join('\n'), results: [], notTried: chosen.length, problems: [...problems, why] });
+    return done({ control: [controlLine, ...tail(control.output).map((line) => `  | ${line}`)].join('\n'), notTried: chosen.length, problems: [why] });
   }
   const results = [];
   let notTried = 0;
@@ -326,7 +363,7 @@ async function run(argv) {
     });
   }
   if (notTried) problems.push(`no time was left for ${notTried} of the breaks: the time for everything is ${limits.timeoutSeconds} s (--timeout)`);
-  return report({ header, control: controlLine, results, notTried, problems });
+  return done({ control: controlLine, results, notTried });
 }
 
 async function main() {
@@ -337,6 +374,7 @@ async function main() {
   } catch (error) {
     outcome = { text: `greenwashing mutants: did not run - the command failed: ${error.message}`, code: 2 };
   } finally {
+    // Gone already, but for an error on the way.
     removeCopy();
   }
   process.stdout.write(`${outcome.text}\n`);

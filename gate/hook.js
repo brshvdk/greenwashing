@@ -599,14 +599,14 @@ function pythonChecks(files, deadline, python) {
   }
   if (result.error) return { error: result.error.message };
   const stderr = result.stderr.toString('utf8').trim().split('\n').slice(-3).join(' ');
-  if (result.status !== 0) return { error: `python3 exited with code ${result.status}${stderr ? `: ${stderr}` : ''}` };
+  if (result.status !== 0) return { error: `${python} exited with code ${result.status}${stderr ? `: ${stderr}` : ''}` };
   try {
     const out = JSON.parse(result.stdout.toString('utf8'));
     if (Array.isArray(out.findings) && Array.isArray(out.errors)) return out;
   } catch {
     // Not JSON: said below.
   }
-  return { error: 'python3 printed no findings list' };
+  return { error: `${python} printed no findings list` };
 }
 
 function settle(file, state, runs, stopHookActive) {

@@ -12,6 +12,8 @@ const CONFIG_KEYS = ['testCommand', 'timeoutSeconds', 'checks', 'python', 'mutan
 // The mutation command's limits (gate/mutate.js): how many breaks, the time for everything, and the
 // time for one test run; "mutants" in the settings and the command's options change them.
 const MUTANT_LIMITS = { limit: 20, timeoutSeconds: 600, runTimeoutSeconds: 120 };
+// The most any of them can be: a day (a timer past 24.8 days would fire at once).
+const MUTANT_MAX = 86400;
 // The gate's quick checks on changed test lines (gate/lib/checks.js) and the catalog entry each
 // reports; a project turns one off with "checks": {"skips": false}.
 const CHECKS = { skips: 'GW-17', assertions: 'GW-18', selfComparisons: 'GW-01' };
@@ -63,8 +65,8 @@ function readConfig(text) {
   }
   const mutants = config.mutants === undefined ? {} : config.mutants;
   if (mutants === null || typeof mutants !== 'object' || Array.isArray(mutants)
-    || Object.entries(mutants).some(([name, value]) => !(name in MUTANT_LIMITS) || !Number.isInteger(value) || value < 1)) {
-    return { error: `${CONFIG_FILE}: mutants must be an object of whole numbers from 1 for ${Object.keys(MUTANT_LIMITS).join(', ')}` };
+    || Object.entries(mutants).some(([name, value]) => !(name in MUTANT_LIMITS) || !Number.isInteger(value) || value < 1 || value > MUTANT_MAX)) {
+    return { error: `${CONFIG_FILE}: mutants must be an object of whole numbers from 1 to ${MUTANT_MAX} for ${Object.keys(MUTANT_LIMITS).join(', ')}` };
   }
   const checks = config.checks === undefined ? {} : config.checks;
   if (checks === null || typeof checks !== 'object' || Array.isArray(checks)
@@ -125,5 +127,5 @@ const ROOT_FILES = [CONFIG_FILE, 'package.json', ...PYTEST_FILES, ...PYTEST_SECT
 
 module.exports = {
   chooseCommand, readConfig, pytestConfigured, pythonOf, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
-  PYTHON_HOW_TO, MUTANT_LIMITS,
+  PYTHON_HOW_TO, MUTANT_LIMITS, MUTANT_MAX,
 };

@@ -26,7 +26,7 @@ function countsText(sum) {
 
 // Where a run was, when not in the project itself (another worktree of its repository), and whether
 // that folder's own .greenwashing.json was ignored.
-const IGNORED = 'its own .greenwashing.json ignored, the project\'s used';
+const IGNORED = 'its own .greenwashing.json ignored';
 const place = (run) => (run.where ? ` in ${run.where}${run.ignoredSettings ? ` (${IGNORED})` : ''}` : '');
 
 // run: {command, source, where, timeoutSeconds, configError, startError, timedOut, outputTooLarge, exitCode, output};
@@ -107,7 +107,7 @@ function blockReason(run, result) {
     `Command: ${run.command} (${run.source})`,
   ];
   if (run.where) parts.push(`Folder: ${run.where}`);
-  if (run.ignoredSettings) parts.push('Settings: the project\'s .greenwashing.json; the one in this folder is ignored');
+  if (run.ignoredSettings) parts.push('Settings: the project folder\'s; the .greenwashing.json in this folder is ignored');
   parts.push(`Result: ${result.outcome}${result.why ? ` - ${result.why}` : ''}`);
   if (result.counts) parts.push(`Counts: ${countsText(result.counts)}`);
   if (result.gw) parts.push(`See ${result.gw} in ${CATALOG}`);

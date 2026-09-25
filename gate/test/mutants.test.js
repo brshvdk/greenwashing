@@ -18,12 +18,15 @@ const breaks = (source, lines = everyLine(source)) => jsMutants(source, lines).m
 const ops = (source) => jsMutants(source, everyLine(source)).map((m) => m.op);
 
 test('code under test: JavaScript, TypeScript and Python files that are not tests, test helpers, runner config or dependencies', () => {
-  for (const file of ['src/cart.js', 'cart.ts', 'lib/a.mjs', 'b.cjs', 'ui/C.tsx', 'd.jsx', 'shop/models.py', 'app/__init__.py']) assert.notEqual(codeKind(file), null, file);
+  for (const file of ['src/cart.js', 'cart.ts', 'lib/a.mjs', 'b.cjs', 'ui/C.tsx', 'd.jsx', 'shop/models.py', 'app/__init__.py', 'src/setup.js', 'src/d.ts.js', 'config.js']) {
+    assert.notEqual(codeKind(file), null, file);
+  }
   assert.equal(codeKind('src/cart.js'), 'js');
   assert.equal(codeKind('shop/models.py'), 'python');
   const none = ['cart.test.js', 'cart.spec.ts', '__tests__/a.js', 'test/helpers.js', 'tests/helpers.js', 'tests/helpers.py', 'spec/a.js',
     '__mocks__/fs.js', 'test_cart.py', 'cart_test.py', 'conftest.py', 'sub/conftest.py', 'jest.config.js', 'vitest.config.mts',
-    'node_modules/x/index.js', '.venv/lib/site.py', 'venv/a.py', 'README.md', 'data.json', 'cart.go'];
+    'node_modules/x/index.js', '.venv/lib/site.py', 'venv/a.py', 'README.md', 'data.json', 'cart.go', 'e2e/login.js', 'cypress/support/a.js',
+    'login.cy.js', 'src/app.test-d.ts', 'src/setupTests.js', 'jest.setup.js', 'vitest.setup.ts', '.eslintrc.js', 'index.d.ts', 'types/api.d.mts'];
   for (const file of none) assert.equal(codeKind(file), null, file);
 });
 
@@ -86,6 +89,8 @@ test('JavaScript: only code on changed lines breaks - not strings, comments, tem
     ['number', '/* x > 0 */ const t = `n < ${n > 1}`;  ->  /* x > 0 */ const t = `n < ${n > 2}`;'],
     ['number', 'const el = <div a={1}>text</div>;  ->  const el = <div a={2}>text</div>;'],
   ]);
+  // Not an if: a call named ...if, a member named if.
+  assert.deepEqual(ops('endif(x);\nobj.if(y);\n'), []);
   const code = 'a = 1;\nb = 2 < c;\nif (d) e();\n';
   assert.deepEqual(jsMutants(code, new Set([2])).map((m) => m.op), ['comparison', 'number']);
   assert.deepEqual(jsMutants(code, new Set()).map((m) => m.op), []);
@@ -226,6 +231,10 @@ test('each kind of break in Python, on changed lines only', () => {
   assert.deepEqual(changed('boolean'), ['    ok = n >= 10 and False']);
   assert.deepEqual(changed('number').sort(), ['    if n < 1:', '    ok = n >= 11 and True', '    return n * 3.5'].sort());
   assert.deepEqual(python(source, [4]).map(([op]) => op).sort(), ['boolean', 'comparison', 'number']);
+  // A break over two lines counts when its second line changed.
+  assert.deepEqual(python('if (a and\n        b):\n    go()\n', [2]).map(([op]) => op), ['condition']);
+  // A file that starts with a byte order mark.
+  assert.deepEqual(python('\uFEFFx = 1\n').map(([op]) => op), ['number']);
   for (const [, text] of found) assert.equal(spawnSync('python3', ['-I', '-c', 'import ast, sys; ast.parse(sys.stdin.read())'], { input: text }).status, 0, text);
 });
 

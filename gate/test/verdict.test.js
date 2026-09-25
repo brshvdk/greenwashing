@@ -250,9 +250,9 @@ test('the release message names the last result and the command', () => {
 test("a run in another tree whose own .greenwashing.json differs says it was ignored, green or red", () => {
   const green = { ...run({ output: fixture('jest-green'), exitCode: 0 }), where: '.claude/worktrees/feat', ignoredSettings: true };
   assert.match(decide([green], [verdict(green)], { blocks: 0 }, false).message,
-    / in \.claude\/worktrees\/feat \(its own \.greenwashing\.json ignored, the project's used\): \d+ passed/);
+    / in \.claude\/worktrees\/feat \(its own \.greenwashing\.json ignored\): \d+ passed/);
   const red = { ...green, output: 'ok' };
-  assert.match(blockReason(red, verdict(red)), /\nFolder: \.claude\/worktrees\/feat\nSettings: the project's \.greenwashing\.json; the one in this folder is ignored\n/);
+  assert.match(blockReason(red, verdict(red)), /\nFolder: \.claude\/worktrees\/feat\nSettings: the project folder's; the \.greenwashing\.json in this folder is ignored\n/);
   const plain = { ...red, ignoredSettings: undefined };
   assert.doesNotMatch(blockReason(plain, verdict(plain)), /Settings:/);
 });

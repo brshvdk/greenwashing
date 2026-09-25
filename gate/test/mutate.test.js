@@ -206,6 +206,26 @@ test('a workspace package linked in node_modules is the copy\'s: its breaks reac
   assert.equal(run.code, 0, run.out);
 });
 
+test('a folder the tests leave read-only goes with the copy, and the report is still printed', (t) => {
+  const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST }, `mkdir -p ro && echo x > ro/keep.txt && chmod 0500 ro && ${NODE_CMD}`);
+  write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}` });
+  const tmp = tempDir(t);
+  const env = { ...process.env, TMPDIR: tmp, HOME: tmp };
+  delete env.NODE_TEST_CONTEXT;
+  let run;
+  if (process.getuid() === 0) {
+    // Nothing is read-only to root: the command runs as nobody.
+    for (const folder of [dir, tmp]) assert.equal(spawnSync('chown', ['-R', '65534:65534', folder]).status, 0);
+    run = spawnSync('setpriv', ['--reuid=65534', '--regid=65534', '--clear-groups', process.execPath, MUTATE], { cwd: dir, env, encoding: 'utf8' });
+    assert.equal(run.error, undefined, 'setpriv is needed to run this test as root');
+  } else {
+    run = spawnSync(process.execPath, [MUTATE], { cwd: dir, env, encoding: 'utf8' });
+  }
+  assert.equal(run.status, 1, run.stdout + run.stderr);
+  assert.match(run.stdout, /\nResult: 1 mutant survived\n$/);
+  assert.deepEqual(fs.readdirSync(tmp).filter((name) => name.startsWith('greenwashing-mutants-')), []);
+});
+
 test('a signal stops the tests and removes the copy', async (t) => {
   const tmp = tempDir(t);
   const started = path.join(tmp, 'started');
@@ -213,7 +233,7 @@ test('a signal stops the tests and removes the copy', async (t) => {
   const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST },
     `touch ${JSON.stringify(started)}; (sleep 4; touch ${JSON.stringify(late)}) & sleep 30; ${NODE_CMD}`);
   write(dir, { 'cart.js': `${CART}${ADD}` });
-  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
+  for (const signal of ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT']) {
     fs.rmSync(started, { force: true });
     const env = { ...process.env, TMPDIR: tmp };
     delete env.NODE_TEST_CONTEXT;
@@ -331,6 +351,64 @@ test('the changed lines as git sees them, whatever the file and the settings: a 
   assert.doesNotMatch(run.out, /const B = 3/);
 });
 
+test('the files of a change: new ones committed on the branch; files that are not UTF-8 or that Python cannot read are did not run', (t) => {
+  const dir = project(t, { 'pass.test.js': "require('node:test')('ok', () => {});\n" });
+  write(dir, { 'new.js': 'module.exports = 1;\n' });
+  git(dir, 'add', 'new.js');
+  git(dir, 'commit', '-qm', 'a new file on the branch');
+  const added = mutate(t, dir);
+  assert.match(added.out, /\n- survived: new\.js:1: module\.exports = 1; {2}-> {2}module\.exports = 2;\n/);
+  fs.writeFileSync(path.join(dir, 'latin.js'), Buffer.from('module.exports = "caf\xe9";\n', 'latin1'));
+  write(dir, { 'newer.py': 'def f[T](x: T) -> T:\n    return x\n', 'broken.py': 'def f(:\n' });
+  const unread = mutate(t, dir);
+  assert.equal(unread.code, 1, unread.out);
+  assert.match(unread.out, /\nDid not run: latin\.js is not UTF-8 text\n/);
+  assert.match(unread.out, /\nDid not run: broken\.py: Python could not read it \(SyntaxError/);
+});
+
+test('breaks from the Python interpreter are checked: a known kind on a changed line, or not tried', (t) => {
+  const bin = tempDir(t);
+  const fake = (out) => {
+    const file = path.join(bin, `py-${crypto.randomBytes(4).toString('hex')}`);
+    fs.writeFileSync(file, `#!/bin/sh\ncat > /dev/null\nprintf '%s' ${JSON.stringify(out)}\n`, { mode: 0o755 });
+    return file;
+  };
+  const dir = project(t, { 'shop.py': 'A = 1\nB = 2\n', 'test_shop.py': 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertTrue(True)\n' }, null);
+  write(dir, { 'shop.py': 'A = 1\nB = 3\n' });
+  const config = (python) => write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: 'python3 -m unittest discover', python }) });
+  // One break on the unchanged line 1, one of no kind, one past the file, one on another file.
+  config(fake(JSON.stringify({ mutants: [
+    { file: 'shop.py', op: 'number', start: [1, 4], end: [1, 5], text: '9' }, { file: 'shop.py', op: 'rm -rf', start: [2, 4], end: [2, 5], text: '9' },
+    { file: 'shop.py', op: 'number', start: [9, 0], end: [9, 1], text: '9' }, { file: 'other.py', op: 'number', start: [1, 0], end: [1, 1], text: '9' },
+    { file: 'shop.py', op: 'number', start: [2, 4], end: [2, 5], text: '4' }], errors: [] })));
+  const run = mutate(t, dir);
+  assert.equal(run.code, 1, run.out);
+  assert.match(run.out, /\n- survived: shop\.py:2: B = 3 {2}-> {2}B = 4\n/);
+  assert.match(run.out, /\nDid not run: 4 of the breaks \S+ gave were not of a known kind on a changed line, and were not tried\n/);
+  assert.doesNotMatch(run.out, /A = 9/);
+  config(fake('no json'));
+  assert.match(mutate(t, dir).out, /\nDid not run: the Python files could not be read: \S+ printed no list of breaks\n/);
+  config('no-such-python');
+  assert.match(mutate(t, dir).out, /\nDid not run: the Python files could not be read: no-such-python could not run: not found\n/);
+});
+
+test('the base named as git names it: origin/main when origin/HEAD points there', (t) => {
+  const dir = project(t, { 'a.js': 'module.exports = 1;\n', 'pass.test.js': "require('node:test')('ok', () => {});\n" });
+  git(dir, 'update-ref', 'refs/remotes/origin/main', 'main');
+  git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main');
+  write(dir, { 'a.js': 'module.exports = 2;\n' });
+  assert.match(mutate(t, dir).out, /\(the merge base with origin\/main\), committed or not\n/);
+});
+
+test('a Python file that starts with a byte order mark is broken in the right place', (t) => {
+  const tests = 'import unittest\n\nfrom shop import LIMIT\n\n\nclass T(unittest.TestCase):\n    def test_limit(self):\n        self.assertEqual(LIMIT, 7)\n';
+  const dir = project(t, { 'shop.py': '\uFEFFLIMIT = 5\n', 'test_shop.py': tests }, null);
+  write(dir, { 'shop.py': '\uFEFFLIMIT = 7\n' });
+  const run = mutate(t, dir);
+  assert.match(run.out, /\n- killed: shop\.py:1: \uFEFF?LIMIT = 7 {2}-> {2}\uFEFF?LIMIT = 8\n/);
+  assert.equal(run.code, 0, run.out);
+});
+
 test('test files, test helpers and runner config are never broken', (t) => {
   const dir = project(t, { 'pass.test.js': "require('node:test')('ok', () => {});\n" });
   write(dir, {
@@ -349,10 +427,12 @@ test('did not run before any test: no main branch, a base that is no commit, an 
   const cases = [
     [[], /Did not run: no main branch found \(origin\/main, origin\/master, main, master\); give one with --base/],
     [['--base', 'nope'], /Did not run: nope is not a commit/],
-    [['--limit', '0'], /^--limit takes a whole number from 1\nusage: /],
+    [['--limit', '0'], /^--limit takes a whole number from 1 to 86400\nusage: /],
     [['--frobnicate', '1'], /^unknown or incomplete option --frobnicate\nusage: /],
     [['--base'], /^unknown or incomplete option --base\nusage: /],
     [['--limit', '2', '--limit', '3'], /^--limit given twice/],
+    [['--timeout', '86401'], /^--timeout takes a whole number from 1 to 86400\nusage: /],
+    [['--run-timeout', '99999999999'], /^--run-timeout takes a whole number from 1 to 86400/],
   ];
   for (const [args, message] of cases) {
     const run = mutate(t, dir, args);
@@ -360,7 +440,7 @@ test('did not run before any test: no main branch, a base that is no commit, an 
     assert.match(run.out, message, args.join(' '));
   }
   write(dir, { '.greenwashing.json': JSON.stringify({ mutants: { limit: 0 } }) });
-  assert.match(mutate(t, dir, ['--base', 'trunk']).out, /Did not run: \.greenwashing\.json: mutants must be an object of whole numbers from 1 for limit, timeoutSeconds, runTimeoutSeconds/);
+  assert.match(mutate(t, dir, ['--base', 'trunk']).out, /Did not run: \.greenwashing\.json: mutants must be an object of whole numbers from 1 to 86400 for limit, timeoutSeconds, runTimeoutSeconds/);
   const outside = tempDir(t);
   const run = mutate(t, outside);
   assert.equal(run.code, 2);

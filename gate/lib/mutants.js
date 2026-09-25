@@ -23,19 +23,21 @@ const HINTS = {
 // Comparisons and their opposites.
 const FLIP = { '<': '>=', '>=': '<', '>': '<=', '<=': '>', '==': '!=', '!=': '==', '===': '!==', '!==': '===' };
 // Folders whose files are tests or their helpers, not the code they test.
-const TEST_FOLDERS = new Set(['test', 'tests', '__tests__', '__mocks__', 'spec']);
+const TEST_FOLDERS = new Set(['test', 'tests', '__tests__', '__mocks__', 'spec', 'e2e', 'cypress']);
+// Files that set up or configure the tests, or only declare types: nothing a test runs to check.
+const NOT_CODE = /^conftest\.py$|\.config\.[cm]?[jt]s$|\.d\.[cm]?ts$|\.(?:cy|test-d)\.[cm]?[jt]sx?$|^setupTests\.|\.setup\.[cm]?[jt]sx?$|^\.eslintrc\./;
 // Dependency folders: linked into the copy, never broken.
 const DEPENDENCY_FOLDERS = new Set(['node_modules', '.venv', 'venv']);
 const PLAIN_NUMBER = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 
 // The kind of code a changed file holds for the mutation command: 'js', 'python', or null for a file
-// that is not code under test (a test file, a file in a test folder, test or runner config, a
-// dependency).
+// that is not code under test (a test file, a file in a test folder, test setup or runner config,
+// type declarations, a dependency).
 function codeKind(file) {
   const parts = file.split('/');
   const name = parts[parts.length - 1];
   if (testFileKind(file) || parts.some((part) => TEST_FOLDERS.has(part) || DEPENDENCY_FOLDERS.has(part))) return null;
-  if (name === 'conftest.py' || /\.config\.[cm]?[jt]s$/.test(name)) return null;
+  if (NOT_CODE.test(name)) return null;
   if (/\.py$/.test(name)) return 'python';
   return JS_EXTENSION.test(name) ? 'js' : null;
 }
@@ -200,6 +202,18 @@ function fromLines(source, edits) {
   return edits.map((edit) => ({ op: edit.op, start: offset(edit.start), end: offset(edit.end), text: edit.text }));
 }
 
+// A break of a known kind inside the text, on a changed line: what a break from another process must
+// be before it is tried.
+function touches(source, mutant, changed) {
+  if (!OPERATORS.includes(mutant.op) || typeof mutant.text !== 'string' || !Number.isInteger(mutant.start) || !Number.isInteger(mutant.end)
+    || mutant.start < 0 || mutant.end < mutant.start || mutant.end > source.length) return false;
+  const starts = lineStarts(source);
+  for (let line = lineAt(starts, mutant.start); line <= lineAt(starts, Math.max(mutant.start, mutant.end - 1)); line += 1) {
+    if (changed.has(line)) return true;
+  }
+  return false;
+}
+
 const apply = (source, mutant) => `${source.slice(0, mutant.start)}${mutant.text}${source.slice(mutant.end)}`;
 
 // The text still compiles when the original did, read as a CommonJS module body: false means the
@@ -303,5 +317,5 @@ function report({ header, control, results, notTried, problems }) {
 }
 
 module.exports = {
-  codeKind, addedLines, ownLines, jsMutants, fromLines, apply, stillParses, describe, choose, report, OUTCOMES, OPERATORS, HINTS, FLIP, DEPENDENCY_FOLDERS,
+  codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, stillParses, describe, choose, report, OUTCOMES, OPERATORS, HINTS, FLIP, DEPENDENCY_FOLDERS,
 };

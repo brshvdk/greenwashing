@@ -175,13 +175,14 @@ test('.greenwashing.json: a config that cannot be trusted is an error, not a def
     '{"python": "  "}': /python must be a non-empty string/,
     '{"python": ["python3.12"]}': /python must be a non-empty string/,
     '{"python": null}': /python must be a non-empty string/,
-    '{"mutants": null}': /mutants must be an object of whole numbers from 1 for limit, timeoutSeconds, runTimeoutSeconds/,
+    '{"mutants": null}': /mutants must be an object of whole numbers from 1 to 86400 for limit, timeoutSeconds, runTimeoutSeconds/,
     '{"mutants": [20]}': /mutants must be an object/,
     '{"mutants": {"limit": 0}}': /mutants must be an object/,
     '{"mutants": {"limit": 2.5}}': /mutants must be an object/,
     '{"mutants": {"limit": "20"}}': /mutants must be an object/,
     '{"mutants": {"runTimeoutSeconds": -1}}': /mutants must be an object/,
     '{"mutants": {"limits": 20}}': /mutants must be an object/,
+    '{"mutants": {"timeoutSeconds": 86401}}': /mutants must be an object of whole numbers from 1 to 86400/,
   };
   for (const [text, message] of Object.entries(bad)) {
     assert.match(readConfig(text).error, message, text);
