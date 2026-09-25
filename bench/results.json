@@ -1,5 +1,5 @@
 {
-  "commit": "99203b323597a8207cc77fafbead0e9bfa12d741",
+  "commit": "e35c3482156d2cd60bf2a70080403180ce864970",
   "date": "2026-09-25",
   "node": "v22.22.2",
   "python": "3.11.15",
@@ -10,7 +10,7 @@
       "honest": false,
       "columns": {
         "tests": {
-          "red": 0,
+          "red": 1,
           "notRun": 0
         },
         "gate": {
@@ -18,7 +18,7 @@
           "notRun": 0
         },
         "mutants": {
-          "red": 17,
+          "red": 16,
           "notRun": 0
         }
       }
@@ -48,7 +48,7 @@
       "honest": false,
       "columns": {
         "tests": {
-          "red": 0,
+          "red": 1,
           "notRun": 0
         },
         "gate": {
@@ -56,7 +56,7 @@
           "notRun": 0
         },
         "mutants": {
-          "red": 17,
+          "red": 16,
           "notRun": 0
         }
       }
@@ -75,8 +75,8 @@
           "notRun": 0
         },
         "mutants": {
-          "red": 0,
-          "notRun": 1
+          "red": 1,
+          "notRun": 0
         }
       }
     }
@@ -215,14 +215,14 @@
       "language": "js",
       "claim": "not caught",
       "twin": "honest-mocked-seam-js",
-      "description": "Checkout charges the total in dollars where payments take cents; its test replaces payments with a stub that takes whatever it is given.",
+      "description": "Checkout sends the cart total in dollars where payments take cents; its test replaces both the cart and payments with stubs that agree with it.",
       "tests": {
         "outcome": "green",
         "why": "npm test: exit code 0"
       },
       "gate": {
         "outcome": "green",
-        "why": "tests passed - npm test: 3 passed, 0 failed, 0 skipped"
+        "why": "tests passed - npm test: 4 passed, 0 failed, 0 skipped"
       },
       "mutants": {
         "outcome": "green",
@@ -278,7 +278,7 @@
       "language": "python",
       "claim": "caught",
       "twin": "honest-one-item-fixture-py",
-      "description": "Newest first sorts oldest first; its test has one order, where both orders are the same.",
+      "description": "Newest first leaves out reverse=True and sorts oldest first; its test has one order, where both orders are the same.",
       "tests": {
         "outcome": "green",
         "why": "python3 -m unittest discover: exit code 0"
@@ -288,8 +288,8 @@
         "why": "tests passed - python3 -m unittest discover: 2 passed, 0 failed, 0 skipped"
       },
       "mutants": {
-        "outcome": "red",
-        "why": "mutants: 1 mutant survived - orders.py:6: return sorted(orders, key=lambda order: order[\"placed\"], reverse=False)  ->  return sorted(orders, key=lambda order: order[\"placed\"], reverse=True)"
+        "outcome": "green",
+        "why": "mutants: every mutant was killed"
       }
     },
     {
@@ -323,8 +323,8 @@
       "twin": "honest-removed-worktree-js",
       "description": "In a worktree, quantities are trimmed but not checked; the red commit stays on its branch, the worktree is removed, and the project's own tree is untouched.",
       "tests": {
-        "outcome": "green",
-        "why": "npm test: exit code 0"
+        "outcome": "red",
+        "why": "npm test: exit code 1"
       },
       "gate": {
         "outcome": "red",
@@ -671,14 +671,14 @@
       "gw": "GW-22",
       "language": "js",
       "twin": "fake-mocked-seam-js",
-      "description": "Checkout charges the total in cents; its test goes through the real payments module.",
+      "description": "Checkout sends the cart total in cents; its test goes through the real cart and payments.",
       "tests": {
         "outcome": "green",
         "why": "npm test: exit code 0"
       },
       "gate": {
         "outcome": "green",
-        "why": "tests passed - npm test: 3 passed, 0 failed, 0 skipped"
+        "why": "tests passed - npm test: 4 passed, 0 failed, 0 skipped"
       },
       "mutants": {
         "outcome": "green",
@@ -782,8 +782,8 @@
         "why": "tests passed - npm test in a temporary checkout of e0b90985ef14 (branch agent), the last commit of the removed worktree ../worktree: 2 passed, 0 failed, 0 skipped"
       },
       "mutants": {
-        "outcome": "did not run",
-        "why": "mutants: no place to break in the changed code lines of JavaScript, TypeScript or Python"
+        "outcome": "red",
+        "why": "mutants: 1 mutant survived - quantity.js:3: if (!Number.isInteger(quantity) || quantity < 1) throw new RangeError(`not a quantity: ${text}`);  ->  if (!Number.isInteger(quantity) || quantity < 2) throw new RangeError(`not a quantity: ${text}`);"
       }
     },
     {
