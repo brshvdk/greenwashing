@@ -271,6 +271,9 @@ test('GW-17: a changed condition of skipIf, or a new test in a suite that never 
   const failing = "test('fails', () => {\n  expect(g()).toBe(2);\n});\n";
   assert.deepEqual(edited(`${suite(one)}\n${failing}`, suite(`${one}\n${failing.replace(/^/gm, '  ')}`)), [[4, 'GW-17']]);
   assert.deepEqual(edited(`${suite(one)}\n${failing}`, suite(`${one}\n${failing}`)), [[4, 'GW-17']]);
+  // A name that was in the suite already, also outside it: the one in the suite is edited, not brought in.
+  const both = `${suite(one)}${one.trim()}\n`;
+  assert.deepEqual(edited(both, both.replace('f()).toBe(1)', 'f()).toBe(2)')), []);
   const skipIfSuite = (body) => `describe.skipIf(process.platform === 'win32')('old', () => {\n${body}});\n`;
   assert.deepEqual(edited(skipIfSuite(one), skipIfSuite(`${one}  test('b', () => { expect(g()).toBe(2); });\n`)), []);
   assert.deepEqual(edited("it.skip('old', () => {\n  run(1);\n});\n", "it.skip('old', () => {\n  run(2);\n});\n"), []);
@@ -452,6 +455,9 @@ test('Python GW-17: __test__ = False, a new test in a class or module that never
   // A test that was outside the class at the start of the turn, re-indented into it.
   const outside = `${skipped}\n\ndef test_b():\n    assert g()\n`;
   assert.deepEqual(python(outside, `${skipped}\n    def test_b(self):\n        assert g()\n`), [[9, 'GW-17']]);
+  // A name that was in the class already, also outside it: the one in the class is edited, not brought in.
+  const both = `${skipped}\n\ndef test_a():\n    assert h()\n`;
+  assert.deepEqual(python(both, both.replace('        assert f()', '        assert f(2)')), []);
   // An edit or a rename of a test that was already in the skipped class is no new skip.
   assert.deepEqual(python(skipped, skipped.replace('assert f()', 'assert f(1)').replace('test_a', 'test_renamed')), []);
   const marked = 'import pytest\n\npytestmark = pytest.mark.skip\n';
