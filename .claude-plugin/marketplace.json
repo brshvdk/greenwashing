@@ -8,7 +8,7 @@
     {
       "name": "greenwashing",
       "source": "./",
-      "description": "A gate that runs your tests when the agent changed code and blocks the end of the turn unless they passed, and a skill for reporting done with evidence."
+      "description": "A gate that runs your tests when the agent changed code and blocks the end of the turn unless they passed, a command that breaks the changed code to show what the tests miss, and a skill for reporting done with evidence."
     }
   ]
 }

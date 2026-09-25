@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CHECKS } = require('../lib/command');
+const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CHECKS, MUTANT_LIMITS } = require('../lib/command');
 
 // Every root file the rules look at is absent unless the case names it.
 const files = (present = {}) => ({ ...Object.fromEntries(ROOT_FILES.map((name) => [name, null])), ...present });
@@ -136,6 +136,20 @@ test('.greenwashing.json: every quick check is on unless the file turns it off',
     { skips: false, assertions: false, selfComparisons: false });
 });
 
+test('.greenwashing.json: "python" names the Python for the checks, and is absent unless set', () => {
+  assert.equal(readConfig('{"python": ".venv/bin/python"}').python, '.venv/bin/python');
+  assert.equal(readConfig('{"python": "python3.12", "testCommand": "make test"}').python, 'python3.12');
+  assert.equal('python' in readConfig('{"testCommand": "make test"}'), false);
+  assert.equal('python' in readConfig(null), false);
+});
+
+test('.greenwashing.json: "mutants" sets the mutation command\'s limits, and is absent unless set', () => {
+  assert.deepEqual(MUTANT_LIMITS, { limit: 20, timeoutSeconds: 600, runTimeoutSeconds: 120 });
+  assert.deepEqual(readConfig('{"mutants": {"limit": 5, "timeoutSeconds": 900, "runTimeoutSeconds": 30}}').mutants, { limit: 5, timeoutSeconds: 900, runTimeoutSeconds: 30 });
+  assert.deepEqual(readConfig('{"mutants": {}}').mutants, {});
+  assert.equal('mutants' in readConfig('{"testCommand": "make test"}'), false);
+});
+
 test('.greenwashing.json: a config that cannot be trusted is an error, not a default', () => {
   const bad = {
     '{"testCommand": ': /not valid JSON/,
@@ -157,6 +171,18 @@ test('.greenwashing.json: a config that cannot be trusted is an error, not a def
     '{"checks": {"skip": false}}': /checks must be an object/,
     '{"checks": {"skips": "false"}}': /checks must be an object/,
     '{"checks": {"skips": 0}}': /checks must be an object/,
+    '{"python": ""}': /python must be a non-empty string/,
+    '{"python": "  "}': /python must be a non-empty string/,
+    '{"python": ["python3.12"]}': /python must be a non-empty string/,
+    '{"python": null}': /python must be a non-empty string/,
+    '{"mutants": null}': /mutants must be an object of whole numbers from 1 to 86400 for limit, timeoutSeconds, runTimeoutSeconds/,
+    '{"mutants": [20]}': /mutants must be an object/,
+    '{"mutants": {"limit": 0}}': /mutants must be an object/,
+    '{"mutants": {"limit": 2.5}}': /mutants must be an object/,
+    '{"mutants": {"limit": "20"}}': /mutants must be an object/,
+    '{"mutants": {"runTimeoutSeconds": -1}}': /mutants must be an object/,
+    '{"mutants": {"limits": 20}}': /mutants must be an object/,
+    '{"mutants": {"timeoutSeconds": 86401}}': /mutants must be an object of whole numbers from 1 to 86400/,
   };
   for (const [text, message] of Object.entries(bad)) {
     assert.match(readConfig(text).error, message, text);

@@ -208,7 +208,7 @@ test('the quick checks: findings block with file, line and entry, at most twenty
   assert.match(reason, /\n- a\.test\.js:1: it\.skip - the test does not run as written \(GW-17\)\n/);
   assert.match(reason, /\n- a\.test\.js:20: .*\n- and 3 more\n/);
   assert.doesNotMatch(reason, /a\.test\.js:21:/);
-  assert.match(reason, /turn a check off in \.greenwashing\.json/);
+  assert.match(reason, /turn a check off in the project's \.greenwashing\.json/);
   const released = decide([checks], [result], { blocks: 3 }, true);
   assert.match(released.message, /^greenwashing: CHECKS DID NOT PASS - WORK NOT ACCEPTED\./);
   assert.match(decide([run({})], [RED], { blocks: 3 }, true).message, /^greenwashing: TESTS DID NOT PASS/);
@@ -241,6 +241,20 @@ test('an empty output is said so; the tail has no terminal color codes', () => {
 test('the release message names the last result and the command', () => {
   const decision = decide([run({})], [RED], { blocks: 3 }, true);
   assert.match(decision.message, /Last result: did not run - zero tests ran \(jest\) \(npm test\)\.$/);
+  // Released on a settings change: the next prompt takes the settings as they are then.
+  const config = { kind: 'config', command: 'greenwashing checks', files: ['.greenwashing.json'] };
+  assert.match(decide([config], [verdict(config)], { blocks: 3 }, true).message,
+    /\(greenwashing checks\)\. The next prompt takes the settings as they are then: undo the change first unless you made it\.$/);
+});
+
+test("a run in another tree whose own .greenwashing.json differs says it was ignored, green or red", () => {
+  const green = { ...run({ output: fixture('jest-green'), exitCode: 0 }), where: '.claude/worktrees/feat', ignoredSettings: true };
+  assert.match(decide([green], [verdict(green)], { blocks: 0 }, false).message,
+    / in \.claude\/worktrees\/feat \(its own \.greenwashing\.json ignored\): \d+ passed/);
+  const red = { ...green, output: 'ok' };
+  assert.match(blockReason(red, verdict(red)), /\nFolder: \.claude\/worktrees\/feat\nSettings: the project folder's; the \.greenwashing\.json in this folder is ignored\n/);
+  const plain = { ...red, ignoredSettings: undefined };
+  assert.doesNotMatch(blockReason(plain, verdict(plain)), /Settings:/);
 });
 
 test('failed tests name no catalog entry; did not run names GW-50', () => {

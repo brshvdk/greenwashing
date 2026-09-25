@@ -1,18 +1,28 @@
 'use strict';
 // Which command runs the project's tests. Pure functions over file texts the hook read.
 
+const path = require('node:path');
+
 const CONFIG_FILE = '.greenwashing.json';
 const DEFAULT_TIMEOUT_SECONDS = 600;
 // The Stop hook's own timeout in hooks/hooks.json and .claude/settings.json is this plus 60 s:
 // Claude Code cancels a hook that runs longer and lets the agent stop (gate/test/plugin.test.js).
 const MAX_TIMEOUT_SECONDS = 3600;
-const CONFIG_KEYS = ['testCommand', 'timeoutSeconds', 'checks'];
+const CONFIG_KEYS = ['testCommand', 'timeoutSeconds', 'checks', 'python', 'mutants'];
+// The mutation command's limits (gate/mutate.js): how many breaks, the time for everything, and the
+// time for one test run; "mutants" in the settings and the command's options change them.
+const MUTANT_LIMITS = { limit: 20, timeoutSeconds: 600, runTimeoutSeconds: 120 };
+// The most any of them can be: a day (a timer past 24.8 days would fire at once).
+const MUTANT_MAX = 86400;
 // The gate's quick checks on changed test lines (gate/lib/checks.js) and the catalog entry each
 // reports; a project turns one off with "checks": {"skips": false}.
 const CHECKS = { skips: 'GW-17', assertions: 'GW-18', selfComparisons: 'GW-01' };
 const CHECK_NAMES = Object.keys(CHECKS);
 // Said to the agent too, which must not change the settings during a turn (GW-114).
 const HOW_TO = `a human adds {"testCommand": "<the command that runs your tests>"} to ${CONFIG_FILE} in the project root, between turns`;
+// How to make the Python checks run when python3 cannot read the project's syntax, or is missing.
+const PYTHON_HOW_TO = `a human sets {"python": "<the project's Python, for example .venv/bin/python>"} in ${CONFIG_FILE} in the project root, `
+  + 'or turns the checks off there ({"checks": {"skips": false, "assertions": false, "selfComparisons": false}}, JavaScript too), between turns';
 // What `npm init` writes when there are no tests.
 const NPM_PLACEHOLDER = 'echo "Error: no test specified" && exit 1';
 const PYTEST_FILES = ['pytest.ini', 'pytest.toml', '.pytest.toml', 'conftest.py', 'tests/conftest.py', 'test/conftest.py'];
@@ -29,7 +39,7 @@ const withoutBom = (text) => text.replace(/^\uFEFF/, '');
 const ALL_CHECKS = Object.fromEntries(CHECK_NAMES.map((name) => [name, true]));
 
 // Reads .greenwashing.json text (or null when the file is absent).
-// Returns {testCommand?, timeoutSeconds, checks} or {error}.
+// Returns {testCommand?, timeoutSeconds, checks, python?, mutants?} or {error}.
 function readConfig(text) {
   if (text === null) return { timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, checks: ALL_CHECKS };
   let config;
@@ -50,12 +60,31 @@ function readConfig(text) {
     && config.timeoutSeconds <= MAX_TIMEOUT_SECONDS)) {
     return { error: `${CONFIG_FILE}: timeoutSeconds must be a whole number from 1 to ${MAX_TIMEOUT_SECONDS}` };
   }
+  if ('python' in config && (typeof config.python !== 'string' || !config.python.trim())) {
+    return { error: `${CONFIG_FILE}: python must be a non-empty string (the Python for the checks: a path from the project folder or a name on PATH)` };
+  }
+  const mutants = config.mutants === undefined ? {} : config.mutants;
+  if (mutants === null || typeof mutants !== 'object' || Array.isArray(mutants)
+    || Object.entries(mutants).some(([name, value]) => !(name in MUTANT_LIMITS) || !Number.isInteger(value) || value < 1 || value > MUTANT_MAX)) {
+    return { error: `${CONFIG_FILE}: mutants must be an object of whole numbers from 1 to ${MUTANT_MAX} for ${Object.keys(MUTANT_LIMITS).join(', ')}` };
+  }
   const checks = config.checks === undefined ? {} : config.checks;
   if (checks === null || typeof checks !== 'object' || Array.isArray(checks)
     || Object.entries(checks).some(([name, on]) => !CHECK_NAMES.includes(name) || typeof on !== 'boolean')) {
     return { error: `${CONFIG_FILE}: checks must be an object of true or false for ${CHECK_NAMES.join(', ')}` };
   }
-  return { testCommand: config.testCommand, timeoutSeconds: config.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS, checks: { ...ALL_CHECKS, ...checks } };
+  const python = 'python' in config ? { python: config.python } : {};
+  return {
+    testCommand: config.testCommand, timeoutSeconds: config.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS, checks: { ...ALL_CHECKS, ...checks }, ...python,
+    ...('mutants' in config ? { mutants } : {}),
+  };
+}
+
+// The Python for the Python checks: "python" in the settings (config: readConfig()), a path taken
+// from the project folder or a name on PATH; else python3 from PATH.
+function pythonOf(config, project) {
+  if (!config.python) return 'python3';
+  return config.python.includes('/') ? path.resolve(project, config.python) : config.python;
 }
 
 function pytestConfigured(files) {
@@ -97,5 +126,6 @@ function chooseCommand(files, hasPythonTests) {
 const ROOT_FILES = [CONFIG_FILE, 'package.json', ...PYTEST_FILES, ...PYTEST_SECTION_FILES];
 
 module.exports = {
-  chooseCommand, readConfig, pytestConfigured, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
+  chooseCommand, readConfig, pytestConfigured, pythonOf, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
+  PYTHON_HOW_TO, MUTANT_LIMITS, MUTANT_MAX,
 };

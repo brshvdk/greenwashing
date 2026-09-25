@@ -286,9 +286,9 @@ function assertImports(source, code) {
   return { calls, spaces };
 }
 
-// The test and suite calls: {name, members, start, chainEnd, condEnd, end, list, options, fn,
-// param, skipParam}. chainEnd: the end of `test.only.each`; condEnd: the end of the condition of
-// skipIf/runIf; end closes the call that takes the name and the function (after the table of
+// The test and suite calls: {name, members, start, chainEnd, condStart, condEnd, end, list, options,
+// fn, param, skipParam}. chainEnd: the end of `test.only.each`; condStart and condEnd: the brackets
+// of the condition of skipIf/runIf; end closes the call that takes the name and the function (after the table of
 // .each/.for), list holds its arguments, options its node:test options ([{name, at}]), fn the
 // function argument, param the function's first parameter and skipParam whether it destructures
 // `skip` ({ skip }) => ... (vitest). Subtests t.test(...) of a test whose first parameter is t count.
@@ -301,8 +301,10 @@ function testCalls(code, templates) {
     const members = chain.split('.').map((part) => part.trim()).filter(Boolean);
     const chainEnd = from + chain.length;
     let at = skipSpace(code, chainEnd);
+    let condStart = null;
     let condEnd = null;
     if (members.some((member) => member === 'skipIf' || member === 'runIf') && code[at] === '(') {
+      condStart = at;
       condEnd = closing(code, at);
       if (condEnd === -1) return null;
       at = skipSpace(code, condEnd + 1);
@@ -320,7 +322,7 @@ function testCalls(code, templates) {
     const head = fn ? code.slice(fn[0], Math.min(fn[1], fn[0] + 200)) : '';
     const destructured = /^\s*(?:async\s*)?(?:function\b[^(]*)?\(\s*\{([^}]*)\}/.exec(head);
     return {
-      name, members, start, chainEnd, condEnd, end, list, options: options(code, list), fn,
+      name, members, start, chainEnd, condStart, condEnd, end, list, options: options(code, list), fn,
       param: fn ? firstParam(head) : null,
       skipParam: Boolean(destructured && /(?<![\w$])skip(?![\w$])/.test(destructured[1])),
     };
@@ -396,11 +398,44 @@ function firstParam(text) {
 // A test call: it, test or specify, with only members that leave it a test (test.only, it.each).
 const isTest = (call) => TESTS.has(call.name) && call.members.every((member) => TEST_MODIFIERS.has(member));
 
-// The suites that never run in masked code: describe.skip(...), xdescribe(...) - not skipIf or
-// runIf, whose condition may let them run. [{start, end, head (the end of the marker), what}].
-function neverRunSuites(code, calls) {
+// A name the CI variable goes by: process.env.CI, process.env['CI'], const { CI } = process.env.
+const CI_WORD = /(?<![\w$])CI(?![\w$])/;
+
+// The source between from and to with its comments blanked out: strings stay, since the name of an
+// environment variable can be one (process.env['CI']).
+function withoutComments(source, kinds, from, to) {
+  let text = '';
+  for (let i = from; i < to; i += 1) text += kinds[i] === COMMENT ? ' ' : source[i];
+  return text;
+}
+
+// The condition between from and to reads the CI variable, itself or through a name the file
+// declares from it (const isCI = !!process.env.CI). The gate runs the tests with CI=true, so such a
+// condition decides by where the tests run, not by the code: a skip, unlike a platform or version
+// condition.
+function readsCi({ source, code, kinds }, from, to) {
+  if (CI_WORD.test(withoutComments(source, kinds, from, to))) return true;
+  for (const name of new Set(code.slice(from, to).match(/[A-Za-z_$][\w$]*/g) || [])) {
+    for (const m of code.matchAll(new RegExp(`(?<![\\w$.])(?:const|let|var)\\s+${escape(name)}\\s*=(?!=)`, 'g'))) {
+      const at = m.index + m[0].length;
+      if (CI_WORD.test(withoutComments(source, kinds, at, initializerEnd(code, at)))) return true;
+    }
+  }
+  return false;
+}
+
+// The suites that never run in masked code: describe.skip(...), xdescribe(...), and skipIf or runIf
+// whose condition reads CI (readsCi) - not other conditions, which may let them run.
+// [{start, end, head (the end of the marker), what}]; file: {source, code, kinds} (mask()).
+function neverRunSuites(file, calls) {
+  const { code } = file;
+  const ci = (call) => call.condEnd !== null && readsCi(file, call.condStart + 1, call.condEnd);
   const suites = calls.filter((call) => SUITES.has(call.name) && call.members.some((member) => SUITE_SKIPS.has(member)))
     .map((call) => ({ start: call.start, end: call.end, head: call.chainEnd, what: `${call.name}.${call.members.find((member) => SUITE_SKIPS.has(member))}` }));
+  for (const call of calls.filter((one) => SUITES.has(one.name) && ci(one))) {
+    const member = call.members.find((one) => one === 'skipIf' || one === 'runIf');
+    suites.push({ start: call.start, end: call.end, head: call.condEnd + 1, what: `${call.name}.${member} on CI`, ci: true });
+  }
   for (const m of code.matchAll(/(?<![\w$.])(xdescribe|xcontext)\s*\(/g)) {
     const end = closing(code, m.index + m[0].length - 1);
     if (end !== -1) suites.push({ start: m.index, end, head: m.index + m[1].length, what: m[1] });
@@ -413,9 +448,9 @@ const nameOf = (source, test) => (test.list.length ? source.slice(test.list[0][0
 
 // The names of a file's tests outside every suite that never runs, and inside one: {outside, inside}.
 function testNames(source) {
-  const { code, templates } = mask(source);
+  const { code, kinds, templates } = mask(source);
   const calls = testCalls(code, templates);
-  const suites = neverRunSuites(code, calls);
+  const suites = neverRunSuites({ source, code, kinds }, calls);
   const names = { outside: new Set(), inside: new Set() };
   for (const test of calls.filter(isTest)) {
     const inside = suites.some((suite) => suite.start < test.start && test.end < suite.end);
@@ -462,8 +497,11 @@ function checkJs(source, changes, checks, before = null) {
   const calls = testCalls(code, templates);
   const imports = assertImports(source, code);
   const tests = calls.filter(isTest);
-  const skippedSuites = neverRunSuites(code, calls);
+  const skippedSuites = neverRunSuites({ source, code, kinds }, calls);
   const inSkipped = (test) => skippedSuites.find((suite) => suite.start < test.start && test.end < suite.end);
+  // In a suite that never runs whatever the environment: a test there is a skip, not a test to read
+  // for assertions (one in a suite skipped on CI still runs elsewhere).
+  const neverRuns = (test) => skippedSuites.some((suite) => !suite.ci && suite.start < test.start && test.end < suite.end);
   // A test that was outside every suite that never runs at the start of the turn, under its name.
   let names = null;
   const wasOutside = (test) => {
@@ -568,7 +606,7 @@ function checkJs(source, changes, checks, before = null) {
       // around it. A new marker of the suite is reported above, not again for each test in it.
       const suite = inSkipped(test);
       if (suite && !added(suite.start, suite.head) && (isNew(test.start) || wasOutside(test))) {
-        report(CHECKS.skips, test.start, `a test inside ${suite.what} - the test does not run`);
+        report(CHECKS.skips, test.start, `a test inside ${suite.what} - ${suite.ci ? 'whether it runs depends on CI (the gate runs the tests with CI=true)' : 'the test does not run'}`);
       }
     }
     // mocha: this.skip() also in a hook skips the tests it runs for.
@@ -600,7 +638,7 @@ function checkJs(source, changes, checks, before = null) {
     for (const test of tests) {
       // A test that does not run is a skip (above), not a test without assertions.
       const notRun = test.members.some((member) => NOT_RUN.has(member)) || test.options.some((option) => option.name !== 'only')
-        || runtimeSkips(test).length > 0 || inSkipped(test);
+        || runtimeSkips(test).length > 0 || neverRuns(test);
       if (notRun || !touched(test.start, test.end + 1)) continue;
       const name = test.list.length && test.list[0] !== test.fn ? ` ${brief(...test.list[0])}` : '';
       // test('name') with no function checks nothing; test.fail() or test.skip(cond) inside a test
@@ -656,4 +694,6 @@ function checkJs(source, changes, checks, before = null) {
   return findings.filter((f) => !seen.has(`${f.line} ${f.gw}`) && seen.add(`${f.line} ${f.gw}`)).sort((a, b) => a.line - b.line);
 }
 
-module.exports = { checkJs, testFileKind, mask };
+module.exports = {
+  checkJs, testFileKind, mask, closing, initializerEnd, JS_EXTENSION, INITIALIZER,
+};

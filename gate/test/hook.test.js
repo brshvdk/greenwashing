@@ -342,7 +342,7 @@ test('a turn no Stop judged keeps its start: an interrupted turn, or one the gat
   }
 });
 
-test('after a Stop judged the turn (green, docs only, released), the next prompt takes a new start', (t) => {
+test('after a Stop accepted the turn (green, docs only), the next prompt takes a new start; after WORK NOT ACCEPTED it does not', (t) => {
   const green = project(t, { 't.test.js': NODE_FAIL });
   const one = session(t, green);
   one.prompt();
@@ -365,9 +365,78 @@ test('after a Stop judged the turn (green, docs only, released), the next prompt
   write(released, { 't.test.js': NODE_FAIL });
   for (const active of [false, true, true]) assert.equal(three.stop(active).json.decision, 'block');
   assert.match(three.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
-  // A question after the red release: no file changes, so nothing to block.
+  // A question after the red release: the work the gate did not accept is still this turn's change.
+  three.prompt();
+  const again = three.stop().json;
+  assert.equal(again.decision, 'block');
+  assert.match(again.reason, /Counts: 0 passed, 1 failed, 0 skipped/);
+  // Undone by the user between turns: nothing is left to test, and the next start is new.
+  write(released, { 't.test.js': NODE_PASS });
   three.prompt();
   assert.deepEqual(three.stop().json, NO_CHANGES);
+  write(released, { 't.test.js': NODE_FAIL });
+  git(released, 'commit', '-qam', 'the user commits a red test between turns');
+  three.prompt();
+  assert.deepEqual(three.stop().json, NO_CHANGES);
+});
+
+test('after WORK NOT ACCEPTED, the findings of that turn block again in the next one', (t) => {
+  const dir = project(t, { 'a.test.js': JEST_OK }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': `${JEST_OK}it.skip('later', () => { expect(a).toBe(1); });\n` });
+  for (const active of [false, true, true]) assert.equal(gate.stop(active).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /CHECKS DID NOT PASS - WORK NOT ACCEPTED/);
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /- a\.test\.js:4: it\.skip - the test does not run \(GW-17\)/);
+});
+
+test('the settings are measured from the start of each turn, while the work is measured from the last accepted state', (t) => {
+  const config = (checks) => ({ '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, ...(checks ? { checks } : {}) }) });
+  const skip = `${JEST_OK}it.skip('later', () => { expect(a).toBe(1); });\n`;
+  const dir = project(t, { 'a.test.js': JEST_OK }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': skip });
+  for (const active of [false, true, true]) assert.equal(gate.stop(active).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // The user accepts the skip between turns: not a settings change of the turn, and the checks
+  // use the new settings, so the old skip no longer blocks and the work is accepted.
+  write(dir, config({ skips: false }));
+  gate.prompt();
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  // The next turn starts from there: the user's settings and the skip are the start.
+  gate.prompt();
+  assert.deepEqual(gate.stop().json, NO_CHANGES);
+  // The agent changes the settings during a turn: blocked, measured from that turn's start.
+  write(dir, config({ skips: false, assertions: false }));
+  assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+});
+
+test('settings changed between turns while unaccepted work stays: no GW-114, the work still blocks, and a change in the turn does', (t) => {
+  const config = (checks) => ({ '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD, ...(checks ? { checks } : {}) }) });
+  const dir = project(t, { 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  for (const active of [false, true, true]) assert.equal(gate.stop(active).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /TESTS DID NOT PASS - WORK NOT ACCEPTED/);
+  write(dir, config({ assertions: false }));
+  gate.prompt();
+  const red = gate.stop().json;
+  assert.match(red.reason, /the tests failed/);
+  assert.doesNotMatch(red.reason, /GW-114/);
+  // Put back during the turn: that is a change of the turn's settings.
+  write(dir, config());
+  assert.match(gate.stop(true).json.reason, /the gate's settings changed during this turn[^]*Changed: \.greenwashing\.json\n/);
+  // Also when nothing else differs from the last accepted state: the user undid the work and changed
+  // the settings between turns, and the agent puts the settings back.
+  assert.equal(gate.stop(true).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  write(dir, { 't.test.js': NODE_PASS, ...config({ assertions: false }) });
+  gate.prompt();
+  write(dir, config());
+  assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
 });
 
 test('when the agent works in another worktree of the repository, that worktree is tested', (t) => {
@@ -545,7 +614,7 @@ test('the tests stop at the first tree that is not green', (t) => {
   assert.deepEqual([fs.existsSync(path.join(dir, 'gate.ran')), fs.existsSync(path.join(tree, 'gate.ran'))], [true, false]);
 });
 
-test('a run in a worktree keeps the timeout its own config sets', (t) => {
+test("a worktree's own .greenwashing.json is ignored: its tests run with the project's settings, and the message says so", (t) => {
   const { dir, tree } = withWorktree(t);
   write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, timeoutSeconds: 20 }) });
   git(dir, 'commit', '-qam', 'fast');
@@ -555,9 +624,50 @@ test('a run in a worktree keeps the timeout its own config sets', (t) => {
   gate.prompt();
   write(dir, { 'app.js': '1;\n' });
   write(tree, { 'app.js': '2;\n' });
+  assert.equal(gate.stop(false, tree).json.systemMessage, "greenwashing: tests passed - printf 'Ran 1 test in 0.1s\\n\\nOK\\n': 1 passed, 0 failed, 0 skipped; "
+    + "printf 'Ran 1 test in 0.1s\\n\\nOK\\n' in .claude/worktrees/feat (its own .greenwashing.json ignored): 1 passed, 0 failed, 0 skipped");
+  // Red in the worktree: the block says it too.
+  write(tree, { 't.test.js': NODE_FAIL, '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  git(tree, 'commit', '-qam', 'red, and a green echo of its own');
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  git(dir, 'commit', '-qam', 'node');
+  gate.prompt();
+  write(dir, { 'app.js': '3;\n' });
+  write(tree, { 'app.js': '4;\n' });
   const { json } = gate.stop(false, tree);
-  assert.equal(json.decision, 'block');
-  assert.match(json.reason, /did not finish in 2 s and was stopped/);
+  assert.match(json.reason, /\nFolder: \.claude\/worktrees\/feat\nSettings: the project folder's; the \.greenwashing\.json in this folder is ignored\n/);
+  assert.match(json.reason, /Counts: 0 passed, 1 failed, 0 skipped/);
+});
+
+test("the checks in a worktree use the project's settings, not the worktree's own", (t) => {
+  const { dir, tree } = withWorktree(t, { 'a.test.js': JEST_OK });
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  git(dir, 'commit', '-qam', 'green echo');
+  git(tree, 'merge', '-q', 'master');
+  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, checks: { skips: false } }) });
+  git(tree, 'commit', '-qam', 'skips off on the branch');
+  const gate = session(t, dir);
+  gate.prompt(tree);
+  write(tree, { 'a.test.js': `${JEST_OK}xit('later', () => {});\n` });
+  assert.match(gate.stop(false, tree).json.reason, /- \.claude\/worktrees\/feat\/a\.test\.js:4: xit - the test does not run \(GW-17\)/);
+});
+
+test("an ignored .greenwashing.json in a worktree changes nothing: not a settings change, not used, and said", (t) => {
+  const dir = project(t, { 'a.test.js': JEST_OK, '.gitignore': '.claude/worktrees/\n.greenwashing.json\n' }, null);
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: 'true' }) });
+  const gate = session(t, dir);
+  gate.prompt(tree);
+  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: 'false' }), 'app.js': '1;\n' });
+  assert.match(gate.stop(false, tree).json.systemMessage,
+    /^greenwashing: tests passed - .* in \.claude\/worktrees\/feat \(its own \.greenwashing\.json ignored\): 1 passed/);
+  // Committed there and the worktree removed: its commit is no settings change either.
+  git(tree, 'add', 'app.js');
+  git(tree, 'commit', '-qm', 'app');
+  git(dir, 'worktree', 'remove', '--force', tree);
+  assert.match(gate.stop(true, dir).json.systemMessage, /^greenwashing: tests passed - .* in a temporary checkout of /);
 });
 
 // The temporary checkouts the gate made and has not removed: folders in the session's temp
@@ -1005,7 +1115,20 @@ test('outside a git repository with no test command, the stop is allowed with on
   assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: not a git repository and no test command - tests not run' });
   // A broken config is a broken setup, not "nothing to test".
   write(dir, { '.greenwashing.json': '{"testCommand": ' });
+  gate.prompt();
   assert.equal(gate.stop().json.decision, 'block');
+});
+
+test('outside git too, the tests run with the settings the turn started with', (t) => {
+  const dir = tempDir(t);
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }), 't.test.js': NODE_FAIL });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  assert.match(gate.stop().json.reason, /Command: node --test --test-reporter=tap t\.test\.js \(\.greenwashing\.json\)/);
+  // With no prompt recorded, as the file is now.
+  const other = session(t, dir, { id: 'other' });
+  assert.match(other.stop().json.systemMessage, /^greenwashing: tests passed - printf/);
 });
 
 test('Python files git does not track yet make a Python project; outside git, a top-level .py does', (t) => {
@@ -1412,13 +1535,51 @@ test('Python test checks that cannot run are did not run: no python3 on PATH, or
   const { json } = gate.stop();
   assert.equal(json.decision, 'block');
   assert.match(json.reason, /the checks of the changed tests did not run/);
-  assert.match(json.reason, /Result: did not run - the Python test checks could not run: python3 was not found on PATH/);
+  assert.match(json.reason, /Result: did not run - the Python test checks could not run: python3 was not found on PATH; a human sets \{"python": /);
 
   const broken = project(t, { 'test_a.py': PY_OK }, GREEN_ECHO);
   const other = session(t, broken);
   other.prompt();
   write(broken, { 'test_a.py': 'def test_a(:\n' });
-  assert.match(other.stop().json.reason, /the Python test checks could not read test_a\.py - Python could not read it \(SyntaxError/);
+  const reason = other.stop().json.reason;
+  assert.match(reason, /the Python test checks could not read test_a\.py - Python could not read it \(SyntaxError/);
+  // How to fix it when the file is right and python3 is too old for it.
+  assert.match(reason, /; if the project's Python reads it, a human sets \{"python": "<the project's Python, for example \.venv\/bin\/python>"\} in \.greenwashing\.json in the project root, or turns the checks off there/);
+});
+
+test('"python" in .greenwashing.json runs the Python checks: a path from the project folder or a name, not python3 from PATH', (t) => {
+  const real = spawnSync('sh', ['-c', 'command -v python3'], { encoding: 'utf8' }).stdout.trim();
+  const bin = tempDir(t);
+  for (const tool of ['git', 'sh']) fs.symlinkSync(spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim(), path.join(bin, tool));
+  // No python3 on PATH: only the configured Python can run the checks. It leaves a mark when it runs.
+  const mark = path.join(tempDir(t), 'ran');
+  const shim = `#!/bin/sh\n: > ${JSON.stringify(mark)}\nexec ${JSON.stringify(real)} "$@"\n`;
+  const config = (python) => JSON.stringify({ testCommand: GREEN_ECHO, python });
+  for (const [python, files] of [['tools/py', { 'tools/py': shim }], [path.join(bin, 'py'), {}], ['py', {}]]) {
+    fs.rmSync(mark, { force: true });
+    fs.writeFileSync(path.join(bin, 'py'), shim, { mode: 0o755 });
+    const dir = project(t, { 'test_a.py': PY_OK, '.greenwashing.json': config(python), ...files }, null);
+    if (files['tools/py']) fs.chmodSync(path.join(dir, 'tools/py'), 0o755);
+    const gate = session(t, dir, { env: { PATH: bin } });
+    gate.prompt();
+    write(dir, { 'test_a.py': `${PY_OK}\n\ndef test_saves():\n    save(user)\n` });
+    assert.match(gate.stop().json.reason, /- test_a\.py:5: test_saves has no assertion \(GW-18\)/, python);
+    assert.ok(fs.existsSync(mark), python);
+  }
+  // A configured Python that fails at once is named as it is, also when it exits before it reads its
+  // input (a request larger than a pipe holds makes that certain).
+  fs.writeFileSync(path.join(bin, 'failing'), '#!/bin/sh\necho boom >&2\nexit 3\n', { mode: 0o755 });
+  const failing = project(t, { 'test_a.py': PY_OK, '.greenwashing.json': config(path.join(bin, 'failing')) }, null);
+  const other = session(t, failing);
+  other.prompt();
+  write(failing, { 'test_a.py': `${PY_OK}${'# more\n'.repeat(40000)}` });
+  assert.match(other.stop().json.reason, new RegExp(`the Python test checks could not run: ${path.join(bin, 'failing').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} exited with code 3: boom`));
+  // A configured Python that is not there: did not run, with its name and how to fix it.
+  const dir = project(t, { 'test_a.py': PY_OK, '.greenwashing.json': config('.venv/bin/python') }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'test_a.py': `${PY_OK}# more\n` });
+  assert.match(gate.stop().json.reason, new RegExp(`the Python test checks could not run: ${path.join(dir, '.venv/bin/python').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} was not found; a human sets`));
 });
 
 test('the checks read every tree the turn changed: a worktree, a removed worktree\'s commit, a tree entered during the turn', (t) => {
