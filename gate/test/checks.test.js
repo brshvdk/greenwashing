@@ -9,7 +9,7 @@ const brief = (findings) => findings.map(({ line, gw }) => [line, gw]);
 // Findings in a new file: every line is added.
 const fresh = (source, checks = ALL) => brief(checkJs(source, lineChanges(null, source), checks));
 // Findings when a turn changed `before` into `after`.
-const edited = (before, after, checks = ALL) => brief(checkJs(after, lineChanges(before, after), checks));
+const edited = (before, after, checks = ALL) => brief(checkJs(after, lineChanges(before, after), checks, before));
 const OK = "test('adds', () => { expect(add(1, 2)).toBe(3); });";
 
 test('test files are the ones jest, vitest and node --test collect by default, and Python test*.py (unittest) and *_test.py (pytest)', () => {
@@ -266,6 +266,11 @@ test('GW-17: a changed condition of skipIf, or a new test in a suite that never 
   // not, nor a new test above the suite, nor one in a suite a condition may let run.
   assert.deepEqual(edited(suite(one), suite(one.replace("'a'", "'renamed'").replace('f()', 'f(1)'))), []);
   assert.deepEqual(edited(suite(one), `test('above', () => { expect(h()).toBe(3); });\n${suite(one)}`), []);
+  // A test brought into the suite by moving the suite's closing bracket below it: it was outside
+  // at the start of the turn, re-indented or not.
+  const failing = "test('fails', () => {\n  expect(g()).toBe(2);\n});\n";
+  assert.deepEqual(edited(`${suite(one)}\n${failing}`, suite(`${one}\n${failing.replace(/^/gm, '  ')}`)), [[4, 'GW-17']]);
+  assert.deepEqual(edited(`${suite(one)}\n${failing}`, suite(`${one}\n${failing}`)), [[4, 'GW-17']]);
   const skipIfSuite = (body) => `describe.skipIf(process.platform === 'win32')('old', () => {\n${body}});\n`;
   assert.deepEqual(edited(skipIfSuite(one), skipIfSuite(`${one}  test('b', () => { expect(g()).toBe(2); });\n`)), []);
   assert.deepEqual(edited("it.skip('old', () => {\n  run(1);\n});\n", "it.skip('old', () => {\n  run(2);\n});\n"), []);
@@ -319,7 +324,7 @@ const { CHECKS } = require('../lib/command');
 
 function python(before, after, checks = ALL) {
   const { added, gaps } = lineChanges(before, after);
-  const request = { files: [{ file: 'test_x.py', text: after, added: [...added], gaps: [...gaps], checks }], entries: CHECKS };
+  const request = { files: [{ file: 'test_x.py', text: after, before, added: [...added], gaps: [...gaps], checks }], entries: CHECKS };
   const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], { input: JSON.stringify(request), encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   const out = JSON.parse(run.stdout);
@@ -444,6 +449,9 @@ test('Python GW-17: __test__ = False, a new test in a class or module that never
   assert.deepEqual(python(null, 'class TestA:\n    __test__ = False\n\n    def test_a(self):\n        assert f()\n'), [[2, 'GW-17']]);
   const skipped = 'import pytest\n\n\n@pytest.mark.skip\nclass TestOld:\n    def test_a(self):\n        assert f()\n';
   assert.deepEqual(python(skipped, `${skipped}\n    def test_b(self):\n        assert g()\n`), [[9, 'GW-17']]);
+  // A test that was outside the class at the start of the turn, re-indented into it.
+  const outside = `${skipped}\n\ndef test_b():\n    assert g()\n`;
+  assert.deepEqual(python(outside, `${skipped}\n    def test_b(self):\n        assert g()\n`), [[9, 'GW-17']]);
   // An edit or a rename of a test that was already in the skipped class is no new skip.
   assert.deepEqual(python(skipped, skipped.replace('assert f()', 'assert f(1)').replace('test_a', 'test_renamed')), []);
   const marked = 'import pytest\n\npytestmark = pytest.mark.skip\n';

@@ -4,7 +4,7 @@ A new skip or expected-failure marker (GW-17), a new or changed test with no
 assertion (GW-18), a check whose two sides are the same (GW-01), each only on
 the lines a turn added or changed. The hook runs it as
 `python3 -I python_checks.py` with JSON on stdin:
-    {"files": [{"file", "text", "added": [line], "gaps": [line],
+    {"files": [{"file", "text", "before", "added": [line], "gaps": [line],
                 "checks": {"skips", "assertions", "selfComparisons"}}],
      "entries": {"skips": "GW-17", ...}}
 and reads JSON from stdout:
@@ -105,13 +105,25 @@ def marker_names(tree, names):
     return given
 
 
-def check(file, source, added, gaps, checks, entries):
-    """The findings in one file: [{"file", "line", "gw", "what"}]; entries: the catalog entry of each check."""
-    # A byte order mark starts the file on disk; Python reads past it there, not in a string.
-    source = source[1:] if source.startswith("﻿") else source
-    tree = ast.parse(source, filename=file)
+def read(source, file):
+    """(tree, names, given, marker) of a file's text (given: marker_names()). A byte order mark starts the file on disk; Python reads
+    past it there, not in a string. marker: the marker a decorator or an expression stands for,
+    through a name given to it too."""
+    tree = ast.parse(source[1:] if source.startswith("\ufeff") else source, filename=file)
     names = imported_names(tree)
     given = marker_names(tree, names)
+
+    def marker(node):
+        name = dotted(node.func if isinstance(node, ast.Call) else node, names)
+        return name if name in SKIPS else given.get(name)
+    return tree, names, given, marker
+
+
+def check(file, source, added, gaps, checks, entries, before=None):
+    """The findings in one file: [{"file", "line", "gw", "what"}]; entries: the catalog entry of each
+    check; before: the file's text at the start of the turn, or None."""
+    tree, names, given, marker = read(source, file)
+    source = source[1:] if source.startswith("\ufeff") else source
     findings = []
 
     def report(gw, line, text):
@@ -120,10 +132,16 @@ def check(file, source, added, gaps, checks, entries):
     def added_in(node):
         return any(line in added for line in range(node.lineno, (node.end_lineno or node.lineno) + 1))
 
-    def marker(node):
-        """The marker a decorator or an expression stands for, through a name given to it too."""
-        name = dotted(node.func if isinstance(node, ast.Call) else node, names)
-        return name if name in SKIPS else given.get(name)
+    at_start = []
+
+    def was_outside(function):
+        """The test was outside every suite that never runs at the start of the turn, under its name."""
+        if before is None:
+            return False
+        if not at_start:
+            at_start.append(start_names(before, file))
+        outside, inside = at_start[0]
+        return function.name in outside and function.name not in inside
 
     def label(node, mark):
         name = dotted(node.func if isinstance(node, ast.Call) else node, names)
@@ -163,10 +181,10 @@ def check(file, source, added, gaps, checks, entries):
         for token in tokenize.generate_tokens(io.StringIO(source, newline=None).readline):
             if token.type == tokenize.COMMENT and token.start[0] in added and COMMENTED_TEST.match(token.string):
                 report(entries["skips"], token.start[0], f"a test in a comment: {token.string[:60]}")
-        # A test new in a suite that never runs, or moved into one; a new marker of the suite is
-        # reported above, not again for each test in it.
+        # A test new in a suite that never runs, or brought into one: moved there, or the suite moved
+        # around it. A new marker of the suite is reported above, not again for each test in it.
         for function, start, suite in tests:
-            if suite and not added_in(suite[1]) and is_new(start, added, gaps):
+            if suite and not added_in(suite[1]) and (is_new(start, added, gaps) or was_outside(function)):
                 report(entries["skips"], start, f"a test inside {suite[0]} - {what(suite[2])}")
 
     if checks.get("assertions") is not False:
@@ -196,6 +214,19 @@ def not_collected(node):
     """__test__ = False: pytest does not collect the class or module it is in."""
     return (any(isinstance(target, ast.Name) and target.id == "__test__" for target in node.targets)
             and isinstance(node.value, ast.Constant) and node.value.value is False)
+
+
+def start_names(before, file):
+    """The names of the tests at the start of the turn outside every suite that never runs, and inside
+    one: (outside, inside); both empty when Python cannot read that text."""
+    try:
+        tree, names, _, marker = read(before, file)
+    except (SyntaxError, ValueError):
+        return set(), set()
+    outside, inside = set(), set()
+    for function, _, suite in test_functions(tree, names, marker):
+        (inside if suite else outside).add(function.name)
+    return outside, inside
 
 
 def is_new(start, added, gaps):
@@ -294,7 +325,8 @@ def main():
     findings, errors = [], []
     for item in request["files"]:
         try:
-            findings += check(item["file"], item["text"], set(item["added"]), set(item["gaps"]), item["checks"], request["entries"])
+            findings += check(item["file"], item["text"], set(item["added"]), set(item["gaps"]), item["checks"], request["entries"],
+                              item.get("before"))
         except (SyntaxError, ValueError, tokenize.TokenError) as error:
             errors.append({"file": item["file"], "error": f"Python could not read it ({type(error).__name__}: {error})"})
     sys.stdout.buffer.write(json.dumps({"findings": findings, "errors": errors}).encode("utf-8"))

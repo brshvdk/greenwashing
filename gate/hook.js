@@ -585,9 +585,9 @@ function quickChecks(checked, rel, deadline) {
       const start = before !== null ? before : movedFrom(deleted.filter((t) => t.kind === kind).map((t) => t.before), text);
       const changes = lineChanges(start, text);
       if (kind === 'js') {
-        for (const found of checkJs(text, changes, config.checks)) findings.push({ file: target.show(f), ...found });
+        for (const found of checkJs(text, changes, config.checks, start)) findings.push({ file: target.show(f), ...found });
       } else {
-        python.push({ file: target.show(f), text, added: [...changes.added], gaps: [...changes.gaps], checks: config.checks });
+        python.push({ file: target.show(f), text, before: start, added: [...changes.added], gaps: [...changes.gaps], checks: config.checks });
       }
     }
   }

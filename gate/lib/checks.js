@@ -393,10 +393,41 @@ function firstParam(text) {
   return match[2];
 }
 
+// A test call: it, test or specify, with only members that leave it a test (test.only, it.each).
+const isTest = (call) => TESTS.has(call.name) && call.members.every((member) => TEST_MODIFIERS.has(member));
+
+// The suites that never run in masked code: describe.skip(...), xdescribe(...) - not skipIf or
+// runIf, whose condition may let them run. [{start, end, head (the end of the marker), what}].
+function neverRunSuites(code, calls) {
+  const suites = calls.filter((call) => SUITES.has(call.name) && call.members.some((member) => SUITE_SKIPS.has(member)))
+    .map((call) => ({ start: call.start, end: call.end, head: call.chainEnd, what: `${call.name}.${call.members.find((member) => SUITE_SKIPS.has(member))}` }));
+  for (const m of code.matchAll(/(?<![\w$.])(xdescribe|xcontext)\s*\(/g)) {
+    const end = closing(code, m.index + m[0].length - 1);
+    if (end !== -1) suites.push({ start: m.index, end, head: m.index + m[1].length, what: m[1] });
+  }
+  return suites;
+}
+
+// A test's name as written: its first argument ('adds two numbers'), or null.
+const nameOf = (source, test) => (test.list.length ? source.slice(test.list[0][0], test.list[0][1]).trim() : null);
+
+// The names of a file's tests outside every suite that never runs, and inside one: {outside, inside}.
+function testNames(source) {
+  const { code, templates } = mask(source);
+  const calls = testCalls(code, templates);
+  const suites = neverRunSuites(code, calls);
+  const names = { outside: new Set(), inside: new Set() };
+  for (const test of calls.filter(isTest)) {
+    const inside = suites.some((suite) => suite.start < test.start && test.end < suite.end);
+    names[inside ? 'inside' : 'outside'].add(nameOf(source, test));
+  }
+  return names;
+}
+
 // Checks one JavaScript or TypeScript test file. changes: {added, gaps} from lineChanges();
-// checks: {skips, assertions, selfComparisons} (false turns one off).
-// Returns [{line, gw, what}].
-function checkJs(source, changes, checks) {
+// checks: {skips, assertions, selfComparisons} (false turns one off); before: the file's text at the
+// start of the turn, or null. Returns [{line, gw, what}].
+function checkJs(source, changes, checks, before = null) {
   const { code, kinds, comments, templates } = mask(source);
   const lineOf = lineIndex(source);
   const findings = [];
@@ -430,16 +461,17 @@ function checkJs(source, changes, checks) {
   };
   const calls = testCalls(code, templates);
   const imports = assertImports(source, code);
-  const tests = calls.filter((call) => TESTS.has(call.name) && call.members.every((member) => TEST_MODIFIERS.has(member)));
-  // The spans of suites that never run: describe.skip(...), xdescribe(...) - not skipIf or runIf,
-  // whose condition may let them run; head: the end of the marker.
-  const skippedSuites = calls.filter((call) => SUITES.has(call.name) && call.members.some((member) => SUITE_SKIPS.has(member)))
-    .map((call) => ({ start: call.start, end: call.end, head: call.chainEnd, what: `${call.name}.${call.members.find((member) => SUITE_SKIPS.has(member))}` }));
-  for (const m of code.matchAll(/(?<![\w$.])(xdescribe|xcontext)\s*\(/g)) {
-    const end = closing(code, m.index + m[0].length - 1);
-    if (end !== -1) skippedSuites.push({ start: m.index, end, head: m.index + m[1].length, what: m[1] });
-  }
+  const tests = calls.filter(isTest);
+  const skippedSuites = neverRunSuites(code, calls);
   const inSkipped = (test) => skippedSuites.find((suite) => suite.start < test.start && test.end < suite.end);
+  // A test that was outside every suite that never runs at the start of the turn, under its name.
+  let names = null;
+  const wasOutside = (test) => {
+    if (before === null) return false;
+    names = names || testNames(before);
+    const name = nameOf(source, test);
+    return names.outside.has(name) && !names.inside.has(name);
+  };
   // Where a test stops itself as skipped: this.skip() (mocha), t.skip() or ctx.skip() on its own
   // context (node:test, vitest), skip() destructured from it (vitest).
   const runtimeSkips = (test) => {
@@ -532,10 +564,10 @@ function checkJs(source, changes, checks) {
       for (const skip of runtimeSkips(test)) {
         if (added(skip.at, skip.at + 1)) report(CHECKS.skips, skip.at, `${skip.what} - the test stops as skipped`);
       }
-      // A test new in a suite that never runs, or moved into one; a new marker of the suite is
-      // reported above, not again for each test in it.
+      // A test new in a suite that never runs, or brought into one: moved there, or the suite moved
+      // around it. A new marker of the suite is reported above, not again for each test in it.
       const suite = inSkipped(test);
-      if (suite && !added(suite.start, suite.head) && isNew(test.start)) {
+      if (suite && !added(suite.start, suite.head) && (isNew(test.start) || wasOutside(test))) {
         report(CHECKS.skips, test.start, `a test inside ${suite.what} - the test does not run`);
       }
     }

@@ -1353,6 +1353,19 @@ test('a test file moved in the turn is read against the file it was: an old skip
   assert.match(gate.stop(true).json.reason, /\n- c\.test\.js:1: it\.skip - the test does not run \(GW-17\)\nSee each/);
 });
 
+test('a test the turn brings into an old skipped suite by moving the suite around it blocks, in JS and Python', (t) => {
+  const js = (body) => `describe.skip('old', () => {\n  test('a', () => { expect(f()).toBe(1); });\n${body}});\n`;
+  const failing = "test('fails', () => {\n  expect(g()).toBe(2);\n});\n";
+  const py = (body) => `import pytest\n\n\n@pytest.mark.skip\nclass TestOld:\n    def test_a(self):\n        assert f()\n${body}`;
+  const dir = project(t, { 'a.test.js': `${js('')}${failing}`, 'test_b.py': `${py('')}\n\ndef test_fails():\n    assert g()\n` }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': js(failing), 'test_b.py': py('\n    def test_fails(self):\n        assert g()\n') });
+  const { json } = gate.stop();
+  assert.match(json.reason, /\n- a\.test\.js:3: a test inside describe\.skip - the test does not run \(GW-17\)\n/);
+  assert.match(json.reason, /\n- test_b\.py:9: a test inside a class marked pytest\.mark\.skip - the test does not run \(GW-17\)\n/);
+});
+
 test('a copied test file is new: the file it came from is still there, so its old skip counts', (t) => {
   const old = `${JEST_OK}it.skip('old', () => {});\n`;
   const dir = project(t, { 'a.test.js': old }, GREEN_ECHO);
