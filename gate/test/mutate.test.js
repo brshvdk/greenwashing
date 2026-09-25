@@ -209,16 +209,25 @@ test('a workspace package linked in node_modules is the copy\'s: its breaks reac
 });
 
 test('a folder the tests leave read-only goes with the copy, and the report is still printed', (t) => {
-  const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST }, `mkdir -p ro && echo x > ro/keep.txt && chmod 0500 ro && ${NODE_CMD}`);
+  // Nothing is read-only to root: then the command runs as nobody, from a folder of /tmp that nobody
+  // can read (the temp folder of these tests and this repository may be closed to it).
+  const root = process.getuid() === 0;
+  const base = root ? fs.mkdtempSync('/tmp/gw-mutate-nobody-') : tempDir(t);
+  if (root) {
+    fs.chmodSync(base, 0o755);
+    t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  }
+  const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST }, `mkdir -p ro && echo x > ro/keep.txt && chmod 0500 ro && ${NODE_CMD}`, path.join(base, 'project'));
   write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}` });
-  const tmp = tempDir(t);
+  const tmp = path.join(base, 'tmp');
+  fs.mkdirSync(tmp);
   const env = { ...process.env, TMPDIR: tmp, HOME: tmp };
   delete env.NODE_TEST_CONTEXT;
   let run;
-  if (process.getuid() === 0) {
-    // Nothing is read-only to root: the command runs as nobody.
+  if (root) {
+    fs.cpSync(path.join(__dirname, '..'), path.join(base, 'gate'), { recursive: true });
     for (const folder of [dir, tmp]) assert.equal(spawnSync('chown', ['-R', '65534:65534', folder]).status, 0);
-    run = spawnSync('setpriv', ['--reuid=65534', '--regid=65534', '--clear-groups', process.execPath, MUTATE], { cwd: dir, env, encoding: 'utf8' });
+    run = spawnSync('setpriv', ['--reuid=65534', '--regid=65534', '--clear-groups', process.execPath, path.join(base, 'gate', 'mutate.js')], { cwd: dir, env, encoding: 'utf8' });
     assert.equal(run.error, undefined, 'setpriv is needed to run this test as root');
   } else {
     run = spawnSync(process.execPath, [MUTATE], { cwd: dir, env, encoding: 'utf8' });
