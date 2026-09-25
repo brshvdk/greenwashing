@@ -93,7 +93,8 @@ Traps:
 - touching the prompt hook's state writes - forget the last turn before the snapshot and keep an unjudged turn's start (`hook.test.js`), otherwise a stop measures from a stale or a too-late start and misses changes.
 - touching `testFileKind()` - keep it to what the runners collect by default (live: jest 30.5.2, vitest 5.0.1, `node --test` on Node 20 and 22; unittest discover's `test*.py`), otherwise a test file goes unchecked or a helper is read as tests.
 - touching `snapshot()` - keep the project's `.greenwashing.json` among its `dirty` hashes whatever git says: git does not list an ignored file, and a change to it would go unseen (GW-114).
-- touching `onStop()` - run the quick checks only with a recorded start: without one every line reads as new, and every stop blocks with a false GW-114.
+- touching `onStop()` - run the quick checks only with a start the prompt recorded (a Stop keeps the trees it saw with a null start): without one every line reads as new, and every stop blocks with a false GW-114.
+- touching the suite rule of the checks - a test in a suite that never runs counts only when it is new there (its first line added, nothing removed in its place) and only for markers without a condition: otherwise every rename in an old skipped suite, and every new test in a module skipped on another platform, blocks.
 - touching a message that says how to set the test command - say a human sets it between turns: an agent that edits `.greenwashing.json` during the turn is blocked (GW-114).
 - touching `sinceKnown()` or `changesIn()` - never diff a folder that is no longer the top of its own checkout: git reads it as the parent repository and the checks see no changed lines.
 - touching the checks' line spans - a Python function ends at its last statement, so a removed last line lies just past it (a gap at end + 1 counts); a JS test's span ends at its closing bracket.
