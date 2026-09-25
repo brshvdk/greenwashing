@@ -133,17 +133,27 @@ test("Python's edits land on the right characters: CRLF and CR lines, characters
   assert.equal(apply(source, emoji), 'a = "😀" + c\r\nif x < 1:\r    pass\n');
 });
 
-test('the breaks tried: at most the limit, spread over the list, the same ones whatever order they come in', () => {
+test('the breaks tried: at most the limit, every file and every kind in turn, spread over a file, the same whatever the order', () => {
   const all = [];
   for (const file of ['b.js', 'a.js', 'c.py']) for (let i = 0; i < 10; i += 1) all.push({ file, start: i * 10, end: i * 10 + 1, op: 'number', text: '1' });
   const chosen = choose(all, 6);
   assert.equal(chosen.length, 6);
-  assert.deepEqual(chosen.map((m) => `${m.file}:${m.start}`), ['a.js:0', 'a.js:50', 'b.js:0', 'b.js:50', 'c.py:0', 'c.py:50']);
+  // Two of each file, the middle first, then the middle of the first half; shown in the order of file and place.
+  assert.deepEqual(chosen.map((m) => `${m.file}:${m.start}`), ['a.js:20', 'a.js:50', 'b.js:20', 'b.js:50', 'c.py:20', 'c.py:50']);
   assert.deepEqual(choose([...all].reverse(), 6), chosen);
   assert.deepEqual(choose(all.slice(0, 3), 20).map((m) => m.start), [0, 10, 20]);
+  // Many numbers in one file do not crowd out the breaks of another, nor a guard in the same file.
+  const table = Array.from({ length: 200 }, (_, i) => ({ file: 'a.js', start: i * 3, end: i * 3 + 1, op: 'number', text: '1' }));
+  const guard = { file: 'a.js', start: 900, end: 950, op: 'guard', text: '' };
+  const other = [{ file: 'z.js', start: 0, end: 40, op: 'guard', text: '' }, { file: 'z.js', start: 5, end: 12, op: 'comparison', text: '>=' }];
+  const picked = choose([...table, guard, ...other], 5);
+  assert.deepEqual(picked.filter((m) => m.op !== 'number').map((m) => `${m.file}:${m.op}`), ['a.js:guard', 'z.js:guard', 'z.js:comparison']);
+  assert.equal(picked.length, 5);
   // At one place, the kinds go in their order.
   const one = ['number', 'guard', 'comparison', 'condition'].map((op) => ({ file: 'a.js', start: 0, end: 5, op, text: '' }));
   assert.deepEqual(choose(one, 4).map((m) => m.op), ['guard', 'condition', 'comparison', 'number']);
+  // Every break of the list, each once, when the limit allows.
+  assert.equal(new Set(choose(all, 100)).size, 30);
 });
 
 test('three outcomes: failed tests kill a break, passing tests let it survive, did not run is never a kill (GW-61)', () => {

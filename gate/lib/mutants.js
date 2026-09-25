@@ -223,13 +223,42 @@ function describe(source, mutant) {
   return { line: first, change: `${cut(before)}  ->  ${cut(splitLines(apply(source, mutant))[first - 1])}` };
 }
 
-// At most limit of the breaks, the same ones for the same code: in the order of file, place and
-// kind, spread evenly over the list when there are more.
+// In the order of file, place and kind.
+const byPlace = (a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0) || a.start - b.start
+  || OPERATORS.indexOf(a.op) - OPERATORS.indexOf(b.op) || a.end - b.end;
+
+// Round robin: the first of each list, then the second of each, and so on.
+function interleave(lists) {
+  const out = [];
+  for (let i = 0; out.length < lists.reduce((sum, list) => sum + list.length, 0); i += 1) {
+    for (const list of lists) if (i < list.length) out.push(list[i]);
+  }
+  return out;
+}
+
+// A list in an order whose every beginning is spread over it: the middle, then the middles of the
+// halves, and so on.
+function spread(list) {
+  const out = [];
+  const parts = [[0, list.length]];
+  while (parts.length) {
+    const [low, high] = parts.shift();
+    if (low >= high) continue;
+    const middle = low + Math.floor((high - low) / 2);
+    out.push(list[middle]);
+    parts.push([low, middle], [middle + 1, high]);
+  }
+  return out;
+}
+
+// At most limit of the breaks, the same ones for the same code, shown in the order of file and
+// place. Every file gets a break before any gets a second, and in each file every kind before any
+// gets a second: many numbers in one file do not crowd out a guard in another. The breaks of one kind
+// in one file are spread over the file.
 function choose(mutants, limit) {
-  const sorted = [...mutants].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0)
-    || a.start - b.start || OPERATORS.indexOf(a.op) - OPERATORS.indexOf(b.op) || a.end - b.end);
-  if (sorted.length <= limit) return sorted;
-  return Array.from({ length: limit }, (_, i) => sorted[Math.floor((i * sorted.length) / limit)]);
+  const files = [...new Set(mutants.map((m) => m.file))].sort();
+  const queues = files.map((file) => interleave(OPERATORS.map((op) => spread(mutants.filter((m) => m.file === file && m.op === op).sort(byPlace)))));
+  return interleave(queues).slice(0, limit).sort(byPlace);
 }
 
 // The outcome of one break from the verdict of its test run: the tests failed - killed; they passed -

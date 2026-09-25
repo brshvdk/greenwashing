@@ -232,8 +232,8 @@ test('the limits: --limit, then "mutants" in .greenwashing.json, then 20; the ti
   assert.deepEqual(tried(mutate(t, dir)), tried(four));
   const three = mutate(t, dir, ['--limit', '3']);
   assert.equal(tried(three).length, 3);
-  // Spread over the file: the first number is one of them.
-  assert.match(tried(three)[0], /^- killed: limits\.js:1: const LIMITS = \[1, /);
+  // Spread over the file: its middle, then the middles of its halves (numbers 8, 16 and 24).
+  assert.deepEqual(tried(three).map((line) => /->.*?(\d+), \1,/.exec(line)[1]), ['9', '17', '25']);
   write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
   git(dir, 'commit', '-qam', 'no limit');
   assert.match(mutate(t, dir).out, /30 places to break; 20 tried at most \(limit 20\)/);
@@ -241,11 +241,12 @@ test('the limits: --limit, then "mutants" in .greenwashing.json, then 20; the ti
   write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: `sleep 1; ${NODE_CMD}` }) });
   git(dir, 'commit', '-qam', 'slow');
   const late = mutate(t, dir, ['--timeout', '3', '--limit', '5']);
-  assert.equal(late.code, 2, late.out);
+  // Never 0: breaks were not tried (1 when one of those that ran survived).
+  assert.notEqual(late.code, 0, late.out);
   assert.match(late.out, /; [1-4] not tried\n/);
   assert.match(late.out, /\nDid not run: no time was left for [1-4] of the breaks: the time for everything is 3 s \(--timeout\)\n/);
   // A long line is shown around the place of the break.
-  assert.match(mutate(t, dir, ['--limit', '5']).out, /\n- survived: limits\.js:1: \.\.\. 6, .* 18, 19, 20, .*30\]; {2}-> {2}\.\.\. 6, .* 18, 20, 20, .*30\];\n/);
+  assert.match(mutate(t, dir, ['--limit', '5']).out, /\n- survived: limits\.js:1: \.\.\.\[?[\d, ]*23, 24, 25, .*30\]; {2}-> {2}\.\.\.\[?[\d, ]*23, 25, 25, .*30\];\n/);
 });
 
 test('the changed lines: since the merge base with main, committed or not, untracked too; --base; only the project folder', (t) => {
@@ -281,6 +282,19 @@ test('a break that would not parse is not tried: node --test would count the fil
   assert.match(run.out, /\n1 code file, 7 changed lines, 1 place to break; 1 tried at most \(limit 20\)\n/);
   assert.match(run.out, /\n- survived: f\.js:4: if \(x\) return; {2}-> {2}if \(!\(x\)\) return;\n/);
   assert.doesNotMatch(run.out, /removed: /);
+});
+
+test('a file of many tested numbers does not crowd out an untested guard in another file', (t) => {
+  const dir = project(t, { 'a.test.js': "require('node:test')('ok', () => {});\n" });
+  write(dir, {
+    'a.js': `module.exports = [${Array.from({ length: 200 }, (_, i) => i + 1).join(', ')}];\n`,
+    'a.test.js': "const test = require('node:test');\nconst assert = require('node:assert');\ntest('table', () => assert.deepEqual(require('./a'), Array.from({ length: 200 }, (_, i) => i + 1)));\n",
+    'z.js': "module.exports = (x) => {\n  if (x > 100) throw new Error('big');\n  return x;\n};\n",
+  });
+  const run = mutate(t, dir);
+  assert.equal(run.code, 1, run.out);
+  assert.match(run.out, /\n2 code files, 5 changed lines, 205 places to break; 20 tried at most \(limit 20\)\n/);
+  assert.match(run.out, /\n- survived: z\.js:2: removed: if \(x > 100\) throw new Error\('big'\);\n/);
 });
 
 test('the changed lines as git sees them, whatever the file and the settings: a lone CR, -diff, context inside a hunk', (t) => {
