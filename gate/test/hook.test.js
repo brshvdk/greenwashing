@@ -481,6 +481,27 @@ test('after WORK NOT ACCEPTED with a settings change of the agent, the user chan
   assert.match(gate.stop(true).json.reason, /Changed: \.greenwashing\.json\n/);
 });
 
+test('after WORK NOT ACCEPTED, a .greenwashing.json git ignores: the agent\'s change still blocks, the user\'s between turns does not', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, '.gitignore': '.greenwashing.json\n' }, null);
+  const settings = (extra) => ({ '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD, ...extra }) });
+  write(dir, settings());
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL, ...settings({ timeoutSeconds: 30 }) });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /Changed: \.greenwashing\.json\n/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+  for (const active of [true, true]) assert.equal(gate.stop(active).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // The user writes it between turns: git does not list the file, and it is still seen as theirs.
+  write(dir, settings({ timeoutSeconds: 60 }));
+  gate.prompt();
+  const red = gate.stop().json;
+  assert.doesNotMatch(red.reason, /GW-114/);
+  assert.match(red.reason, /Counts: 0 passed, 1 failed, 0 skipped/);
+});
+
 test("after WORK NOT ACCEPTED, a worktree's settings change of the agent still blocks; the user's between turns does not", (t) => {
   const { dir, tree, gate } = seenWorktree(t);
   write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }), 'app.js': '1;\n' });
