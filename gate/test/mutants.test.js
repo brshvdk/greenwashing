@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {
-  codeKind, addedLines, jsMutants, fromLines, apply, stillParses, describe, choose, report, OUTCOMES, HINTS,
+  codeKind, addedLines, ownLines, jsMutants, fromLines, apply, stillParses, describe, choose, report, OUTCOMES, HINTS,
 } = require('../lib/mutants');
 const { CATALOG } = require('../lib/verdict');
 
@@ -27,10 +27,22 @@ test('code under test: JavaScript, TypeScript and Python files that are not test
   for (const file of none) assert.equal(codeKind(file), null, file);
 });
 
-test('the changed lines are the new side of each hunk of git diff -U0', () => {
-  const diff = 'diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1,0 +2,3 @@\n+a\n+b\n+c\n@@ -10 +13 @@\n-x\n+y\n@@ -20,2 +22,0 @@\n-p\n-q\n@@ -30 +29,2 @@\n';
+test('the changed lines are the + lines of each hunk of git diff, numbered as git numbers them', () => {
+  const diff = 'diff --git a/a.js b/a.js\n--- a/a.js\n+++ b/a.js\n@@ -1,0 +2,3 @@\n+a\n+b\n+c\n@@ -10 +13 @@\n-x\n+y\n@@ -20,2 +22,0 @@\n-p\n-q\n@@ -30 +29,2 @@\n+m\n+n\n';
   assert.deepEqual([...addedLines(diff)].sort((a, b) => a - b), [2, 3, 4, 13, 29, 30]);
   assert.deepEqual([...addedLines('')], []);
+  // Context lines inside a hunk (diff.interHunkContext), a blank one too, and the no-newline marker.
+  const context = '@@ -1,5 +1,5 @@\n-A = 1\n+A = 10\n B = 2\n\n D = 4\n-E = 5\n+E = 50\n\\ No newline at end of file\n';
+  assert.deepEqual([...addedLines(context)], [1, 5]);
+  assert.deepEqual([...addedLines('--- a/x.js\n+++ b/x.js\n@@ -1 +1 @@\n-a\n+b\n')], [1]);
+});
+
+test("git's lines (split at LF) as the file's own lines (split at CRLF, CR and LF)", () => {
+  // Line 1 of git holds three lines of the file: a lone CR splits it.
+  assert.deepEqual([...ownLines('/* h\r\r */\nA\nC\nB\nX\n', new Set([4, 5]))], [6, 7]);
+  assert.deepEqual([...ownLines('/* h\r\r */\nA\n', new Set([1]))], [1, 2, 3]);
+  assert.deepEqual([...ownLines('a\r\nb\r\nc\n', new Set([2, 3]))], [2, 3]);
+  assert.deepEqual([...ownLines('a\nb', new Set())], []);
 });
 
 test('each kind of break in JavaScript: comparison, condition, guard, return, boolean, number', () => {

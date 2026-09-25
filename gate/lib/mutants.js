@@ -40,14 +40,39 @@ function codeKind(file) {
   return JS_EXTENSION.test(name) ? 'js' : null;
 }
 
-// The lines of the new side of a `git diff -U0` of one file: {line numbers}.
+// The added lines of a `git diff` of one file, numbered as git numbers them (at LF): the `+` lines
+// of each hunk, so context lines that a setting such as diff.interHunkContext puts in a hunk do not
+// count.
 function addedLines(diff) {
   const lines = new Set();
-  for (const m of diff.matchAll(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/gm)) {
-    const count = m[2] === undefined ? 1 : Number(m[2]);
-    for (let i = 0; i < count; i += 1) lines.add(Number(m[1]) + i);
+  let line = null;
+  for (const text of diff.split('\n')) {
+    const hunk = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(text);
+    if (hunk) line = Number(hunk[1]);
+    else if (line === null || text.startsWith('-') || text.startsWith('\\')) continue;
+    else if (text.startsWith('+')) lines.add(line++);
+    else line += 1;
   }
   return lines;
+}
+
+// Git's line numbers (a line ends at LF) as this file's (a line ends at CRLF, CR or LF, as the
+// scanner and Python count them): a lone CR splits one line of git's into several, and each of them
+// counts when git's line changed.
+function ownLines(text, gitLines) {
+  const own = new Set();
+  let git = 1;
+  let line = 1;
+  if (gitLines.has(1)) own.add(1);
+  for (let i = 0; i < text.length; i += 1) {
+    if (text[i] === '\r' && text[i + 1] === '\n') continue;
+    if (text[i] === '\n') git += 1;
+    if (text[i] === '\n' || text[i] === '\r') {
+      line += 1;
+      if (gitLines.has(git)) own.add(line);
+    }
+  }
+  return own;
 }
 
 // Index of the start of each line (lines split at CRLF, CR and LF).
@@ -236,5 +261,5 @@ function report({ header, control, results, notTried, problems }) {
 }
 
 module.exports = {
-  codeKind, addedLines, jsMutants, fromLines, apply, stillParses, describe, choose, report, OUTCOMES, OPERATORS, HINTS, FLIP, DEPENDENCY_FOLDERS,
+  codeKind, addedLines, ownLines, jsMutants, fromLines, apply, stillParses, describe, choose, report, OUTCOMES, OPERATORS, HINTS, FLIP, DEPENDENCY_FOLDERS,
 };

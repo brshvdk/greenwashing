@@ -158,6 +158,10 @@ test("the user's files stay byte for byte; node_modules, .venv and venv are link
   // Another repository inside the project that git does not know (a worktree of a tool, a clone).
   write(dir, { 'nested/readme.txt': 'nested\n' });
   git(path.join(dir, 'nested'), 'init', '-q');
+  // Stat data in the index that is out of date: git diff would refresh it and rewrite the index.
+  git(dir, 'status', '--porcelain');
+  spawnSync('sleep', ['1.1']);
+  write(dir, { 'cart.test.js': fs.readFileSync(path.join(dir, 'cart.test.js'), 'utf8'), '.gitignore': fs.readFileSync(path.join(dir, '.gitignore'), 'utf8') });
   const before = snapshot(dir);
   const run = mutate(t, dir);
   assert.match(run.out, /Control: .* on the unchanged copy: passed \(2 passed/);
@@ -277,6 +281,26 @@ test('a break that would not parse is not tried: node --test would count the fil
   assert.match(run.out, /\n1 code file, 7 changed lines, 1 place to break; 1 tried at most \(limit 20\)\n/);
   assert.match(run.out, /\n- survived: f\.js:4: if \(x\) return; {2}-> {2}if \(!\(x\)\) return;\n/);
   assert.doesNotMatch(run.out, /removed: /);
+});
+
+test('the changed lines as git sees them, whatever the file and the settings: a lone CR, -diff, context inside a hunk', (t) => {
+  const check = "const test = require('node:test');\nconst assert = require('node:assert');\nconst c = require('./calc');\ntest('a', () => { assert.equal(c.A, 1); assert.equal(c.C, 3); });\n";
+  const cr = project(t, { 'calc.js': '/* h */\nconst A = 1;\nconst C = 3;\nmodule.exports = { A, C };\n', 'calc.test.js': check });
+  write(cr, { 'calc.js': '/* h\r\r */\nconst A = 1;\nconst C = 3;\nconst B = 7;\nmodule.exports = { A, B, C };\n' });
+  const lone = mutate(t, cr);
+  assert.match(lone.out, /\n- survived: calc\.js:6: const B = 7; {2}-> {2}const B = 8;\n/);
+  assert.doesNotMatch(lone.out, /const [AC] = \d; {2}->/);
+  const binary = project(t, { 'calc.js': 'module.exports = {};\n', 'calc.test.js': "require('node:test')('ok', () => {});\n" });
+  write(binary, { '.gitattributes': 'calc.js -diff\n', 'calc.js': 'module.exports = { A: 1 };\n' });
+  git(binary, 'add', '-A');
+  git(binary, 'commit', '-qm', 'hidden from diff');
+  assert.match(mutate(t, binary).out, /\n- survived: calc\.js:1: module\.exports = \{ A: 1 \}; {2}-> {2}module\.exports = \{ A: 2 \};\n/);
+  const wide = project(t, { 'calc.js': 'const A = 1;\nconst B = 2;\nconst C = 3;\nmodule.exports = { A, B, C };\n', 'calc.test.js': "require('node:test')('ok', () => {});\n" });
+  git(wide, 'config', 'diff.interHunkContext', '10');
+  write(wide, { 'calc.js': 'const A = 10;\nconst B = 2;\nconst C = 30;\nmodule.exports = { A, B, C };\n' });
+  const run = mutate(t, wide);
+  assert.match(run.out, /\n1 code file, 2 changed lines, 2 places to break;/);
+  assert.doesNotMatch(run.out, /const B = 3/);
 });
 
 test('test files, test helpers and runner config are never broken', (t) => {

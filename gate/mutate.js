@@ -20,7 +20,7 @@ const {
 const { verdict } = require('./lib/verdict');
 const { lines: outputLines } = require('./lib/parse');
 const {
-  codeKind, addedLines, jsMutants, fromLines, apply, stillParses, describe, choose, report, OUTCOMES, DEPENDENCY_FOLDERS,
+  codeKind, addedLines, ownLines, jsMutants, fromLines, apply, stillParses, describe, choose, report, OUTCOMES, DEPENDENCY_FOLDERS,
 } = require('./lib/mutants');
 const { rootFiles, readRootFiles, hasPythonTests, runTests, stopTests, OUTPUT_LIMIT } = require('./runner');
 
@@ -107,7 +107,9 @@ function baseOf(home, given) {
 // [{file (from the repository root), kind, text, lines}], and the files that could not be read.
 function changedCode(home, rel, base) {
   const where = rel || '.';
-  const tracked = nulList(git(home, ['diff', '--name-only', '-z', '--no-renames', '--diff-filter=AMT', base, '--', where]));
+  // git diff refreshes the stat data in the user's index unless told not to.
+  const diff = ['-c', 'diff.autoRefreshIndex=false', 'diff', '--no-renames', '--no-ext-diff', '--no-textconv', '--no-color'];
+  const tracked = nulList(git(home, [...diff, '--name-only', '-z', '--diff-filter=AMT', base, '--', where]));
   const untracked = new Set(nulList(git(home, ['ls-files', '-z', '--others', '--exclude-standard', '--', where])));
   const files = [];
   const unread = [];
@@ -127,8 +129,9 @@ function changedCode(home, rel, base) {
       unread.push(`${file} is not UTF-8 text`);
       continue;
     }
+    // As text, whatever .gitattributes says (-diff, binary).
     const lines = untracked.has(file) ? new Set(text.replace(/(?:\r\n|\r|\n)$/, '').split(/\r\n|\r|\n/).map((_, i) => i + 1))
-      : addedLines(git(home, ['diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', base, '--', file]).toString('utf8'));
+      : ownLines(text, addedLines(git(home, [...diff, '-U0', '--text', base, '--', file]).toString('utf8')));
     if (lines.size) files.push({ file, kind, text, lines });
   }
   return { files, unread };
