@@ -108,6 +108,9 @@ test('Python: breaks in the changed lines of a module, judged by unittest', (t) 
   assert.match(run.out, /- survived: shop\.py:6: removed: if rate > 1: \(2 lines\)\n/);
   assert.match(run.out, /- killed: shop\.py:8: return price \* \(1 - rate\) {2}-> {2}return None\n/);
   assert.match(run.out, /- survived: shop\.py:6: if rate > 1: {2}-> {2}if rate > 2:\n/);
+  // A break of the same size as the code, written in the same second: no bytecode cached for the
+  // earlier text runs instead of it.
+  assert.match(run.out, /- killed: shop\.py:8: return price \* \(1 - rate\) {2}-> {2}return price \* \(2 - rate\)\n/);
   assert.match(run.out, /See GW-11 in /);
 });
 
@@ -143,13 +146,13 @@ test('did not run: a command with no counts, a red control, a break past the run
 test("the user's files stay byte for byte; node_modules, .venv and venv are linked into the copy, which is removed", (t) => {
   const dir = project(t, {
     '.gitignore': 'node_modules/\n.venv/\nvenv/\n',
-    'cart.js': "const { rate } = require('dep');\n" + CART.replace('0);', '0) * rate;'),
+    'cart.js': "const { rate } = require('dep');\nconst { round } = require('./round');\n" + CART.replace('return items.reduce((sum, item) => sum + item.price, 0);', 'return round(items.reduce((sum, item) => sum + item.price, 0) * rate);'),
     'cart.test.js': CART_TEST,
   }, `test -L node_modules && test -L .venv && test -L venv && ${NODE_CMD}`);
   write(dir, {
     'node_modules/dep/index.js': 'module.exports = { rate: 1 };\n', 'node_modules/dep/package.json': '{"name": "dep", "main": "index.js"}\n',
     '.venv/pyvenv.cfg': 'home = /usr/bin\n', 'venv/pyvenv.cfg': 'home = /usr/bin\n', 'cart.js': `${fs.readFileSync(path.join(dir, 'cart.js'), 'utf8')}${ADD}`,
-    'cart.test.js': `${CART_TEST}${ADDS}`, 'notes.txt': 'untracked\n',
+    'cart.test.js': `${CART_TEST}${ADDS}`, 'notes.txt': 'untracked\n', 'round.js': 'module.exports = { round: (x) => x };\n',
   });
   fs.symlinkSync('cart.js', path.join(dir, 'link.js'));
   const before = snapshot(dir);
@@ -158,6 +161,16 @@ test("the user's files stay byte for byte; node_modules, .venv and venv are link
   assert.equal(run.code, 1, run.out);
   assert.deepEqual(snapshot(dir), before);
   assert.deepEqual(run.copies, []);
+});
+
+test('each break runs alone: its file is back as it was before the next break runs', (t) => {
+  const tested = "module.exports = { one: () => 1 };\n";
+  const dir = project(t, { 'a.js': tested, 'z.js': 'module.exports = { two: () => 2 };\n',
+    'a.test.js': "const test = require('node:test');\nconst assert = require('node:assert');\ntest('one', () => assert.equal(require('./a').one(), 1));\n" });
+  write(dir, { 'a.js': tested.replace('1', '3'), 'z.js': 'module.exports = { two: () => 4 };\n' });
+  write(dir, { 'a.test.js': fs.readFileSync(path.join(dir, 'a.test.js'), 'utf8').replace('one(), 1', 'one(), 3') });
+  const run = mutate(t, dir);
+  assert.match(run.out, /\n- killed: a\.js:1: .*\n- survived: z\.js:1: .*\n/);
 });
 
 test('a signal stops the tests and removes the copy', async (t) => {

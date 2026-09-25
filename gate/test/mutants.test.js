@@ -192,4 +192,6 @@ test('Python: an elif is no guard, a guard alone in its block becomes pass, f-st
   assert.deepEqual(python('x = f"{n < 3} {True} {2}"\n'), []);
   assert.deepEqual(python('x = 0x1f + 1e3 + 1_000 + 00\n'), []);
   assert.match(python('def f(:\n')[0].error, /Python could not read it \(SyntaxError/);
+  // ast counts bytes: a character outside ASCII before the place of a break.
+  assert.deepEqual(python('x = ("é😀", 7)\n'), [['number', 'x = ("é😀", 8)\n']]);
 });
