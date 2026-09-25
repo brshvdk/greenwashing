@@ -231,11 +231,15 @@ test('GW-17: a marker that is named instead of called, and every use of that nam
   // A name that holds no marker is no marker, whatever comes after its declaration.
   const plain = `const setup = makeDb();\nit.skip('old', () => {});\n${OK}\n`;
   assert.deepEqual(edited(plain, `${plain}test('b', () => { setup(); expect(f()).toBe(1); });\n`), []);
+  // A ; inside the initializer's brackets does not end it.
+  const body = `const pick = () => { log('picked'); return process.env.CI ? it.skip : it; };\n${OK}\n`;
+  assert.deepEqual(edited(body, `${body}pick()('b', () => { expect(f()).toBe(1); });\n`), [[3, 'GW-17']]);
 });
 
 test('GW-17: a hook that skips through its context skips the tests it runs for', () => {
   assert.deepEqual(fresh(`beforeEach((ctx) => {\n  if (process.env.CI) ctx.skip();\n});\n${OK}`), [[2, 'GW-17']]);
   assert.deepEqual(fresh(`beforeEach((t) => t.skip());\n${OK}`), [[1, 'GW-17']]);
+  assert.deepEqual(fresh(`before((t) => t.skip());\n${OK}`), [[1, 'GW-17']]);
   assert.deepEqual(fresh(`beforeEach((ctx) => {\n  ctx.db = connect();\n});\n${OK}`), []);
   const old = `beforeEach((ctx) => {\n  if (process.env.CI) ctx.skip();\n});\n${OK}\n`;
   assert.deepEqual(edited(old, `${old}${OK}\n`), []);
@@ -274,6 +278,9 @@ test('GW-17: a test commented out by a new /* and */ around its old lines', () =
   // An old block comment that stays as it was is not new.
   const old = `${OK}\n/*\n${failing}*/\n`;
   assert.deepEqual(edited(old, `${old}${OK}\n`), []);
+  // Only its */ is new: moved down below the test.
+  const notes = `/*\n * notes\n */\n${failing}`;
+  assert.deepEqual(edited(notes, `/*\n * notes\n${failing} */\n`), [[3, 'GW-17']]);
 });
 
 test('each marker says what it does to the test', () => {
