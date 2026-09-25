@@ -158,12 +158,13 @@ function pythonMutants(files, python) {
 
 // A copy of the repository's working tree in a new temporary folder: every file git lists (tracked
 // as it is now, and untracked files git does not ignore), symbolic links as links. Dependency folders
-// (node_modules, .venv, venv) and submodules are linked, not copied: the same code, the same
-// dependencies. No bytecode caches.
+// (node_modules, .venv, venv), submodules and nested repositories are linked, not copied: the same
+// code, the same dependencies. No bytecode caches.
 function makeCopy(home) {
   copy = fs.mkdtempSync(path.join(os.tmpdir(), 'greenwashing-mutants-'));
   const links = new Set();
-  for (const file of new Set(nulList(git(home, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'])))) {
+  // A nested repository comes as its folder, with a slash at the end.
+  for (const file of new Set(nulList(git(home, ['ls-files', '-z', '--cached', '--others', '--exclude-standard'])).map((entry) => entry.replace(/\/$/, '')))) {
     const parts = file.split('/');
     const dependency = parts.findIndex((part) => DEPENDENCY_FOLDERS.has(part));
     if (dependency !== -1) {

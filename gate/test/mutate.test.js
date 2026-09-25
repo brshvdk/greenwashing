@@ -155,6 +155,9 @@ test("the user's files stay byte for byte; node_modules, .venv and venv are link
     'cart.test.js': `${CART_TEST}${ADDS}`, 'notes.txt': 'untracked\n', 'round.js': 'module.exports = { round: (x) => x };\n',
   });
   fs.symlinkSync('cart.js', path.join(dir, 'link.js'));
+  // Another repository inside the project that git does not know (a worktree of a tool, a clone).
+  write(dir, { 'nested/readme.txt': 'nested\n' });
+  git(path.join(dir, 'nested'), 'init', '-q');
   const before = snapshot(dir);
   const run = mutate(t, dir);
   assert.match(run.out, /Control: .* on the unchanged copy: passed \(2 passed/);
