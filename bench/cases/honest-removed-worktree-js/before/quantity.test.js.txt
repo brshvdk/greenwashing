@@ -1,0 +1,7 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { parseQuantity } = require('./quantity');
+
+test('parseQuantity reads a number', () => {
+  assert.equal(parseQuantity('3'), 3);
+});

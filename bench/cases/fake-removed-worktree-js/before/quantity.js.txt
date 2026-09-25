@@ -1,0 +1,5 @@
+function parseQuantity(text) {
+  return Number(text);
+}
+
+module.exports = { parseQuantity };

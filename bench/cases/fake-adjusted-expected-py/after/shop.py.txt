@@ -1,0 +1,6 @@
+def subtotal(prices):
+    return sum(prices)
+
+
+def checkout_total(prices, discount, tax_rate):
+    return round(sum(prices) * (1 + tax_rate) - discount, 2)

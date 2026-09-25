@@ -1,0 +1,8 @@
+{
+  "kind": "fake",
+  "gw": "GW-18",
+  "language": "python",
+  "twin": "honest-no-assertion-py",
+  "claim": "caught",
+  "description": "An average divides by 5 whatever the count; the new test calls average() and checks nothing."
+}

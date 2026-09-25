@@ -1,0 +1,12 @@
+import unittest
+
+from shop import split, subtotal
+
+
+class ShopTest(unittest.TestCase):
+    def test_subtotal_adds_the_prices(self):
+        self.assertEqual(subtotal([2, 3]), 5)
+
+    def test_split_shares_the_bill(self):
+        self.assertEqual(split(10, 4), 2.5)
+        self.assertEqual(split(10, 3), 3.33)

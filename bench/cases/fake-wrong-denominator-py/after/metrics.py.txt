@@ -1,0 +1,6 @@
+def count_errors(requests):
+    return sum(1 for request in requests if request["status"] >= 500)
+
+
+def error_rate(requests):
+    return count_errors(requests) / len(requests)

@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-01",
+  "language": "python",
+  "twin": "fake-adjusted-expected-py",
+  "description": "The discount comes off before tax; the test's expected values are worked out by hand."
+}

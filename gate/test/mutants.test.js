@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {
-  codeKind, addedLines, ownLines, jsMutants, fromLines, apply, stillParses, describe, choose, report, OUTCOMES, HINTS,
+  codeKind, addedLines, ownLines, jsMutants, fromLines, apply, controlBreak, stillParses, describe, choose, report, OUTCOMES, HINTS, NOT_EXERCISED, CONTROL_MESSAGE,
 } = require('../lib/mutants');
 const { CATALOG } = require('../lib/verdict');
 
@@ -211,6 +211,18 @@ test('three outcomes: failed tests kill a break, passing tests let it survive, d
   assert.equal(report({ ...base, results: [] }).code, 2);
   assert.equal(report({ ...base, results: [r('killed')], notTried: 1 }).code, 2);
   assert.equal(report({ ...base, results: [r('killed')], problems: ['x.py: Python could not read it'] }).code, 2);
+  // The breaks of a file the tests do not run: one line, counted as did not run, never as survived.
+  const unrun = [{ file: 'b.js', count: 3, outcome: 'not exercised', why: NOT_EXERCISED }];
+  const unexercised = report({ ...base, controls: 'Control breaks: 2 files', results: [r('killed')], unrun });
+  assert.equal(unexercised.code, 2);
+  assert.match(unexercised.text, /\nControl: passed\nControl breaks: 2 files\nMutants: 4 tried - 1 killed, 0 survived, 3 did not run \(3 not exercised\)\n/);
+  assert.match(unexercised.text, /\n- not exercised: b\.js: 3 mutants not run - the tests passed with this file failing as soon as it runs, so they do not run it: an editable install \(pip install -e\)/);
+  assert.match(unexercised.text, /"Did not run" is never counted as caught \(GW-61 in [^]*Result: did not run$/);
+  assert.equal(report({ ...base, results: [], unrun }).code, 2);
+  assert.equal(report({ ...base, results: [r('survived')], unrun }).code, 1);
+  const unknown = report({ ...base, results: [r('killed')], unrun: [{ file: 'c.js', count: 1, outcome: 'did not run', why: 'its control break did not run' }] });
+  assert.match(unknown.text, /Mutants: 2 tried - 1 killed, 0 survived, 1 did not run\n[^]*\n- did not run: c\.js: 1 mutant not run - its control break did not run\n/);
+  assert.equal(unknown.code, 2);
   // Every hint names an entry of the catalog.
   const catalog = fs.readFileSync(path.join(__dirname, '..', '..', 'CATALOG.md'), 'utf8');
   for (const [gw] of Object.values(HINTS)) assert.match(catalog, new RegExp(`^### ${gw} `, 'm'));
@@ -257,4 +269,50 @@ test('Python: an elif is no guard, a guard alone in its block becomes pass, f-st
   assert.match(python('def f(:\n')[0].error, /Python could not read it \(SyntaxError/);
   // ast counts bytes: a character outside ASCII before the place of a break.
   assert.deepEqual(python('x = ("é😀", 7)\n'), [['number', 'x = ("é😀", 8)\n']]);
+});
+
+// The control break applied: JavaScript from controlBreak(), Python at the line python_mutants.py gives.
+function controlled(text, kind) {
+  if (kind === 'js') return apply(text, controlBreak(text, 'js'));
+  const request = { files: [{ file: 'a.py', text, lines: [1] }] };
+  const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_mutants.py')], { input: JSON.stringify(request), encoding: 'utf8' });
+  assert.equal(run.status, 0, run.stderr);
+  const [control] = JSON.parse(run.stdout).controls;
+  assert.equal(control.file, 'a.py');
+  return apply(text, controlBreak(text, 'python', control.line));
+}
+
+test('the control break: the file raises as soon as it runs, before its own code, and still parses', (t) => {
+  const js = [
+    ['globalThis.ran = 1;\n', ''], ['\uFEFFglobalThis.ran = 1;\n', '\uFEFF'], ['#!/usr/bin/env node\nglobalThis.ran = 1;\n', '#!/usr/bin/env node\n'],
+    ['#!/usr/bin/env node', '#!/usr/bin/env node\n'], ['', ''],
+  ];
+  for (const [source, before] of js) {
+    const broken = controlled(source, 'js');
+    assert.ok(broken.startsWith(`${before}(() => { throw new Error('${CONTROL_MESSAGE}'); })();\n`), JSON.stringify(broken));
+    const context = {};
+    assert.throws(() => vm.runInNewContext(broken.replace(/^\uFEFF/, '').replace(/^#!.*/, ''), { globalThis: context }), new RegExp(CONTROL_MESSAGE));
+    assert.equal(context.ran, undefined);
+    // No unreachable code for a linter or a compiler to reject, and it parses.
+    assert.equal(stillParses('a.js', source, broken), true);
+  }
+  const dir = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'gw-control-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const python = [
+    ['ran = 1\n', 1], ['"""Doc."""\nran = 1\n', 2], ['"""Doc\n\nmore."""\nfrom __future__ import annotations\n\nran = 1\n', 5],
+    ['#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\nran = 1\n', 3], ['\uFEFFran = 1\n', 1], ['# a comment\nran = 1\n', 2],
+    ['from __future__ import annotations', 2], ['"""Doc."""\r\nfrom __future__ import division\r\nran = 1\r\n', 3], ['', 1],
+    ['"""Doc\n\nmore."""\nran = 1\n', 4],
+  ];
+  for (const [source, line] of python) {
+    const broken = controlled(source, 'python');
+    const lines = broken.replace(/^\uFEFF/, '').split(/\r\n|\r|\n/);
+    assert.equal(lines[line - 1], `raise RuntimeError('${CONTROL_MESSAGE}')`, JSON.stringify(broken));
+    if (source.startsWith('\uFEFF')) assert.ok(broken.startsWith('\uFEFFraise'), JSON.stringify(broken));
+    // It raises, not a SyntaxError: the __future__ imports stay first.
+    const file = path.join(dir, 'a.py');
+    fs.writeFileSync(file, broken);
+    const run = spawnSync('python3', ['-I', '-c', 'import runpy, sys\ntry:\n    runpy.run_path(sys.argv[1])\nexcept RuntimeError as e:\n    print(e)\nelse:\n    print("ran")', file], { encoding: 'utf8' });
+    assert.equal(run.stdout.trim(), CONTROL_MESSAGE, `${JSON.stringify(broken)}\n${run.stderr}`);
+  }
 });

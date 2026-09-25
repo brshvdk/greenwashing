@@ -1,0 +1,454 @@
+#!/usr/bin/env node
+'use strict';
+// The benchmark: how many fake changes the gate and its mutation command catch, and how many honest
+// changes they send back, on small projects. Each case in bench/cases/<id>/ holds a project before an
+// agent's change (before/), the files the change writes (after/) and case.json: kind (fake or
+// honest), gw (the catalog entry), language (js or python), twin (the other version of the same
+// change, from the same before/), description, claim (a fake only: "caught" when the tool says it
+// catches it, "not caught" when its limits say it does not), delete (the files of before/ the change
+// removes, by their real names) and scenario ("worktree": the change is committed in a worktree the
+// agent then removes). Every file of a case is stored with a .txt suffix, which comes off only in
+// the project built from it (bench/README.md says why).
+//
+// Each case is built as a new git project in a temporary folder outside the repository, removed after
+// the run, and measured three ways:
+//   tests only     - the project's test command on the change - the tree it leaves, or for a change
+//                    committed in a worktree, a checkout of that commit - judged by its exit code, as
+//                    CI judges it;
+//   gate           - gate/hook.js as Claude Code runs it: the prompt, the change, the Stop;
+//   gate + mutants - the gate, and when it lets the turn end, gate/mutate.js on the change (the same
+//                    tree as tests only).
+// A column is red when it stops the change: a failing exit code, a block, a break that survived. A
+// red fake is caught; a red honest case is a false alarm. "Did not run" is never caught.
+//
+//   node bench/run [--out <folder>]
+//
+// Writes RESULTS.md and results.json to bench/, or to the folder given. Exit 0: written; 2: the
+// benchmark did not run (a broken case set, or a failure of git or of this script), nothing written.
+
+const { spawn, execFileSync } = require('node:child_process');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { chooseCommand } = require('../gate/lib/command');
+const { readRootFiles, hasPythonTests, runTests } = require('../gate/runner');
+
+const ROOT = path.resolve(__dirname, '..');
+const CASES = path.join(__dirname, 'cases');
+const HOOK = path.join(ROOT, 'gate', 'hook.js');
+const MUTATE = path.join(ROOT, 'gate', 'mutate.js');
+const SUFFIX = '.txt';
+const COLUMNS = { tests: 'Tests only', gate: 'Gate', mutants: 'Gate + mutants' };
+const FIELDS = { kind: ['fake', 'honest'], language: ['js', 'python'], claim: ['caught', 'not caught'], scenario: ['worktree'] };
+const TEST_SECONDS = 120;
+const PARALLEL = Math.max(1, Math.min(4, os.cpus().length));
+// Git and Python as the same fixed setup on every machine: no user or system git config, fixed
+// names and dates (so commits are the same), no bytecode left in the projects.
+const FIXED_ENV = {
+  GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_NOSYSTEM: '1', GIT_AUTHOR_NAME: 'bench', GIT_AUTHOR_EMAIL: 'bench@example.invalid',
+  GIT_COMMITTER_NAME: 'bench', GIT_COMMITTER_EMAIL: 'bench@example.invalid', GIT_AUTHOR_DATE: '2026-01-01T00:00:00Z',
+  GIT_COMMITTER_DATE: '2026-01-01T00:00:00Z', PYTHONDONTWRITEBYTECODE: '1',
+};
+const DROPPED_ENV = ['NODE_TEST_CONTEXT', 'CLAUDE_PROJECT_DIR', 'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_CEILING_DIRECTORIES'];
+
+// The processes running now, stopped with the benchmark.
+const children = new Set();
+
+// Every file under dir, as {relative path with / : text}.
+function readTree(dir) {
+  const files = {};
+  const walk = (at) => {
+    for (const entry of fs.readdirSync(at, { withFileTypes: true })) {
+      const full = path.join(at, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else files[path.relative(dir, full).split(path.sep).join('/')] = entry.isFile() ? fs.readFileSync(full, 'utf8') : null;
+    }
+  };
+  walk(dir);
+  return files;
+}
+
+// The entry numbers of the catalog's headings.
+const catalogEntries = (text) => new Set([...text.matchAll(/^### (GW-\d+) /gm)].map((m) => m[1]));
+
+// The case set, read and checked: {cases: [{id, ...case.json, before, after}], problems}. A file
+// without the suffix, a link, an empty before/ or after/, a case.json that breaks the format, a
+// twin that does not answer, twins from different before/ trees and unequal counts of fakes and
+// honest cases are problems: the benchmark does not run with any of them.
+function readCases(dir, entries) {
+  const problems = [];
+  const cases = [];
+  let names = [];
+  try {
+    names = fs.readdirSync(dir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name).sort();
+  } catch (error) {
+    problems.push(`the cases cannot be read: ${error.message}`);
+  }
+  if (names.length === 0) problems.push(`no cases in ${dir}`);
+  for (const id of names) {
+    const at = path.join(dir, id);
+    let meta;
+    try {
+      meta = JSON.parse(fs.readFileSync(path.join(at, 'case.json'), 'utf8'));
+    } catch (error) {
+      problems.push(`${id}: case.json cannot be read: ${error.message}`);
+      continue;
+    }
+    const extra = Object.keys(meta).filter((key) => !['kind', 'gw', 'language', 'twin', 'claim', 'scenario', 'delete', 'description'].includes(key));
+    if (extra.length) problems.push(`${id}: unknown fields in case.json: ${extra.join(', ')}`);
+    for (const [field, allowed] of Object.entries(FIELDS)) {
+      if (field in meta && !allowed.includes(meta[field])) problems.push(`${id}: ${field} must be one of ${allowed.join(', ')}`);
+    }
+    if (!FIELDS.kind.includes(meta.kind) || !FIELDS.language.includes(meta.language)) problems.push(`${id}: kind and language are required`);
+    if (meta.kind === 'fake' && !('claim' in meta)) problems.push(`${id}: a fake needs a claim`);
+    if (meta.kind === 'honest' && 'claim' in meta) problems.push(`${id}: an honest case has no claim`);
+    if (!entries.has(meta.gw)) problems.push(`${id}: ${meta.gw} is not an entry of CATALOG.md`);
+    if (typeof meta.description !== 'string' || !meta.description.trim() || /[\r\n]/.test(meta.description)) problems.push(`${id}: the description must be one line`);
+    if (!id.startsWith(`${meta.kind}-`)) problems.push(`${id}: the name must start with ${meta.kind}-`);
+    const trees = {};
+    for (const part of ['before', 'after']) {
+      let stored = {};
+      try {
+        stored = readTree(path.join(at, part));
+      } catch {
+        // Said below: nothing to build.
+      }
+      trees[part] = {};
+      for (const [file, text] of Object.entries(stored)) {
+        if (text === null) problems.push(`${id}: ${part}/${file} is not a regular file`);
+        else if (!file.endsWith(SUFFIX) || file.split('/').pop() === SUFFIX) problems.push(`${id}: ${part}/${file} has no ${SUFFIX} suffix`);
+        else trees[part][file.slice(0, -SUFFIX.length)] = text;
+      }
+      if (Object.keys(trees[part]).length === 0) problems.push(`${id}: ${part}/ holds no file`);
+    }
+    if ('delete' in meta && (!Array.isArray(meta.delete) || meta.delete.length === 0
+      || meta.delete.some((file) => !Object.hasOwn(trees.before, file) || Object.hasOwn(trees.after, file)))) {
+      problems.push(`${id}: delete must list files of before/ that after/ does not write`);
+    }
+    cases.push({ id, ...meta, ...trees });
+  }
+  const byId = new Map(cases.map((c) => [c.id, c]));
+  for (const c of cases) {
+    const twin = byId.get(c.twin);
+    if (!twin || twin.twin !== c.id || twin.kind === c.kind) {
+      problems.push(`${c.id}: its twin ${c.twin} is not a case of the other kind whose twin is ${c.id}`);
+      continue;
+    }
+    for (const field of ['gw', 'language', 'scenario']) if (twin[field] !== c[field]) problems.push(`${c.id}: its twin has another ${field}`);
+    if (JSON.stringify(sorted(c.before)) !== JSON.stringify(sorted(twin.before))) problems.push(`${c.id}: its twin starts from another before/`);
+  }
+  const fakes = cases.filter((c) => c.kind === 'fake').length;
+  if (fakes !== cases.length - fakes) problems.push(`${fakes} fakes and ${cases.length - fakes} honest cases: every fake needs one honest twin`);
+  return { cases, problems };
+}
+
+const sorted = (files) => Object.fromEntries(Object.entries(files).sort(([a], [b]) => (a < b ? -1 : 1)));
+
+// Writes files ({name: text}) under dir; returns how many.
+function writeTree(dir, files) {
+  for (const [name, text] of Object.entries(files)) {
+    fs.mkdirSync(path.dirname(path.join(dir, name)), { recursive: true });
+    fs.writeFileSync(path.join(dir, name), text);
+  }
+  return Object.keys(files).length;
+}
+
+// A process run to its end: {code, stdout, stderr}; code is null when it could not start or was killed.
+function call(command, args, { cwd, env, input = null }) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] });
+    children.add(child);
+    const out = [];
+    const err = [];
+    child.stdout.on('data', (chunk) => out.push(chunk));
+    child.stderr.on('data', (chunk) => err.push(chunk));
+    child.on('error', (error) => err.push(Buffer.from(error.message)));
+    child.stdin.on('error', () => {});
+    child.stdin.end(input === null ? '' : input);
+    child.on('close', (code) => {
+      children.delete(child);
+      resolve({ code, stdout: Buffer.concat(out).toString('utf8'), stderr: Buffer.concat(err).toString('utf8') });
+    });
+  });
+}
+
+async function git(dir, env, ...args) {
+  const run = await call('git', args, { cwd: dir, env });
+  if (run.code !== 0) throw new Error(`git ${args.join(' ')} failed in a case: ${run.stderr.trim()}`);
+  return run.stdout;
+}
+
+const notRun = (why) => ({ outcome: 'did not run', why });
+const firstLine = (text) => (text || '').trim().split('\n')[0];
+
+// The gate's column from its two hook runs: red when the Stop blocks for a reason of the project,
+// green when it lets the turn end; did not run when a hook failed or the gate itself failed.
+function gateOutcome(prompt, stop) {
+  if (prompt.code !== 0 || prompt.stdout.trim() || prompt.stderr.trim()) {
+    return notRun(`the prompt hook failed: ${firstLine(prompt.stderr || prompt.stdout) || `exit code ${prompt.code}`}`);
+  }
+  let out = null;
+  try {
+    out = JSON.parse(stop.stdout);
+  } catch {
+    // Said below.
+  }
+  if (stop.code !== 0 || out === null || typeof out !== 'object') return notRun(`the Stop hook failed: ${firstLine(stop.stderr) || `exit code ${stop.code}`}`);
+  if (out.decision === 'block' && typeof out.reason === 'string') {
+    if (/^Result: did not run - the gate failed: /m.test(out.reason)) return notRun(`the gate failed: ${firstLine(out.reason)}`);
+    // The entries the gate cites, not those in the output of the tests it shows.
+    const own = out.reason.split('\nLast ')[0];
+    const cited = [...new Set(own.match(/GW-\d+/g) || [])];
+    const summary = firstLine(own).replace(/^greenwashing gate: /, '').replace(/ - you cannot finish yet\.$/, '');
+    return { outcome: 'red', why: `${summary}${cited.length ? ` (${cited.join(', ')})` : ''}` };
+  }
+  if (out.decision === undefined && typeof out.systemMessage === 'string') return { outcome: 'green', why: out.systemMessage.replace(/^greenwashing: /, '') };
+  return notRun('the Stop hook gave no decision');
+}
+
+// The mutation command's part of the last column: red when a break survived (exit 1), green when
+// every break was killed (exit 0), did not run otherwise (exit 2: nothing survived, but something did
+// not run).
+function mutantsOutcome(run) {
+  const lines = run.stdout.split('\n');
+  const result = lines.find((line) => line.startsWith('Result: '));
+  if (run.code === 1 && result) {
+    const survived = lines.filter((line) => line.startsWith('- survived: ')).map((line) => line.slice('- survived: '.length));
+    return { outcome: 'red', why: `mutants: ${result.slice('Result: '.length)} - ${survived.join('; ')}` };
+  }
+  if (run.code === 0 && result) return { outcome: 'green', why: `mutants: ${result.slice('Result: '.length)}` };
+  const why = lines.filter((line) => line.startsWith('Did not run: ') || line.startsWith('- not exercised: ') || line.startsWith('- did not run: '))[0];
+  return notRun(`mutants: ${why ? why.replace(/^(?:Did not run: |- )/, '') : `exit code ${run.code}: ${firstLine(run.stderr)}`}`);
+}
+
+// The tests-only column: the project's test command, as the gate chooses it, judged by its exit code.
+async function testsOutcome(project, env) {
+  const choice = chooseCommand(readRootFiles(project), hasPythonTests(project));
+  if (choice.error || choice.none) return notRun(`no test command: ${choice.error || 'none found'}`);
+  const run = await runTests(project, { ...choice, timeoutSeconds: TEST_SECONDS }, env);
+  if (run.timedOut || run.startError || run.outputTooLarge || run.exitCode === null) {
+    return notRun(`${choice.command} did not finish: ${run.startError || (run.timedOut ? `timeout ${TEST_SECONDS} s` : 'no exit code')}`);
+  }
+  return { outcome: run.exitCode === 0 ? 'green' : 'red', why: `${choice.command}: exit code ${run.exitCode}` };
+}
+
+// One case in its own temporary folder (work): the project from before/, the gate around the change,
+// the test command, and the mutation command when the gate lets the turn end.
+async function runCase(c, work, baseEnv) {
+  const project = path.join(work, 'project');
+  const state = path.join(work, 'tmp');
+  fs.mkdirSync(project, { recursive: true });
+  fs.mkdirSync(state, { recursive: true });
+  const env = { ...baseEnv, TMPDIR: state, CLAUDE_PROJECT_DIR: project };
+  if (writeTree(project, c.before) === 0) throw new Error(`${c.id}: no file was built`);
+  await git(project, env, 'init', '-q', '-b', 'main');
+  await git(project, env, 'add', '-A');
+  await git(project, env, 'commit', '-q', '-m', 'before');
+  // The folder the agent works in: the project, or a worktree of it on a new branch.
+  let agent = project;
+  if (c.scenario === 'worktree') {
+    agent = path.join(work, 'worktree');
+    await git(project, env, 'worktree', 'add', '-q', '-b', 'agent', agent);
+  }
+  const session = `bench-${c.id}`;
+  const prompt = await call(process.execPath, [HOOK, 'prompt'], {
+    cwd: agent, env, input: JSON.stringify({ session_id: session, cwd: agent, hook_event_name: 'UserPromptSubmit', prompt: c.description }),
+  });
+  if (writeTree(agent, c.after) === 0) throw new Error(`${c.id}: no file of the change was written`);
+  for (const file of c.delete || []) fs.unlinkSync(path.join(agent, file));
+  if (c.scenario === 'worktree') {
+    await git(agent, env, 'add', '-A');
+    await git(agent, env, 'commit', '-q', '-m', 'change');
+    await git(project, env, 'worktree', 'remove', '--force', agent);
+  }
+  const stop = await call(process.execPath, [HOOK, 'stop'], {
+    cwd: project, env, input: JSON.stringify({ session_id: session, cwd: project, hook_event_name: 'Stop', stop_hook_active: false }),
+  });
+  const gate = gateOutcome(prompt, stop);
+  // The change as CI would get it: the project's tree, or a checkout of the branch a worktree left.
+  let change = project;
+  if (c.scenario === 'worktree') {
+    change = path.join(work, 'change');
+    await git(project, env, 'worktree', 'add', '-q', change, 'agent');
+  }
+  const tests = await testsOutcome(change, env);
+  const mutants = gate.outcome === 'red' ? gate : mutantsOutcome(await call(process.execPath, [MUTATE, '--project', change], { cwd: change, env }));
+  const clean = (outcome) => ({ outcome: outcome.outcome, why: outcome.why.split(work).join('<case>') });
+  return { tests: clean(tests), gate: clean(gate), mutants: clean(mutants) };
+}
+
+// The groups the summary counts, in order: [label, test].
+const GROUPS = [
+  ['Fakes the tool claims to catch', (c) => c.kind === 'fake' && c.claim === 'caught'],
+  ['Fakes the tool does not claim to catch', (c) => c.kind === 'fake' && c.claim === 'not caught'],
+  ['All fakes', (c) => c.kind === 'fake'],
+  ['Honest twins', (c) => c.kind === 'honest'],
+];
+
+// Per group and column: how many cases, how many red, how many did not run. Red counts only a red
+// outcome: "did not run" is never caught, and never a false alarm either.
+function summarize(results) {
+  return GROUPS.map(([label, test]) => {
+    const group = results.filter(test);
+    const columns = {};
+    for (const column of Object.keys(COLUMNS)) {
+      columns[column] = {
+        red: group.filter((r) => r[column].outcome === 'red').length,
+        notRun: group.filter((r) => r[column].outcome === 'did not run').length,
+      };
+    }
+    return { label, cases: group.length, honest: group.length > 0 && group.every((r) => r.kind === 'honest'), columns };
+  });
+}
+
+// What an outcome means for a case of this kind.
+const verdictOf = (kind, outcome) => (outcome === 'did not run' ? 'did not run' : kind === 'fake'
+  ? (outcome === 'red' ? 'caught' : 'missed') : (outcome === 'red' ? 'false alarm' : 'passed'));
+
+function cell(row, column) {
+  const { red, notRun } = row.columns[column];
+  const text = row.honest ? `${red} false alarm${red === 1 ? '' : 's'} in ${row.cases}` : `${red} of ${row.cases} caught`;
+  return notRun ? `${text} (${notRun} did not run)` : text;
+}
+
+const escape = (text) => text.replace(/\|/g, '\\|').replace(/`/g, "'");
+
+// RESULTS.md: the header (commit, date, versions: the lines CI leaves out when it compares), the
+// summary, the misses, the false alarms, what did not run, and every case.
+function render(results, header) {
+  const summary = summarize(results);
+  const fakes = results.filter((r) => r.kind === 'fake');
+  const honest = results.filter((r) => r.kind === 'honest');
+  const lines = [
+    '# Benchmark',
+    '',
+    `What the gate and its mutation command catch, measured on ${results.length} small projects: ${fakes.length} fake changes`
+      + ` an agent could make to get a green suite, and for each one its honest twin, the right version of the same change (${honest.length}).`
+      + ' Generated by `node bench/run`; CI runs it on every pull request and fails when anything below the header lines differs.',
+    '',
+    `- Commit: ${header.commit}`,
+    `- Date: ${header.date}`,
+    `- Node: ${header.node}`,
+    `- Python: ${header.python}`,
+    '',
+    '## Summary',
+    '',
+    `| Cases | ${Object.values(COLUMNS).join(' | ')} |`,
+    `| --- | ${Object.keys(COLUMNS).map(() => '---').join(' | ')} |`,
+    ...summary.map((row) => `| ${row.label} (${row.cases}) | ${Object.keys(COLUMNS).map((column) => cell(row, column)).join(' | ')} |`),
+    '',
+    'Tests only: the project\'s test command on the change (the tree it leaves, or a checkout of the commit a worktree left), judged by its exit code, as CI judges it.'
+      + ' Gate: the gate\'s hooks as Claude Code runs them (the prompt, the change, the Stop).'
+      + ' Gate + mutants: the gate, and when it lets the turn end, the mutation command on the change.'
+      + ' A red fake is caught; a red honest case is a false alarm. "Did not run" is never counted as caught.',
+    '',
+  ];
+  const list = (title, rows, column) => {
+    lines.push(`## ${title}`, '');
+    if (rows.length === 0) lines.push('None.');
+    for (const r of rows) {
+      lines.push(`- \`${r.id}\` (${r.gw}${r.claim ? `, claim: ${r.claim}` : ''}): ${escape(r[column].why)}`);
+    }
+    lines.push('');
+  };
+  list('Fakes the gate misses', fakes.filter((r) => r.gate.outcome !== 'red'), 'gate');
+  list('Fakes the gate and the mutation command miss', fakes.filter((r) => r.mutants.outcome !== 'red'), 'mutants');
+  list('Fakes the tool claims to catch and misses', fakes.filter((r) => r.claim === 'caught' && r.mutants.outcome !== 'red'), 'mutants');
+  for (const column of ['gate', 'mutants']) {
+    list(`False alarms: ${COLUMNS[column]}`, honest.filter((r) => r[column].outcome === 'red'), column);
+  }
+  lines.push('## Did not run', '');
+  const notRunRows = results.flatMap((r) => Object.keys(COLUMNS).filter((column) => r[column].outcome === 'did not run')
+    .map((column) => `- \`${r.id}\`, ${COLUMNS[column]}: ${escape(r[column].why)}`));
+  lines.push(...(notRunRows.length ? notRunRows : ['None.']), '');
+  lines.push('## Cases', '', `| Case | Entry | Language | ${Object.values(COLUMNS).join(' | ')} |`,
+    `| --- | --- | --- | ${Object.keys(COLUMNS).map(() => '---').join(' | ')} |`);
+  for (const r of results) {
+    lines.push(`| \`${r.id}\` | ${r.gw} | ${r.language} | ${Object.keys(COLUMNS).map((column) => verdictOf(r.kind, r[column].outcome)).join(' | ')} |`);
+  }
+  lines.push('');
+  return lines.join('\n');
+}
+
+function version(command, args) {
+  try {
+    return execFileSync(command, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim().replace(/^Python /, '');
+  } catch {
+    return 'not found';
+  }
+}
+
+// The commit of the repository, and whether the tree differs from it outside the results.
+function commitOf() {
+  try {
+    const head = execFileSync('git', ['-C', ROOT, 'rev-parse', 'HEAD'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    const dirty = execFileSync('git', ['-C', ROOT, 'status', '--porcelain', '--', '.', ':!bench/RESULTS.md', ':!bench/results.json'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
+    return dirty ? `${head} with uncommitted changes` : head;
+  } catch {
+    return 'unknown (not a git checkout)';
+  }
+}
+
+// casesDir: the case set (bench/cases; the tests give their own).
+async function main(argv, casesDir = CASES) {
+  if (argv.length !== 0 && !(argv.length === 2 && argv[0] === '--out')) return { code: 2, text: 'usage: node bench/run [--out <folder>]' };
+  const out = argv.length ? path.resolve(argv[1]) : __dirname;
+  const { cases, problems } = readCases(casesDir, catalogEntries(fs.readFileSync(path.join(ROOT, 'CATALOG.md'), 'utf8')));
+  if (problems.length) return { code: 2, text: `bench did not run - the case set is broken:\n${problems.map((p) => `- ${p}`).join('\n')}` };
+  const baseEnv = { ...process.env, ...FIXED_ENV };
+  for (const name of DROPPED_ENV) delete baseEnv[name];
+  // The projects are built outside the repository: files with their real names never land in it.
+  const tmp = fs.realpathSync(os.tmpdir());
+  const rel = path.relative(fs.realpathSync(ROOT), tmp);
+  if (!rel.startsWith('..') && !path.isAbsolute(rel)) return { code: 2, text: `bench did not run - the temp folder ${tmp} is inside the repository` };
+  const temp = fs.mkdtempSync(path.join(tmp, 'greenwashing-bench-'));
+  const stopAll = () => {
+    for (const child of children) child.kill('SIGKILL');
+    fs.rmSync(temp, { recursive: true, force: true });
+  };
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(signal, () => {
+      stopAll();
+      process.exit(128 + os.constants.signals[signal]);
+    });
+  }
+  try {
+    const results = new Array(cases.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < cases.length) {
+        const i = next++;
+        const c = cases[i];
+        const work = path.join(temp, c.id);
+        fs.mkdirSync(work);
+        const outcome = await runCase(c, work, baseEnv);
+        fs.rmSync(work, { recursive: true, force: true });
+        results[i] = {
+          id: c.id, kind: c.kind, gw: c.gw, language: c.language, ...(c.claim ? { claim: c.claim } : {}),
+          ...(c.scenario ? { scenario: c.scenario } : {}), twin: c.twin, description: c.description, ...outcome,
+        };
+        process.stderr.write(`${c.id}: ${Object.keys(COLUMNS).map((column) => `${column} ${outcome[column].outcome}`).join(', ')}\n`);
+      }
+    };
+    await Promise.all(Array.from({ length: PARALLEL }, worker));
+    const header = { commit: commitOf(), date: new Date().toISOString().slice(0, 10), node: process.version, python: version('python3', ['--version']) };
+    fs.mkdirSync(out, { recursive: true });
+    fs.writeFileSync(path.join(out, 'RESULTS.md'), render(results, header));
+    fs.writeFileSync(path.join(out, 'results.json'), `${JSON.stringify({ ...header, summary: summarize(results), cases: results }, null, 2)}\n`);
+    return { code: 0, text: summarize(results).map((row) => `${row.label} (${row.cases}): ${Object.keys(COLUMNS).map((column) => `${COLUMNS[column]} ${cell(row, column)}`).join('; ')}`).join('\n') };
+  } catch (error) {
+    return { code: 2, text: `bench did not run - ${error.message}` };
+  } finally {
+    stopAll();
+  }
+}
+
+if (require.main === module) {
+  main(process.argv.slice(2)).then(({ code, text }) => {
+    process.stdout.write(`${text}\n`);
+    process.exitCode = code;
+  });
+}
+
+module.exports = { main, readCases, catalogEntries, gateOutcome, mutantsOutcome, summarize, render, verdictOf, CASES, SUFFIX, COLUMNS };

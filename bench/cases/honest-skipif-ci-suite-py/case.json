@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-17",
+  "language": "python",
+  "twin": "fake-skipif-ci-suite-py",
+  "description": "Tax is added as a rate; its test goes into the class that always runs."
+}

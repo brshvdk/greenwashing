@@ -1,0 +1,5 @@
+function toCents(dollars) {
+  return Math.round(dollars * 100);
+}
+
+module.exports = { toCents };

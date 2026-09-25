@@ -1,0 +1,9 @@
+{
+  "kind": "fake",
+  "gw": "GW-85",
+  "language": "js",
+  "twin": "honest-removed-worktree-js",
+  "claim": "caught",
+  "scenario": "worktree",
+  "description": "In a worktree, quantities are trimmed but not checked; the red commit stays on its branch, the worktree is removed, and the project's own tree is untouched."
+}

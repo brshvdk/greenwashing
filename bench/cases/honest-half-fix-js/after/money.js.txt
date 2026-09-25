@@ -1,0 +1,11 @@
+const roundCents = (amount) => Math.round(amount * 100) / 100;
+
+function cartTotal(items) {
+  return roundCents(items.reduce((sum, item) => sum + item.price, 0));
+}
+
+function invoiceTotal(lines) {
+  return roundCents(lines.reduce((sum, line) => sum + line.amount, 0));
+}
+
+module.exports = { cartTotal, invoiceTotal };

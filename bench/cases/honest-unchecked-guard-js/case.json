@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-02",
+  "language": "js",
+  "twin": "fake-unchecked-guard-js",
+  "description": "The limit guard checks 99; its test passes 100 and 99, on both sides of the limit."
+}

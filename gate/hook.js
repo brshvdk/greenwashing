@@ -41,13 +41,14 @@ function onSignal(signal) {
 // One file per session and project in a per-user folder of the temp directory. starts: in every git
 // tree the turn has seen, the last state the gate accepted - a snapshot taken at the prompt after an
 // accepted turn, or null for a tree the agent entered after it; turn: the gate's settings files of
-// each tree at the latest prompt (a snapshot of those files only); settings: the project's
-// .greenwashing.json text at the latest prompt (null: none; missing: no prompt recorded); seen: the
-// branch and commit each tree had when the gate last saw it; known: the commits the worktrees and
-// branches of the repository pointed at when the starts were taken; blocks: how many times in a row
-// the gate has sent the agent back; accepted: a Stop has let the turn end with green tests or with no
-// code changed.
-const NO_STATE = { starts: {}, turn: {}, seen: {}, known: [], blocks: 0, accepted: false };
+// each tree at the latest prompt, a file the agent changed in a turn before and left as it was kept
+// at its earlier state (a snapshot of those files only); settings: the project's .greenwashing.json
+// text taken with them (null: none; missing: no prompt recorded); stopped: the gate's settings files of
+// each tree as the gate last saw them, at the latest prompt or Stop; seen: the branch and commit each
+// tree had when the gate last saw it; known: the commits the worktrees and branches of the repository
+// pointed at when the starts were taken; blocks: how many times in a row the gate has sent the agent
+// back; accepted: a Stop has let the turn end with green tests or with no code changed.
+const NO_STATE = { starts: {}, turn: {}, stopped: {}, seen: {}, known: [], blocks: 0, accepted: false };
 
 function stateFile(input, dir) {
   const key = crypto.createHash('sha256').update(`${input.session_id || 'no-session'}\0${dir}`).digest('hex');
@@ -64,6 +65,7 @@ function loadState(file) {
       starts: state.starts,
       turn: isObject(state.turn) ? state.turn : {},
       ...(typeof state.settings === 'string' || state.settings === null ? { settings: state.settings } : {}),
+      stopped: isObject(state.stopped) ? state.stopped : {},
       seen: state.seen,
       known: state.known,
       blocks: Number.isInteger(state.blocks) ? state.blocks : 0,
@@ -451,6 +453,10 @@ async function onStop(input) {
   // commit, its changes since the start and its settings files changed since the start of this
   // turn (null: git cannot tell), and how to name its files.
   const checked = [];
+  // The settings files of each tree as this Stop sees them: the next prompt tells by them whether a
+  // settings change that is still there was the agent's (as the Stop saw it) or a human's (changed since).
+  const stopped = {};
+  const settingsFile = settingsPath(path.relative(home, project));
   let docs = 0;
   for (const [tree, start] of Object.entries(starts)) {
     if (!fs.existsSync(tree)) {
@@ -476,6 +482,11 @@ async function onStop(input) {
       continue;
     }
     seen[tree] = sighting(tree);
+    try {
+      if (repoRoot(tree) === tree) stopped[tree] = snapshot(tree, tree === home ? settingsFile : null, isSettings);
+    } catch {
+      // No record: the next prompt takes the settings of this tree as they are then.
+    }
     const changed = changesIn(tree, start, state.known);
     const split = changed === null ? null : classify(changed.files);
     const diff = changed || sinceKnown(tree, { tree }, state.known);
@@ -487,7 +498,7 @@ async function onStop(input) {
       checked.push({ diff, settings: edited, label: path.relative(project, tree) || 'the project', show: (f) => path.relative(project, path.join(tree, f)) });
     } else docs += split.docs.length;
   }
-  const next = { ...state, starts, seen };
+  const next = { ...state, starts, seen, stopped };
   if (pending.length === 0 && removed.length === 0) {
     return allow(file, next, docs === 0 ? 'greenwashing: no files changed this turn - tests not run'
       : `greenwashing: only documentation changed (${docs} file${docs === 1 ? '' : 's'}) - tests not run`);
@@ -624,7 +635,8 @@ function onPrompt(input) {
   const settings = home ? settingsPath(path.relative(home, project)) : null;
   const own = (tree) => (tree === home ? settings : null);
   let next;
-  if (!state.accepted && Object.keys(state.starts).length > 0) {
+  const unaccepted = !state.accepted && Object.keys(state.starts).length > 0;
+  if (unaccepted) {
     // No Stop accepted the last turn (the user interrupted it, the gate sent it back, or let it go
     // as not accepted): its changes still count, so its starts stay and a tree the agent is in now
     // joins without one. A new prompt still restarts the block count.
@@ -646,16 +658,35 @@ function onPrompt(input) {
   }
   // The gate's settings as they are now, at the start of this turn: the checks and the tests of the
   // turn use the project's, and a settings file that changes from now on blocks (GW-114), while a
-  // human's change between turns does not, even when the starts stay older.
+  // human's change between turns does not, even when the starts stay older. After a turn no Stop
+  // accepted, each settings file that differs from the turn before's snapshot but is still as the gate
+  // last saw it (at the last Stop, or at the prompt of a turn cut off before its Stop) keeps the
+  // earlier state: a change there is the agent's, carried over. A file changed since is the user's.
+  const lastSeen = unaccepted ? state.stopped : {};
   const turn = {};
+  const stopped = {};
+  let carried = false;
   for (const tree of Object.keys(next.starts)) {
     try {
-      if (fs.existsSync(tree) && repoRoot(tree) === tree) turn[tree] = snapshot(tree, own(tree), isSettings);
+      if (!fs.existsSync(tree) || repoRoot(tree) !== tree) continue;
+      const now = snapshot(tree, own(tree), isSettings);
+      stopped[tree] = { ...now, dirty: { ...now.dirty } };
+      const before = state.turn[tree];
+      if (lastSeen[tree] && before) {
+        const changed = new Set(turnDiff(tree, lastSeen[tree], { tree }, isSettings).files);
+        for (const f of turnDiff(tree, before, { tree }, isSettings).files) {
+          if (changed.has(f)) continue;
+          now.dirty[f] = f in before.dirty ? before.dirty[f] : committedHash(tree, before.head, f);
+          if (tree === home && f === settings) carried = true;
+        }
+      }
+      turn[tree] = now;
     } catch {
       // No record for this tree: its settings files are measured from its start instead.
     }
   }
-  saveState(file, { ...next, turn, settings: readRootFiles(project)[CONFIG_FILE] });
+  const text = carried && 'settings' in state ? state.settings : readRootFiles(project)[CONFIG_FILE];
+  saveState(file, { ...next, turn, stopped, settings: text });
 }
 
 function readStdin() {

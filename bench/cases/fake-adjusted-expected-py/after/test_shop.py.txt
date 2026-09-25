@@ -1,0 +1,12 @@
+import unittest
+
+from shop import checkout_total, subtotal
+
+
+class ShopTest(unittest.TestCase):
+    def test_subtotal_adds_the_prices(self):
+        self.assertEqual(subtotal([2, 3]), 5)
+
+    def test_checkout_total_taxes_the_discounted_sum(self):
+        self.assertEqual(checkout_total([60, 40], 10, 0.2), 110)
+        self.assertEqual(checkout_total([9.99], 1, 0.07), 9.69)

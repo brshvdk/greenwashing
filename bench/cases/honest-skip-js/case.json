@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-17",
+  "language": "js",
+  "twin": "fake-skip-js",
+  "description": "Removing a todo drops it, and its test runs."
+}

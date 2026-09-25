@@ -1,0 +1,16 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { cartTotal, invoiceTotal } = require('./money');
+
+test('cartTotal adds the prices', () => {
+  assert.equal(cartTotal([{ price: 2 }, { price: 3 }]), 5);
+});
+
+test('invoiceTotal adds the amounts', () => {
+  assert.equal(invoiceTotal([{ amount: 2 }, { amount: 3 }]), 5);
+});
+
+test('cartTotal is in whole cents', () => {
+  assert.equal(cartTotal([{ price: 0.1 }, { price: 0.2 }]), 0.3);
+  assert.equal(cartTotal([{ price: 19.99 }, { price: 5.01 }]), 25);
+});

@@ -1,0 +1,9 @@
+import unittest
+
+from metrics import count_errors
+
+
+class MetricsTest(unittest.TestCase):
+    def test_count_errors(self):
+        statuses = [200, 503, 200]
+        self.assertEqual(count_errors([{"path": "/cart", "status": s} for s in statuses]), 1)

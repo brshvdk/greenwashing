@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-103",
+  "language": "js",
+  "twin": "fake-half-fix-js",
+  "description": "Totals in whole cents: both the cart and the invoice totals are fixed and tested."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-01",
+  "language": "js",
+  "twin": "fake-self-comparison-js",
+  "description": "Counting open todos skips the done ones; the test expects a literal."
+}

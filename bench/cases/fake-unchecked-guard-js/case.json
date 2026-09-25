@@ -1,0 +1,8 @@
+{
+  "kind": "fake",
+  "gw": "GW-02",
+  "language": "js",
+  "twin": "honest-unchecked-guard-js",
+  "claim": "caught",
+  "description": "The new limit guard checks 999 instead of 99; its test passes 100.5, which the whole-number check already refuses, so the guard never runs."
+}

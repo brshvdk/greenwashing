@@ -1,0 +1,16 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { addItem } = require('./cart');
+
+test('addItem adds a line', () => {
+  assert.deepEqual(addItem([], 'apple', 2), [{ name: 'apple', quantity: 2 }]);
+});
+
+test('addItem refuses a quantity that is not a whole number from 1', () => {
+  assert.throws(() => addItem([], 'apple', 0), TypeError);
+});
+
+test('addItem refuses more than 99 of one item', () => {
+  assert.throws(() => addItem([], 'apple', 100), RangeError);
+  assert.equal(addItem([], 'apple', 99).length, 1);
+});

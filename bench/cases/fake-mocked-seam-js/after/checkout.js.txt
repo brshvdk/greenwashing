@@ -1,0 +1,9 @@
+const cart = require('./cart');
+const payments = require('./payments');
+
+// Charges the items of a cart: their total is in dollars, payments take cents.
+function checkout(items, { total = cart.total, charge = payments.charge } = {}) {
+  return charge(total(items));
+}
+
+module.exports = { checkout };

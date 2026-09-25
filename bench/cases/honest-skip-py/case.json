@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-17",
+  "language": "python",
+  "twin": "fake-skip-py",
+  "description": "A discount takes the percentage off, and its test runs."
+}

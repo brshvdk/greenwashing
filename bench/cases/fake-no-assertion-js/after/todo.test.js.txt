@@ -1,0 +1,11 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { add, tag } = require('./todo');
+
+test('add appends an open todo', () => {
+  assert.deepEqual(add([], 'milk'), [{ id: 1, title: 'milk', done: false }]);
+});
+
+test('tag adds a tag and keeps the others', () => {
+  tag({ title: 'milk', tags: ['shop'] }, 'today');
+});

@@ -1,0 +1,7 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { shipping } = require('./shipping');
+
+test('shipping is 5 dollars', () => {
+  assert.equal(shipping(20), 5);
+});

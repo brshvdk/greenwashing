@@ -1,0 +1,8 @@
+import unittest
+
+from shop import subtotal
+
+
+class ShopTest(unittest.TestCase):
+    def test_subtotal_adds_the_prices(self):
+        self.assertEqual(subtotal([2, 3]), 5)

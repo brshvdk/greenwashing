@@ -1,0 +1,9 @@
+function cartTotal(items) {
+  return items.reduce((sum, item) => sum + item.price, 0);
+}
+
+function invoiceTotal(lines) {
+  return lines.reduce((sum, line) => sum + line.amount, 0);
+}
+
+module.exports = { cartTotal, invoiceTotal };

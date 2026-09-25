@@ -1,0 +1,8 @@
+{
+  "kind": "fake",
+  "gw": "GW-74",
+  "language": "python",
+  "twin": "honest-wrong-denominator-py",
+  "claim": "not caught",
+  "description": "The error rate divides by every request, health checks included; its test has no health checks, so the two rates are the same."
+}

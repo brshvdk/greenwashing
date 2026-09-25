@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-11",
+  "language": "js",
+  "twin": "fake-equal-values-js",
+  "description": "The cheaper of two prices returns the lower one; its test gives them in both orders."
+}

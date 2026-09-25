@@ -1,0 +1,6 @@
+function search(list, text) {
+  const needle = text.toLowerCase();
+  return list.filter((todo) => [todo.title, todo.notes ?? ''].some((field) => field.toLowerCase().includes(needle)));
+}
+
+module.exports = { search };

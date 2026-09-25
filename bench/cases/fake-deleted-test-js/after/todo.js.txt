@@ -1,0 +1,5 @@
+function search(list, text) {
+  return list.filter((todo) => [todo.title, todo.notes ?? ''].some((field) => field.includes(text)));
+}
+
+module.exports = { search };

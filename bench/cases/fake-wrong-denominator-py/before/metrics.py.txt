@@ -1,0 +1,2 @@
+def count_errors(requests):
+    return sum(1 for request in requests if request["status"] >= 500)

@@ -7,9 +7,11 @@ by None, True and False swapped, a number one higher. The command runs it as
     {"files": [{"file", "text", "lines": [changed line]}]}
 and reads JSON from stdout:
     {"mutants": [{"file", "op", "start": [line, column], "end": [line, column], "text"}],
+     "controls": [{"file", "line"}],
      "errors": [{"file", "error"}]}
 Lines are split at CRLF, CR and LF, as the JavaScript side splits them; columns count characters.
-Each break is kept only when the file still parses with it.
+Each break is kept only when the file still parses with it. A control is the line of a file a raise
+goes before, so that the module fails as soon as it runs (the command's control break).
 """
 
 import ast
@@ -91,17 +93,34 @@ def mutants(source, changed):
     return kept
 
 
+def control_line(source):
+    """The first line a statement may take before the rest of the module: after a #! and a coding line
+    (the first two lines, when they are comments), the docstring and the __future__ imports."""
+    line = 1
+    for text in LINE_BREAK.split(source)[:2]:
+        if not text.startswith("#"):
+            break
+        line += 1
+    for index, node in enumerate(ast.parse(source).body):
+        docstring = index == 0 and isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)
+        if not (docstring or (isinstance(node, ast.ImportFrom) and node.module == "__future__")):
+            break
+        line = max(line, node.end_lineno + 1)
+    return line
+
+
 def main():
     request = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-    found, errors = [], []
+    found, controls, errors = [], [], []
     for item in request["files"]:
         text = item["text"][1:] if item["text"].startswith("﻿") else item["text"]
         try:
             for op, first, last, replacement in mutants(text, set(item["lines"])):
                 found.append({"file": item["file"], "op": op, "start": list(first), "end": list(last), "text": replacement})
+            controls.append({"file": item["file"], "line": control_line(text)})
         except (SyntaxError, ValueError, tokenize.TokenError) as error:
             errors.append({"file": item["file"], "error": f"Python could not read it ({type(error).__name__}: {error})"})
-    sys.stdout.buffer.write(json.dumps({"mutants": found, "errors": errors}).encode("utf-8"))
+    sys.stdout.buffer.write(json.dumps({"mutants": found, "controls": controls, "errors": errors}).encode("utf-8"))
 
 
 if __name__ == "__main__":

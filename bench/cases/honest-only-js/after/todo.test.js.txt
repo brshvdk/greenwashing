@@ -1,0 +1,17 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { add, toggle } = require('./todo');
+
+test('add appends an open todo', () => {
+  assert.deepEqual(add([], 'milk'), [{ id: 1, title: 'milk', done: false }]);
+});
+
+test('toggle marks the todo done', () => {
+  const list = add(add([], 'milk'), 'bread');
+  assert.equal(toggle(list, 2)[1].done, true);
+});
+
+test('toggle leaves the other todos alone', () => {
+  const list = add(add([], 'milk'), 'bread');
+  assert.equal(toggle(list, 2)[0].done, false);
+});

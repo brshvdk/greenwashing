@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-18",
+  "language": "python",
+  "twin": "fake-no-assertion-py",
+  "description": "An average divides by the count, and the test checks it."
+}

@@ -1,0 +1,8 @@
+{
+  "kind": "fake",
+  "gw": "GW-04",
+  "language": "python",
+  "twin": "honest-one-item-fixture-py",
+  "claim": "caught",
+  "description": "Newest first leaves out reverse=True and sorts oldest first; its test has one order, where both orders are the same."
+}

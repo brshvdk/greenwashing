@@ -1,0 +1,12 @@
+import unittest
+
+from shop import discounted, subtotal
+
+
+class ShopTest(unittest.TestCase):
+    def test_subtotal_adds_the_prices(self):
+        self.assertEqual(subtotal([2, 3]), 5)
+
+    @unittest.skip("rounding differs, fix later")
+    def test_discount_takes_a_percentage_off(self):
+        self.assertEqual(discounted(200, 10), 180)

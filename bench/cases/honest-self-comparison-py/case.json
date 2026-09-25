@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-01",
+  "language": "python",
+  "twin": "fake-self-comparison-py",
+  "description": "The cheapest price is the lowest; the test expects a literal."
+}

@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-74",
+  "language": "python",
+  "twin": "fake-wrong-denominator-py",
+  "description": "The error rate divides by user requests only; its test has health checks in it."
+}

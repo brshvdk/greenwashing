@@ -1,0 +1,6 @@
+def subtotal(prices):
+    return sum(prices)
+
+
+def discounted(price, percent):
+    return price * (100 - percent) / 100

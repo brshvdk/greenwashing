@@ -1,0 +1,8 @@
+{
+  "kind": "fake",
+  "gw": "GW-01",
+  "language": "python",
+  "twin": "honest-self-comparison-py",
+  "claim": "caught",
+  "description": "The cheapest price is the first one; the test compares cheapest(prices) with itself."
+}
