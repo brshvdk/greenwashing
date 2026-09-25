@@ -140,7 +140,7 @@ function decide(runs, results, state, stopHookActive) {
       message: `greenwashing: ${run.kind ? 'CHECKS' : 'TESTS'} DID NOT PASS - WORK NOT ACCEPTED. The gate sent the agent back ${blocks} times in a row `
         + `and now lets it stop so it does not loop. Last result: ${result.outcome}`
         + `${result.why ? ` - ${result.why}` : ''} (${run.command}${place(run)}).`
-        + `${run.kind === 'config' ? ' The next prompt takes the settings as they are then: undo the change first unless you made it.' : ''}`,
+        + `${run.kind === 'config' ? ' The changed settings still block after the next prompt: undo the change, or edit the file between turns to make it yours.' : ''}`,
       state: { blocks: 0 },
     };
   }

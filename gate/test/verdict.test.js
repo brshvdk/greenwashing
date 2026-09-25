@@ -241,10 +241,10 @@ test('an empty output is said so; the tail has no terminal color codes', () => {
 test('the release message names the last result and the command', () => {
   const decision = decide([run({})], [RED], { blocks: 3 }, true);
   assert.match(decision.message, /Last result: did not run - zero tests ran \(jest\) \(npm test\)\.$/);
-  // Released on a settings change: the next prompt takes the settings as they are then.
+  // Released on a settings change: the change still blocks after the next prompt unless the user edits the file.
   const config = { kind: 'config', command: 'greenwashing checks', files: ['.greenwashing.json'] };
   assert.match(decide([config], [verdict(config)], { blocks: 3 }, true).message,
-    /\(greenwashing checks\)\. The next prompt takes the settings as they are then: undo the change first unless you made it\.$/);
+    /\(greenwashing checks\)\. The changed settings still block after the next prompt: undo the change, or edit the file between turns to make it yours\.$/);
 });
 
 test("a run in another tree whose own .greenwashing.json differs says it was ignored, green or red", () => {
