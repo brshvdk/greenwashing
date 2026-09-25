@@ -8,7 +8,10 @@ const DEFAULT_TIMEOUT_SECONDS = 600;
 // The Stop hook's own timeout in hooks/hooks.json and .claude/settings.json is this plus 60 s:
 // Claude Code cancels a hook that runs longer and lets the agent stop (gate/test/plugin.test.js).
 const MAX_TIMEOUT_SECONDS = 3600;
-const CONFIG_KEYS = ['testCommand', 'timeoutSeconds', 'checks', 'python'];
+const CONFIG_KEYS = ['testCommand', 'timeoutSeconds', 'checks', 'python', 'mutants'];
+// The mutation command's limits (gate/mutate.js): how many breaks, the time for everything, and the
+// time for one test run; "mutants" in the settings and the command's options change them.
+const MUTANT_LIMITS = { limit: 20, timeoutSeconds: 600, runTimeoutSeconds: 120 };
 // The gate's quick checks on changed test lines (gate/lib/checks.js) and the catalog entry each
 // reports; a project turns one off with "checks": {"skips": false}.
 const CHECKS = { skips: 'GW-17', assertions: 'GW-18', selfComparisons: 'GW-01' };
@@ -34,7 +37,7 @@ const withoutBom = (text) => text.replace(/^\uFEFF/, '');
 const ALL_CHECKS = Object.fromEntries(CHECK_NAMES.map((name) => [name, true]));
 
 // Reads .greenwashing.json text (or null when the file is absent).
-// Returns {testCommand?, timeoutSeconds, checks, python?} or {error}.
+// Returns {testCommand?, timeoutSeconds, checks, python?, mutants?} or {error}.
 function readConfig(text) {
   if (text === null) return { timeoutSeconds: DEFAULT_TIMEOUT_SECONDS, checks: ALL_CHECKS };
   let config;
@@ -58,13 +61,21 @@ function readConfig(text) {
   if ('python' in config && (typeof config.python !== 'string' || !config.python.trim())) {
     return { error: `${CONFIG_FILE}: python must be a non-empty string (the Python for the checks: a path from the project folder or a name on PATH)` };
   }
+  const mutants = config.mutants === undefined ? {} : config.mutants;
+  if (mutants === null || typeof mutants !== 'object' || Array.isArray(mutants)
+    || Object.entries(mutants).some(([name, value]) => !(name in MUTANT_LIMITS) || !Number.isInteger(value) || value < 1)) {
+    return { error: `${CONFIG_FILE}: mutants must be an object of whole numbers from 1 for ${Object.keys(MUTANT_LIMITS).join(', ')}` };
+  }
   const checks = config.checks === undefined ? {} : config.checks;
   if (checks === null || typeof checks !== 'object' || Array.isArray(checks)
     || Object.entries(checks).some(([name, on]) => !CHECK_NAMES.includes(name) || typeof on !== 'boolean')) {
     return { error: `${CONFIG_FILE}: checks must be an object of true or false for ${CHECK_NAMES.join(', ')}` };
   }
   const python = 'python' in config ? { python: config.python } : {};
-  return { testCommand: config.testCommand, timeoutSeconds: config.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS, checks: { ...ALL_CHECKS, ...checks }, ...python };
+  return {
+    testCommand: config.testCommand, timeoutSeconds: config.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS, checks: { ...ALL_CHECKS, ...checks }, ...python,
+    ...('mutants' in config ? { mutants } : {}),
+  };
 }
 
 // The Python for the Python checks: "python" in the settings (config: readConfig()), a path taken
@@ -114,5 +125,5 @@ const ROOT_FILES = [CONFIG_FILE, 'package.json', ...PYTEST_FILES, ...PYTEST_SECT
 
 module.exports = {
   chooseCommand, readConfig, pytestConfigured, pythonOf, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
-  PYTHON_HOW_TO,
+  PYTHON_HOW_TO, MUTANT_LIMITS,
 };

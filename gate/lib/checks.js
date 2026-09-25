@@ -694,4 +694,6 @@ function checkJs(source, changes, checks, before = null) {
   return findings.filter((f) => !seen.has(`${f.line} ${f.gw}`) && seen.add(`${f.line} ${f.gw}`)).sort((a, b) => a.line - b.line);
 }
 
-module.exports = { checkJs, testFileKind, mask };
+module.exports = {
+  checkJs, testFileKind, mask, closing, initializerEnd, JS_EXTENSION, INITIALIZER,
+};

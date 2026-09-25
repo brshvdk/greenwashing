@@ -80,6 +80,27 @@ for (const [file, { variable, placeholder }] of Object.entries(CONFIGS)) {
   });
 }
 
+test('the plugin command /greenwashing:mutants runs the mutation command as written, from a path with a space', (t) => {
+  const text = fs.readFileSync(path.join(ROOT, 'commands', 'mutants.md'), 'utf8');
+  const [, frontmatter, body] = /^---\n([^]*?)\n---\n([^]*)$/.exec(text);
+  assert.match(frontmatter, /^description: \S/m);
+  assert.match(frontmatter, /^argument-hint: /m);
+  const commands = [...body.matchAll(/^```bash\n(.*)\n```$/gm)].map((m) => m[1]);
+  assert.deepEqual(commands, ['node "${CLAUDE_PLUGIN_ROOT}/gate/mutate.js" --project "${CLAUDE_PROJECT_DIR}" $ARGUMENTS']);
+  // Claude Code puts the paths and the arguments in the text; the agent runs the line in a shell.
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'gw plugin '));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const install = path.join(base, 'install dir');
+  fs.cpSync(path.join(ROOT, 'gate'), path.join(install, 'gate'), { recursive: true });
+  const project = path.join(base, 'a project');
+  fs.mkdirSync(project);
+  const line = commands[0].replace('${CLAUDE_PLUGIN_ROOT}', install).replace('${CLAUDE_PROJECT_DIR}', project).replace('$ARGUMENTS', '--limit 3');
+  const run = spawnSync('sh', ['-c', line], { cwd: base, encoding: 'utf8', env: { ...process.env, TMPDIR: base } });
+  // Not a git repository: nothing tells which lines changed, so the command did not run.
+  assert.equal(run.status, 2, run.stdout + run.stderr);
+  assert.match(run.stdout, /Did not run: .*a project is not in a git repository: the changed lines come from git\n/);
+});
+
 test("this repository's .greenwashing.json runs the Python tests isolated and then the gate's tests", () => {
   const config = readConfig(fs.readFileSync(path.join(ROOT, '.greenwashing.json'), 'utf8'));
   assert.equal(config.error, undefined);
