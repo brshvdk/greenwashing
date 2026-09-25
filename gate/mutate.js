@@ -127,7 +127,7 @@ function changedCode(home, rel, base) {
       unread.push(`${file} is not UTF-8 text`);
       continue;
     }
-    const lines = untracked.has(file) ? new Set(text.split(/\r\n|\r|\n/).map((_, i) => i + 1))
+    const lines = untracked.has(file) ? new Set(text.replace(/(?:\r\n|\r|\n)$/, '').split(/\r\n|\r|\n/).map((_, i) => i + 1))
       : addedLines(git(home, ['diff', '-U0', '--no-color', '--no-ext-diff', '--no-textconv', base, '--', file]).toString('utf8'));
     if (lines.size) files.push({ file, kind, text, lines });
   }

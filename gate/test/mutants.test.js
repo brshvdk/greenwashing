@@ -100,6 +100,10 @@ test('every JavaScript break of this repository\'s own code still parses', () =>
 
 test('a break that does not parse is caught before it runs; files the check cannot read pass through', () => {
   assert.equal(stillParses('a.js', 'x = 1;', 'x = ;'), false);
+  // A label with nothing left to label once the guard under it is removed.
+  const labelled = 'function f(x) {\n  go(x);\n  outer:\n  if (x) return;\n}\n';
+  const guard = jsMutants(labelled, everyLine(labelled)).find((m) => m.op === 'guard');
+  assert.equal(stillParses('a.js', labelled, apply(labelled, guard)), false);
   assert.equal(stillParses('a.cjs', 'x = 1;', 'x = 2;'), true);
   // The original does not parse as CommonJS (an ES module, JSX): nothing to compare with.
   assert.equal(stillParses('a.js', 'import x from "y";', 'import x from ;'), true);

@@ -163,6 +163,19 @@ test("the user's files stay byte for byte; node_modules, .venv and venv are link
   assert.deepEqual(run.copies, []);
 });
 
+test('Python runs no cached bytecode: none from the user\'s tree, none of an earlier break of the same size', (t) => {
+  const tests = 'import unittest\n\nfrom shop import double\n\n\nclass T(unittest.TestCase):\n    def test_double(self):\n        self.assertEqual(double(2), 4)\n';
+  const dir = project(t, { 'test_shop.py': tests, 'shop.py': 'def double(n):\n    return n + n\n' }, null);
+  // Two breaks of the same size one after the other: the first survives, the second must be killed.
+  write(dir, { 'shop.py': 'LIMIT = 5\nSCALE = 2\n\n\ndef double(n):\n    return n * SCALE\n' });
+  // A bytecode file that Python loads without looking at the source, in a folder git does not ignore.
+  const compiled = spawnSync('python3', ['-I', '-c', 'import py_compile as p; print(p.compile("shop.py", invalidation_mode=p.PycInvalidationMode.UNCHECKED_HASH))'], { cwd: dir, encoding: 'utf8' });
+  assert.equal(compiled.status, 0, compiled.stderr);
+  const run = mutate(t, dir);
+  assert.match(run.out, /\n- survived: shop\.py:1: LIMIT = 5 {2}-> {2}LIMIT = 6\n- killed: shop\.py:2: SCALE = 2 {2}-> {2}SCALE = 3\n/);
+  assert.match(run.out, /\n- killed: shop\.py:6: return n \* SCALE {2}-> {2}return None\n/);
+});
+
 test('each break runs alone: its file is back as it was before the next break runs', (t) => {
   const tested = "module.exports = { one: () => 1 };\n";
   const dir = project(t, { 'a.js': tested, 'z.js': 'module.exports = { two: () => 2 };\n',
@@ -235,10 +248,11 @@ test('the changed lines: since the merge base with main, committed or not, untra
   write(dir, { 'a.js': one('a').replace('1', '2') });
   git(dir, 'commit', '-qam', 'a on the branch');
   write(dir, { 'b.js': one('b').replace('1', '2'), 'c.js': one('c'), 'app/e.js': one('e').replace('1', '2') });
-  // Main moves on after the branch: its new commits are not the branch's change.
+  // Main moves on after the branch: its new commits, a changed file the branch did not touch too,
+  // are not the branch's change.
   git(dir, 'checkout', '-q', 'main');
-  write(dir, { 'd2.js': one('d2') });
-  git(dir, 'add', 'd2.js');
+  write(dir, { 'd2.js': one('d2'), 'd.js': one('d').replace('1', '5') });
+  git(dir, 'add', 'd2.js', 'd.js');
   git(dir, 'commit', '-qm', 'main moves');
   git(dir, 'checkout', '-q', 'feat');
   const files_ = (run) => [...new Set(run.out.split('\n').map((line) => /^- \w[\w ]*: ([\w/.]+):\d+:/.exec(line)).filter(Boolean).map((m) => m[1]))].sort();
@@ -250,6 +264,16 @@ test('the changed lines: since the merge base with main, committed or not, untra
   // With no origin/HEAD, origin/main or origin/master, the main branch is main, else master.
   git(dir, 'branch', '-m', 'main', 'master');
   assert.match(mutate(t, dir).out, /\(the merge base with master\)/);
+});
+
+test('a break that would not parse is not tried: node --test would count the file that cannot load as a failed test', (t) => {
+  const code = 'function f(x) {\n  go(x);\n  outer:\n  if (x) return;\n}\nfunction go() {}\nmodule.exports = { f };\n';
+  const dir = project(t, { 'f.test.js': "require('node:test')('loads', () => { require('./f'); });\n" });
+  write(dir, { 'f.js': code });
+  const run = mutate(t, dir);
+  assert.match(run.out, /\n1 code file, 7 changed lines, 1 place to break; 1 tried at most \(limit 20\)\n/);
+  assert.match(run.out, /\n- survived: f\.js:4: if \(x\) return; {2}-> {2}if \(!\(x\)\) return;\n/);
+  assert.doesNotMatch(run.out, /removed: /);
 });
 
 test('test files, test helpers and runner config are never broken', (t) => {
