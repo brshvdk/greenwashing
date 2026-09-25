@@ -255,7 +255,9 @@ async function run(argv) {
   const at = path.join(dir, rel);
   const runIn = (seconds) => runTests(at, { ...choice, timeoutSeconds: seconds }, RUN_ENV);
   const left = () => Math.min(limits.runTimeoutSeconds, Math.ceil((deadline - Date.now()) / 1000));
-  if (left() < 1) return report({ header, control: 'Control: not run', results: [], notTried: chosen.length, problems: [...problems, 'no time was left for the control run'] });
+  if (left() < 1) {
+    return report({ header, control: 'Control: not run', results: [], notTried: chosen.length, problems: [...problems, `no time was left for the control run: the time for everything is ${limits.timeoutSeconds} s (--timeout)`] });
+  }
   // The control: the tests on the unchanged copy must be green, or no break can be judged.
   const control = await runIn(left());
   const green = verdict(control);
@@ -289,6 +291,7 @@ async function run(argv) {
       outcome: OUTCOMES[result.outcome], why: result.outcome === 'did not run' ? result.why : '',
     });
   }
+  if (notTried) problems.push(`no time was left for ${notTried} of the breaks: the time for everything is ${limits.timeoutSeconds} s (--timeout)`);
   return report({ header, control: controlLine, results, notTried, problems });
 }
 

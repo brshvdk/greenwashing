@@ -120,7 +120,7 @@ test('did not run: a command with no counts, a red control, a break past the run
   const noCounts = mutate(t, echo);
   assert.equal(noCounts.code, 2, noCounts.out);
   assert.match(noCounts.out, /\nControl: echo ok \(\.greenwashing\.json\) on the unchanged copy: did not run - no test counts from pytest, unittest, jest, vitest or node --test in the output \(no counts\)\n {2}\| ok\n/);
-  assert.match(noCounts.out, /\nMutants: 0 tried - 0 killed, 0 survived, 0 did not run; 4 not tried \(no time left\)\n/);
+  assert.match(noCounts.out, /\nMutants: 0 tried - 0 killed, 0 survived, 0 did not run; 4 not tried\n/);
   assert.match(noCounts.out, /\nDid not run: the tests are not green on an unchanged copy of the working tree, so no break can be judged/);
   assert.match(noCounts.out, /\nResult: did not run$/m);
 
@@ -222,7 +222,8 @@ test('the limits: --limit, then "mutants" in .greenwashing.json, then 20; the ti
   git(dir, 'commit', '-qam', 'slow');
   const late = mutate(t, dir, ['--timeout', '3', '--limit', '5']);
   assert.equal(late.code, 2, late.out);
-  assert.match(late.out, /; [1-4] not tried \(no time left\)\n/);
+  assert.match(late.out, /; [1-4] not tried\n/);
+  assert.match(late.out, /\nDid not run: no time was left for [1-4] of the breaks: the time for everything is 3 s \(--timeout\)\n/);
   // A long line is shown around the place of the break.
   assert.match(mutate(t, dir, ['--limit', '5']).out, /\n- survived: limits\.js:1: \.\.\. 6, .* 18, 19, 20, .*30\]; {2}-> {2}\.\.\. 6, .* 18, 20, 20, .*30\];\n/);
 });

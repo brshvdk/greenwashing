@@ -218,7 +218,7 @@ function report({ header, control, results, notTried, problems }) {
   const count = (outcome) => results.filter((r) => r.outcome === outcome).length;
   const survived = results.filter((r) => r.outcome === 'survived');
   const lines = [...header, control, `Mutants: ${results.length} tried - ${count('killed')} killed, ${survived.length} survived, ${count('did not run')} did not run`
-    + `${notTried ? `; ${notTried} not tried (no time left)` : ''}`];
+    + `${notTried ? `; ${notTried} not tried` : ''}`];
   for (const r of results) lines.push(`- ${r.outcome}: ${r.file}:${r.line}: ${r.change}${r.why ? ` (${r.why})` : ''}`);
   if (survived.length) {
     lines.push('', 'Survived - the tests passed with the code broken:');
