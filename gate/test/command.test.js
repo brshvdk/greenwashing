@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CHECKS } = require('../lib/command');
+const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CHECKS, MUTANT_LIMITS } = require('../lib/command');
 
 // Every root file the rules look at is absent unless the case names it.
 const files = (present = {}) => ({ ...Object.fromEntries(ROOT_FILES.map((name) => [name, null])), ...present });
@@ -143,6 +143,13 @@ test('.greenwashing.json: "python" names the Python for the checks, and is absen
   assert.equal('python' in readConfig(null), false);
 });
 
+test('.greenwashing.json: "mutants" sets the mutation command\'s limits, and is absent unless set', () => {
+  assert.deepEqual(MUTANT_LIMITS, { limit: 20, timeoutSeconds: 600, runTimeoutSeconds: 120 });
+  assert.deepEqual(readConfig('{"mutants": {"limit": 5, "timeoutSeconds": 900, "runTimeoutSeconds": 30}}').mutants, { limit: 5, timeoutSeconds: 900, runTimeoutSeconds: 30 });
+  assert.deepEqual(readConfig('{"mutants": {}}').mutants, {});
+  assert.equal('mutants' in readConfig('{"testCommand": "make test"}'), false);
+});
+
 test('.greenwashing.json: a config that cannot be trusted is an error, not a default', () => {
   const bad = {
     '{"testCommand": ': /not valid JSON/,
@@ -168,6 +175,13 @@ test('.greenwashing.json: a config that cannot be trusted is an error, not a def
     '{"python": "  "}': /python must be a non-empty string/,
     '{"python": ["python3.12"]}': /python must be a non-empty string/,
     '{"python": null}': /python must be a non-empty string/,
+    '{"mutants": null}': /mutants must be an object of whole numbers from 1 for limit, timeoutSeconds, runTimeoutSeconds/,
+    '{"mutants": [20]}': /mutants must be an object/,
+    '{"mutants": {"limit": 0}}': /mutants must be an object/,
+    '{"mutants": {"limit": 2.5}}': /mutants must be an object/,
+    '{"mutants": {"limit": "20"}}': /mutants must be an object/,
+    '{"mutants": {"runTimeoutSeconds": -1}}': /mutants must be an object/,
+    '{"mutants": {"limits": 20}}': /mutants must be an object/,
   };
   for (const [text, message] of Object.entries(bad)) {
     assert.match(readConfig(text).error, message, text);
