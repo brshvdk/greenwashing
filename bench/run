@@ -390,7 +390,11 @@ async function main(argv, casesDir = CASES) {
   if (problems.length) return { code: 2, text: `bench did not run - the case set is broken:\n${problems.map((p) => `- ${p}`).join('\n')}` };
   const baseEnv = { ...process.env, ...FIXED_ENV };
   for (const name of DROPPED_ENV) delete baseEnv[name];
-  const temp = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'greenwashing-bench-')));
+  // The projects are built outside the repository: files with their real names never land in it.
+  const tmp = fs.realpathSync(os.tmpdir());
+  const rel = path.relative(fs.realpathSync(ROOT), tmp);
+  if (!rel.startsWith('..') && !path.isAbsolute(rel)) return { code: 2, text: `bench did not run - the temp folder ${tmp} is inside the repository` };
+  const temp = fs.mkdtempSync(path.join(tmp, 'greenwashing-bench-'));
   const stopAll = () => {
     for (const child of children) child.kill('SIGKILL');
     fs.rmSync(temp, { recursive: true, force: true });
@@ -402,9 +406,6 @@ async function main(argv, casesDir = CASES) {
     });
   }
   try {
-    // The projects are built outside the repository: files with their real names never land in it.
-    const rel = path.relative(fs.realpathSync(ROOT), temp);
-    if (!rel.startsWith('..') && !path.isAbsolute(rel)) return { code: 2, text: `bench did not run - the temp folder ${temp} is inside the repository` };
     const results = new Array(cases.length);
     let next = 0;
     const worker = async () => {

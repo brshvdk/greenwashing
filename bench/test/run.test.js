@@ -222,4 +222,11 @@ test('a run on a tiny case set: built outside the repository, removed after, and
   assert.match(broken.text, /^bench did not run - the case set is broken:\n- fake-undo: before\/raw\.js has no \.txt suffix/);
   assert.equal(fs.existsSync(brokenOut), false);
   assert.deepEqual((await main(['--frobnicate'])).code, 2);
+  // A temp folder inside the repository: nothing is built, nothing written.
+  process.env.TMPDIR = path.join(__dirname, '..');
+  const inside = await main(['--out', brokenOut], path.join(__dirname, '..', 'cases'));
+  assert.equal(inside.code, 2);
+  assert.match(inside.text, /^bench did not run - the temp folder .* is inside the repository$/);
+  assert.equal(fs.existsSync(brokenOut), false);
+  assert.deepEqual(fs.readdirSync(path.join(__dirname, '..')).filter((name) => name.startsWith('greenwashing-bench-')), []);
 });
