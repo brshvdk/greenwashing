@@ -118,6 +118,41 @@ function nodeTest(all, i) {
 
 const READERS = [unittest, pytest, jest, vitest, nodeTest];
 
+// TAP from node --test: "not ok 3 - name", a subtest indented 4 spaces per level and printed before
+// its parent. A failing parent's name goes in front of its failing subtests' names; a "# TODO" or
+// "# SKIP" directive is not a failure.
+function tapFailures(all) {
+  const levels = [];
+  for (const line of all) {
+    const match = /^( *)(not ok|ok) \d+ - (.*)$/.exec(line);
+    if (!match) continue;
+    const depth = Math.floor(match[1].length / 4);
+    const children = levels[depth + 1] || [];
+    levels[depth + 1] = [];
+    if (match[2] === 'ok' || /\s#\s*(TODO|SKIP)\b/i.test(match[3])) continue;
+    const name = match[3];
+    levels[depth] = [...(levels[depth] || []), ...(children.length ? children.map((child) => `${name} > ${child}`) : [name])];
+  }
+  return levels.flat();
+}
+
+// The names of the tests that failed, in the order the output gives them, each once: TAP "not ok",
+// pytest "FAILED"/"ERROR <node id>", jest "  ● a › b", vitest " FAIL  file > a > b", unittest
+// "FAIL:"/"ERROR: name (module.Class...)". A file that could not run (jest "Test suite failed to
+// run", vitest " FAIL  file [ file ]") is not a test, and neither is a log line "ERROR: ...".
+function failedTests(text) {
+  const all = lines(text);
+  const names = [...tapFailures(all)];
+  for (const line of all) {
+    const found = /^(?:FAILED|ERROR) (?!\()(.+?)(?: - .*)?$/.exec(line)
+      || /^ {2}● (?!Test suite failed to run$)(.+)$/.exec(line)
+      || /^ FAIL {2}(?!.* \[ .* \]$)(.+)$/.exec(line)
+      || /^(?:FAIL|ERROR): (\S+ \(.+\))$/.exec(line);
+    if (found) names.push(found[1]);
+  }
+  return [...new Set(names)];
+}
+
 // Every complete summary in the output, in order. A line that only looks like the start
 // of a summary (a test printing "Ran 5 tests") is skipped, not guessed at.
 function parseSummaries(text) {
@@ -135,4 +170,4 @@ function parseSummaries(text) {
   return found;
 }
 
-module.exports = { parseSummaries, lines };
+module.exports = { parseSummaries, failedTests, lines };

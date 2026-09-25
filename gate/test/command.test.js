@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { chooseCommand, readConfig, isPythonTest, ROOT_FILES } = require('../lib/command');
+const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CHECKS } = require('../lib/command');
 
 // Every root file the rules look at is absent unless the case names it.
 const files = (present = {}) => ({ ...Object.fromEntries(ROOT_FILES.map((name) => [name, null])), ...present });
@@ -32,7 +32,7 @@ test('a package.json test script next to Python tests or Python test settings ne
   for (const [present, hasTests] of both) {
     const choice = pick(present, hasTests);
     assert.equal(choice.command, undefined, JSON.stringify(present));
-    assert.match(choice.error, /package\.json has a test script and the project also has Python tests.*add \{"testCommand"/, JSON.stringify(present));
+    assert.match(choice.error, /package\.json has a test script and the project also has Python tests.*a human adds \{"testCommand"/, JSON.stringify(present));
     assert.equal(choice.none, undefined);
   }
 });
@@ -62,7 +62,7 @@ test('a byte order mark before the JSON is ignored', () => {
 
 test('a package.json without a test script falls through to Python', () => {
   assert.equal(pick({ 'package.json': '{"scripts": {"build": "tsc"}}' }, true).command, 'python3 -m unittest discover');
-  assert.equal(pick({ 'package.json': '{"name": "x"}' }).error, 'no test command found; add {"testCommand": "<the command that runs your tests>"} to .greenwashing.json in the project root');
+  assert.equal(pick({ 'package.json': '{"name": "x"}' }).error, 'no test command found; a human adds {"testCommand": "<the command that runs your tests>"} to .greenwashing.json in the project root, between turns');
 });
 
 test('pytest runs when the project configures it', () => {
@@ -110,7 +110,7 @@ test('an explicit timeout also applies to a command found on its own', () => {
 test('nothing to run: the reason says how to set the command', () => {
   const choice = pick({});
   assert.equal(choice.none, true);
-  assert.match(choice.error, /no test command found; add \{"testCommand": .*\} to \.greenwashing\.json in the project root/);
+  assert.match(choice.error, /no test command found; a human adds \{"testCommand": .*\} to \.greenwashing\.json in the project root, between turns/);
   assert.equal(choice.command, undefined);
 });
 
@@ -118,11 +118,22 @@ test('a broken package.json is reported, not skipped', () => {
   assert.match(pick({ 'package.json': '{"scripts": ' }, true).error, /package\.json is not valid JSON/);
 });
 
+const ON = { skips: true, assertions: true, selfComparisons: true };
+
 test('.greenwashing.json: the timeout defaults to 10 minutes and goes up to an hour', () => {
-  assert.deepEqual(readConfig(null), { timeoutSeconds: 600 });
-  assert.deepEqual(readConfig('{"testCommand": "make test"}'), { testCommand: 'make test', timeoutSeconds: 600 });
-  assert.deepEqual(readConfig('{"timeoutSeconds": 3600}'), { testCommand: undefined, timeoutSeconds: 3600 });
-  assert.deepEqual(readConfig('{"timeoutSeconds": 1}'), { testCommand: undefined, timeoutSeconds: 1 });
+  assert.deepEqual(readConfig(null), { timeoutSeconds: 600, checks: ON });
+  assert.deepEqual(readConfig('{"testCommand": "make test"}'), { testCommand: 'make test', timeoutSeconds: 600, checks: ON });
+  assert.deepEqual(readConfig('{"timeoutSeconds": 3600}'), { testCommand: undefined, timeoutSeconds: 3600, checks: ON });
+  assert.deepEqual(readConfig('{"timeoutSeconds": 1}'), { testCommand: undefined, timeoutSeconds: 1, checks: ON });
+});
+
+test('.greenwashing.json: every quick check is on unless the file turns it off', () => {
+  assert.deepEqual(Object.keys(CHECKS), ['skips', 'assertions', 'selfComparisons']);
+  assert.deepEqual(readConfig('{"checks": {}}').checks, ON);
+  assert.deepEqual(readConfig('{"checks": {"skips": false}}').checks, { ...ON, skips: false });
+  assert.deepEqual(readConfig('{"checks": {"assertions": false, "selfComparisons": true}}').checks, { ...ON, assertions: false });
+  assert.deepEqual(readConfig('{"checks": {"skips": false, "assertions": false, "selfComparisons": false}}').checks,
+    { skips: false, assertions: false, selfComparisons: false });
 });
 
 test('.greenwashing.json: a config that cannot be trusted is an error, not a default', () => {
@@ -140,6 +151,12 @@ test('.greenwashing.json: a config that cannot be trusted is an error, not a def
     '{"timeoutSeconds": 1.5}': /timeoutSeconds must be a whole number from 1 to 3600/,
     '{"timeoutSeconds": "600"}': /timeoutSeconds must be a whole number from 1 to 3600/,
     '{"timeoutSeconds": 3601}': /timeoutSeconds must be a whole number from 1 to 3600/,
+    '{"checks": false}': /checks must be an object of true or false for skips, assertions, selfComparisons/,
+    '{"checks": null}': /checks must be an object/,
+    '{"checks": ["skips"]}': /checks must be an object/,
+    '{"checks": {"skip": false}}': /checks must be an object/,
+    '{"checks": {"skips": "false"}}': /checks must be an object/,
+    '{"checks": {"skips": 0}}': /checks must be an object/,
   };
   for (const [text, message] of Object.entries(bad)) {
     assert.match(readConfig(text).error, message, text);

@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { verdict, decide, blockReason } = require('../lib/verdict');
+const { CHECKS } = require('../lib/command');
 
 const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', `${name}.txt`), 'utf8');
 const run = (fields) => ({ command: 'npm test', source: 'package.json scripts.test', timeoutSeconds: 600, exitCode: 0, output: '', ...fields });
@@ -185,6 +186,40 @@ test('the block reason names the command, the result, the counts, the catalog en
   assert.doesNotMatch(reason, /line 5\n/);
 });
 
+test('the block reason names the failed tests before the last lines, at most ten of them', () => {
+  const failed = verdict(run({ exitCode: 1, output: fixture('pytest-mixed') }));
+  const reason = blockReason(run({ exitCode: 1, output: fixture('pytest-mixed') }), failed);
+  assert.match(reason, /\nFailed tests \(2\):\n- test_m\.py::T::test_c\n- test_m\.py::T::test_e\nLast 20 lines of output:\n/);
+  const many = Array.from({ length: 12 }, (_, i) => `FAIL: test_${i} (m.T.test_${i})`).join('\n');
+  const listed = blockReason(run({ exitCode: 1, output: `${many}\nRan 12 tests in 0.1s\n\nFAILED (failures=12)\n` }), failed);
+  assert.match(listed, /Failed tests \(12, the first 10\):\n- test_0 \(m\.T\.test_0\)\n/);
+  assert.match(listed, /- test_9 \(m\.T\.test_9\)\nLast 20 lines/);
+  assert.doesNotMatch(listed, /- test_10 /);
+  assert.doesNotMatch(blockReason(run({ output: fixture('jest-green') }), RED), /Failed tests/);
+});
+
+test('the quick checks: findings block with file, line and entry, at most twenty listed; the release says CHECKS', () => {
+  const findings = Array.from({ length: 23 }, (_, i) => ({ file: 'a.test.js', line: i + 1, gw: 'GW-17', what: 'it.skip - the test does not run as written' }));
+  const checks = { kind: 'checks', command: 'greenwashing checks', source: 'the checks', findings };
+  const result = verdict(checks);
+  assert.deepEqual([result.outcome, result.why], ['failed', '23 problems in the test lines this turn added or changed']);
+  const reason = blockReason(checks, result);
+  assert.match(reason, /^greenwashing gate: the changed tests can pass without testing anything - you cannot finish yet\.\n/);
+  assert.match(reason, /\n- a\.test\.js:1: it\.skip - the test does not run as written \(GW-17\)\n/);
+  assert.match(reason, /\n- a\.test\.js:20: .*\n- and 3 more\n/);
+  assert.doesNotMatch(reason, /a\.test\.js:21:/);
+  assert.match(reason, /turn a check off in \.greenwashing\.json/);
+  const released = decide([checks], [result], { blocks: 3 }, true);
+  assert.match(released.message, /^greenwashing: CHECKS DID NOT PASS - WORK NOT ACCEPTED\./);
+  assert.match(decide([run({})], [RED], { blocks: 3 }, true).message, /^greenwashing: TESTS DID NOT PASS/);
+  // Checks that could not run are did not run, like tests.
+  const notRun = { kind: 'checks', command: 'greenwashing checks', source: 'the checks', configError: 'python3 was not found on PATH' };
+  const notRunReason = blockReason(notRun, verdict(notRun));
+  assert.match(notRunReason, /^greenwashing gate: the checks of the changed tests did not run - you cannot finish yet\./);
+  // No command of the project ran, so there is no output to speak of.
+  assert.match(notRunReason, /\nResult: did not run - python3 was not found on PATH\nSee GW-50 in \S+$/);
+});
+
 test('the block reason stays short when a line of output is huge', () => {
   const reason = blockReason(run({ output: `start\n${'x'.repeat(5000000)}\nend` }), RED);
   assert.ok(reason.length < 10000, `${reason.length} characters`);
@@ -217,8 +252,10 @@ test('failed tests name no catalog entry; did not run names GW-50', () => {
 
 test('the catalog entries the gate cites exist in CATALOG.md', () => {
   const catalog = fs.readFileSync(path.join(__dirname, '..', '..', 'CATALOG.md'), 'utf8');
-  const cited = new Set();
-  for (const result of [verdict(run({ output: 'ok' })), verdict(run({ output: fixture('node22-tap-zero') }))]) cited.add(result.gw);
-  assert.deepEqual([...cited].sort(), ['GW-08', 'GW-50']);
+  const cited = new Set(Object.values(CHECKS));
+  const config = { kind: 'config', command: 'greenwashing checks', files: ['.greenwashing.json'] };
+  for (const result of [verdict(run({ output: 'ok' })), verdict(run({ output: fixture('node22-tap-zero') })), verdict(config)]) cited.add(result.gw);
+  assert.deepEqual([...cited].sort(), ['GW-01', 'GW-08', 'GW-114', 'GW-17', 'GW-18', 'GW-50']);
   for (const id of cited) assert.match(catalog, new RegExp(`^### ${id} `, 'm'), id);
+  assert.match(blockReason(config, verdict(config)), /See GW-114 in /);
 });
