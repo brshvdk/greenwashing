@@ -174,6 +174,9 @@ test('the breaks tried: at most the limit, every file and every kind in turn, sp
   const picked = choose([...table, guard, ...other], 5);
   assert.deepEqual(picked.filter((m) => m.op !== 'number').map((m) => `${m.file}:${m.op}`), ['a.js:guard', 'z.js:guard', 'z.js:comparison']);
   assert.equal(picked.length, 5);
+  // A kind late in the order still gets a turn before a frequent early one gets a second.
+  const comparisons = Array.from({ length: 50 }, (_, i) => ({ file: 'b.js', start: i * 5, end: i * 5 + 1, op: 'comparison', text: '<' }));
+  assert.deepEqual(choose([...comparisons, { file: 'b.js', start: 999, end: 1003, op: 'boolean', text: 'false' }], 3).map((m) => m.op).sort(), ['boolean', 'comparison', 'comparison']);
   // At one place, the kinds go in their order.
   const one = ['number', 'guard', 'comparison', 'condition'].map((op) => ({ file: 'a.js', start: 0, end: 5, op, text: '' }));
   assert.deepEqual(choose(one, 4).map((m) => m.op), ['guard', 'condition', 'comparison', 'number']);

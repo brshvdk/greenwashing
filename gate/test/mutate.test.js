@@ -151,6 +151,8 @@ test("the user's files stay byte for byte; node_modules, .venv and venv are link
   }, `test -L node_modules/dep && test -L .venv && test -L venv && test -L link.js && mkdir -p node_modules/.vite node_modules/.cache && echo run > node_modules/.vite/results.json && echo run > node_modules/.cache/x && ${NODE_CMD}`);
   write(dir, {
     'node_modules/dep/index.js': 'module.exports = { rate: 1 };\n', 'node_modules/dep/package.json': '{"name": "dep", "main": "index.js"}\n',
+    // The caches the user's own runs left: the copy's runs must not write into them.
+    'node_modules/.vite/results.json': '{}\n', 'node_modules/.cache/x': 'old\n',
     '.venv/pyvenv.cfg': 'home = /usr/bin\n', 'venv/pyvenv.cfg': 'home = /usr/bin\n', 'cart.js': `${fs.readFileSync(path.join(dir, 'cart.js'), 'utf8')}${ADD}`,
     'cart.test.js': `${CART_TEST}${ADDS}`, 'notes.txt': 'untracked\n', 'round.js': 'module.exports = { round: (x) => x };\n',
   });
