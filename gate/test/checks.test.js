@@ -304,6 +304,10 @@ test('GW-17: a suite that a condition on CI skips never runs under the gate; a p
   const onCi = (body) => suite('skipIf(process.env.CI)', body);
   assert.deepEqual(edited(`${onCi(one)}${failing}`, onCi(`${one}${failing}`)), [[3, 'GW-17']]);
   assert.deepEqual(fresh(onCi(two)), [[1, 'GW-17']]);
+  // A condition changed to one on CI, on a line of its own: one finding for the marker, not one more
+  // for the new test in the suite.
+  const multi = (condition, body) => `describe.skipIf(\n  ${condition},\n)('old', () => {\n${body}});\n`;
+  assert.deepEqual(edited(multi("process.platform === 'win32'", one), multi('!!process.env.CI', two)), [[1, 'GW-17']]);
   // A test edited in a suite skipped on CI still runs elsewhere: it is read for assertions.
   assert.deepEqual(edited(onCi("  test('c', () => { run(1); });\n"), onCi("  test('c', () => { run(2); });\n")), [[2, 'GW-18']]);
 });

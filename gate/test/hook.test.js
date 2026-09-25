@@ -426,9 +426,17 @@ test('settings changed between turns while unaccepted work stays: no GW-114, the
   const red = gate.stop().json;
   assert.match(red.reason, /the tests failed/);
   assert.doesNotMatch(red.reason, /GW-114/);
-  // Put back during the turn, with nothing else new: that is a change of the turn's settings.
+  // Put back during the turn: that is a change of the turn's settings.
   write(dir, config());
   assert.match(gate.stop(true).json.reason, /the gate's settings changed during this turn[^]*Changed: \.greenwashing\.json\n/);
+  // Also when nothing else differs from the last accepted state: the user undid the work and changed
+  // the settings between turns, and the agent puts the settings back.
+  assert.equal(gate.stop(true).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  write(dir, { 't.test.js': NODE_PASS, ...config({ assertions: false }) });
+  gate.prompt();
+  write(dir, config());
+  assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
 });
 
 test('when the agent works in another worktree of the repository, that worktree is tested', (t) => {
