@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-22",
+  "language": "js",
+  "twin": "fake-mocked-seam-js",
+  "description": "Checkout charges the total in cents; its test goes through the real payments module."
+}

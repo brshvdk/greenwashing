@@ -1,0 +1,6 @@
+def order_ids(orders):
+    return [order["id"] for order in orders]
+
+
+def newest_first(orders):
+    return sorted(orders, key=lambda order: order["placed"], reverse=True)

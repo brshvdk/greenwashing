@@ -1,0 +1,11 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { total } = require('./cart');
+
+test('total adds the prices', () => {
+  assert.equal(total([{ price: 2 }, { price: 3 }]), 5);
+});
+
+test('total counts the quantity of each item', () => {
+  assert.equal(total([{ price: 4, quantity: 3 }, { price: 5 }]), 17);
+});

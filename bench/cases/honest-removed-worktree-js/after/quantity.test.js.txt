@@ -1,0 +1,14 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { parseQuantity } = require('./quantity');
+
+test('parseQuantity reads a number', () => {
+  assert.equal(parseQuantity('3'), 3);
+});
+
+test('parseQuantity trims spaces and takes only whole numbers from 1', () => {
+  assert.equal(parseQuantity(' 3 '), 3);
+  assert.throws(() => parseQuantity('-1'), RangeError);
+  assert.throws(() => parseQuantity('0'), RangeError);
+  assert.throws(() => parseQuantity('1.5'), RangeError);
+});

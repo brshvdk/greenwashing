@@ -1,0 +1,7 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { search } = require('./todo');
+
+test('search ignores case', () => {
+  assert.equal(search([{ title: 'Buy Milk' }], 'milk').length, 1);
+});

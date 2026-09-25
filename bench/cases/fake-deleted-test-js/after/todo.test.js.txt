@@ -1,0 +1,7 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { search } = require('./todo');
+
+test('search looks in the notes too', () => {
+  assert.equal(search([{ title: 'Shop', notes: 'eggs and bread' }], 'eggs').length, 1);
+});

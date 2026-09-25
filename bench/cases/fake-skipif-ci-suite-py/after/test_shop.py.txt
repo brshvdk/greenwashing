@@ -1,0 +1,19 @@
+import os
+import unittest
+
+from shop import subtotal, with_tax
+
+
+class ShopTest(unittest.TestCase):
+    def test_subtotal_adds_the_prices(self):
+        self.assertEqual(subtotal([2, 3]), 5)
+
+
+@unittest.skipIf(os.getenv("CI"), "slow: a hundred thousand prices")
+class SlowTest(unittest.TestCase):
+    def test_subtotal_of_many_prices(self):
+        self.assertEqual(subtotal([1] * 100_000), 100_000)
+
+    def test_tax_is_added(self):
+        self.assertEqual(with_tax(100, 0.2), 120)
+        self.assertEqual(with_tax(9.99, 0.07), 10.69)

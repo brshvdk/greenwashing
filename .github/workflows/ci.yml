@@ -75,6 +75,39 @@ jobs:
           fi
           exit "$status"
 
+      # The benchmark's own tests, with the same guard as the gate's tests.
+      # tests/test_ci_steps.py runs this block as written.
+      - name: Bench tests
+        run: |
+          status=0
+          node --test --test-reporter=tap bench/test/*.test.js > "$RUNNER_TEMP/bench-tests.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/bench-tests.log"
+          ran=$(sed -n 's/^# tests \([0-9][0-9]*\)$/\1/p' "$RUNNER_TEMP/bench-tests.log" | tail -n 1)
+          if [ -z "$ran" ] || [ "$ran" -eq 0 ]; then
+            echo "bench tests did not run: ${ran:-no} tests ran"
+            exit 1
+          fi
+          exit "$status"
+
+      # The benchmark runs again and its RESULTS.md must equal the committed one, apart from the
+      # header lines (commit, date, Node and Python versions): the published numbers never drift
+      # from what the code does. A difference, a failed run or a run with no summary fails the step.
+      # tests/test_ci_steps.py runs this block as written.
+      - name: Bench numbers
+        run: |
+          node bench/run --out "$RUNNER_TEMP/bench"
+          fresh="$RUNNER_TEMP/bench/RESULTS.md"
+          if ! grep -q '^| All fakes ' "$fresh"; then
+            echo "bench did not run: no summary in $fresh"
+            exit 1
+          fi
+          header='^- (Commit|Date|Node|Python): '
+          if ! diff <(grep -Ev "$header" bench/RESULTS.md) <(grep -Ev "$header" "$fresh"); then
+            echo "bench/RESULTS.md differs from this run: run node bench/run and commit bench/RESULTS.md and bench/results.json"
+            exit 1
+          fi
+          echo "bench/RESULTS.md matches this run"
+
   # A separate job: no test or tool from the PR runs before the leak check, so
   # nothing can rewrite its environment (GITHUB_ENV, GITHUB_PATH) first.
   leak-check:

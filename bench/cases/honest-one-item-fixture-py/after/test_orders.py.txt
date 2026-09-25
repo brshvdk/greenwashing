@@ -1,0 +1,12 @@
+import unittest
+
+from orders import newest_first, order_ids
+
+
+class OrdersTest(unittest.TestCase):
+    def test_order_ids_keep_the_order(self):
+        self.assertEqual(order_ids([{"id": 7}, {"id": 3}]), [7, 3])
+
+    def test_newest_first(self):
+        orders = [{"id": 1, "placed": "2026-01-02"}, {"id": 2, "placed": "2026-03-01"}, {"id": 3, "placed": "2026-02-10"}]
+        self.assertEqual(order_ids(newest_first(orders)), [2, 3, 1])

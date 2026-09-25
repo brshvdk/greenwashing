@@ -1,0 +1,14 @@
+import unittest
+
+from metrics import count_errors, error_rate
+
+
+class MetricsTest(unittest.TestCase):
+    def test_count_errors(self):
+        statuses = [200, 503, 200]
+        self.assertEqual(count_errors([{"path": "/cart", "status": s} for s in statuses]), 1)
+
+    def test_error_rate_of_user_requests(self):
+        requests = [{"path": "/cart", "status": 200}, {"path": "/cart", "status": 500},
+                    {"path": "/cart", "status": 200}, {"path": "/cart", "status": 200}]
+        self.assertEqual(error_rate(requests), 0.25)

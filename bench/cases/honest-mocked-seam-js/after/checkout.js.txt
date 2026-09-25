@@ -1,0 +1,8 @@
+const payments = require('./payments');
+
+// Charges an order, whose total is in dollars.
+function checkout(order, pay = payments.charge) {
+  return pay(Math.round(order.total * 100));
+}
+
+module.exports = { checkout };

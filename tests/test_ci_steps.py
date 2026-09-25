@@ -9,6 +9,7 @@ working-directory, defaults). Needs python3, ruff, git and node on PATH, as in t
 CI job that runs it.
 """
 
+import json
 import os
 import re
 import shutil
@@ -177,6 +178,96 @@ class GateTestsStepTest(StepCase):
         code, out = self.run_gate_step({"gate/test/kill.test.js": "process.kill(process.ppid, 'SIGKILL');\n"})
         self.assertNotEqual(code, 0, out)
         self.assertIn("gate tests did not run: no tests ran", out)
+
+
+class BenchTestsStepTest(StepCase):
+    def run_bench_tests_step(self, files):
+        return self.run_step("ci.yml", "Bench tests", self.make_dir(files))
+
+    def test_passing_suite_passes(self):
+        code, out = self.run_bench_tests_step({"bench/test/ok.test.js": NODE_PASSING})
+        self.assertEqual(code, 0, out)
+        self.assertIn("# pass 1", out)
+
+    def test_failing_test_fails(self):
+        code, out = self.run_bench_tests_step({"bench/test/ok.test.js": NODE_PASSING, "bench/test/bad.test.js": NODE_FAILING})
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("# fail 1", out)
+
+    def test_no_test_files_fail(self):
+        code, out = self.run_bench_tests_step({"bench/run": "1;\n"})
+        self.assertNotEqual(code, 0, out)
+        self.assertRegex(out, r"bench tests did not run: (0|no) tests ran")
+
+
+RESULTS = """# Benchmark
+
+- Commit: {commit}
+- Date: {date}
+- Node: v22.0.0
+- Python: 3.12.3
+
+| Cases | Tests only | Gate | Gate + mutants |
+| --- | --- | --- | --- |
+| All fakes (22) | 0 of 22 caught | {gate} of 22 caught | 17 of 22 caught |
+| Honest twins (22) | 0 false alarms in 22 | 0 false alarms in 22 | 0 false alarms in 22 |
+"""
+
+
+class BenchNumbersStepTest(StepCase):
+    """The step runs bench/run: here a stand-in that writes a RESULTS.md given to it and exits as told."""
+
+    def run_numbers_step(self, committed, fresh, exit_code=0):
+        run = ("const fs = require('fs');\nconst path = require('path');\n"
+               f"const text = {json.dumps(fresh)};\n"
+               "if (text !== null) {\n  fs.mkdirSync(process.argv[3], { recursive: true });\n"
+               "  fs.writeFileSync(path.join(process.argv[3], 'RESULTS.md'), text);\n}\n"
+               f"process.exitCode = {exit_code};\n")
+        files = {"bench/run": run}
+        if committed is not None:
+            files["bench/RESULTS.md"] = committed
+        return self.run_step("ci.yml", "Bench numbers", self.make_dir(files))
+
+    def test_same_numbers_with_another_header_pass(self):
+        committed = RESULTS.format(commit="aaa", date="2026-01-01", gate=14)
+        code, out = self.run_numbers_step(committed, RESULTS.format(commit="bbb", date="2026-09-25", gate=14))
+        self.assertEqual(code, 0, out)
+        self.assertIn("bench/RESULTS.md matches this run", out)
+
+    def test_a_changed_number_fails(self):
+        committed = RESULTS.format(commit="aaa", date="2026-01-01", gate=14)
+        code, out = self.run_numbers_step(committed, RESULTS.format(commit="aaa", date="2026-01-01", gate=13))
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("bench/RESULTS.md differs from this run", out)
+        self.assertIn("13 of 22 caught", out)
+
+    def test_a_changed_line_outside_the_header_fails(self):
+        committed = RESULTS.format(commit="aaa", date="2026-01-01", gate=14)
+        code, out = self.run_numbers_step(committed, committed.replace("# Benchmark", "# Bench"))
+        self.assertNotEqual(code, 0, out)
+
+    def test_a_failed_run_fails(self):
+        results = RESULTS.format(commit="aaa", date="2026-01-01", gate=14)
+        code, out = self.run_numbers_step(results, results, exit_code=2)
+        self.assertNotEqual(code, 0, out)
+        self.assertNotIn("matches this run", out)
+
+    def test_a_run_that_wrote_nothing_fails(self):
+        code, out = self.run_numbers_step(RESULTS.format(commit="aaa", date="2026-01-01", gate=14), None)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("bench did not run: no summary", out)
+
+    def test_a_run_with_no_summary_fails(self):
+        # Both files hold only header lines: without the summary check they would compare equal.
+        header = "- Commit: aaa\n- Date: 2026-01-01\n"
+        code, out = self.run_numbers_step(header, header)
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("bench did not run: no summary", out)
+
+    def test_no_committed_results_fail(self):
+        code, out = self.run_numbers_step(None, RESULTS.format(commit="aaa", date="2026-01-01", gate=14))
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("bench/RESULTS.md differs from this run", out)
 
 
 class ToolsVenvStepTest(StepCase):

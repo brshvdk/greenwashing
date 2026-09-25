@@ -1,0 +1,5 @@
+function add(list, title) {
+  return [...list, { id: list.length + 1, title, done: false }];
+}
+
+module.exports = { add };

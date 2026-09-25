@@ -1,0 +1,7 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { toCents } = require('./price');
+
+test('toCents turns dollars into cents', () => {
+  assert.equal(toCents(10.5), 1050);
+});

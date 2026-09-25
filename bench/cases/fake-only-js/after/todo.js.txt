@@ -1,0 +1,9 @@
+function add(list, title) {
+  return [...list, { id: list.length + 1, title, done: false }];
+}
+
+function toggle(list, id) {
+  return list.map((todo) => ({ ...todo, done: !todo.done }));
+}
+
+module.exports = { add, toggle };

@@ -1,0 +1,12 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { shipping } = require('./shipping');
+
+test('shipping is 5 dollars', () => {
+  assert.equal(shipping(20), 5);
+});
+
+test('shipping is free from 50 dollars up', () => {
+  assert.equal(shipping(50), 0);
+  assert.equal(shipping(49.99), 5);
+});

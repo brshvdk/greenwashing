@@ -1,0 +1,8 @@
+def subtotal(prices):
+    return sum(prices)
+
+
+def average(ratings):
+    if not ratings:
+        return 0
+    return sum(ratings) / len(ratings)

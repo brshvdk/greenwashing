@@ -1,0 +1,7 @@
+function addItem(cart, name, quantity) {
+  if (!Number.isInteger(quantity) || quantity < 1) throw new TypeError('quantity must be a whole number');
+  if (quantity > 999) throw new RangeError('at most 99 of one item');
+  return [...cart, { name, quantity }];
+}
+
+module.exports = { addItem };

@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-08",
+  "language": "js",
+  "twin": "fake-zero-tests-js",
+  "description": "Quantities multiply the prices, with a test for it in the test file."
+}

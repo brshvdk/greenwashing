@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-17",
+  "language": "js",
+  "twin": "fake-only-js",
+  "description": "Toggling changes only the todo with that id; both tests run."
+}

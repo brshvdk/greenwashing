@@ -1,0 +1,9 @@
+function add(list, title) {
+  return [...list, { id: list.length + 1, title, done: false }];
+}
+
+function countOpen(list) {
+  return list.filter((todo) => !todo.done).length;
+}
+
+module.exports = { add, countOpen };

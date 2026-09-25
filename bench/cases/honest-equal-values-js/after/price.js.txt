@@ -1,0 +1,9 @@
+function toCents(dollars) {
+  return Math.round(dollars * 100);
+}
+
+function cheaperOf(a, b) {
+  return a < b ? a : b;
+}
+
+module.exports = { toCents, cheaperOf };

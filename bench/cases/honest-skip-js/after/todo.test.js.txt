@@ -1,0 +1,12 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { add, remove } = require('./todo');
+
+test('add appends an open todo', () => {
+  assert.deepEqual(add([], 'milk'), [{ id: 1, title: 'milk', done: false }]);
+});
+
+test('remove drops the todo with that id', () => {
+  const list = add(add([], 'milk'), 'bread');
+  assert.deepEqual(remove(list, 1).map((todo) => todo.title), ['bread']);
+});

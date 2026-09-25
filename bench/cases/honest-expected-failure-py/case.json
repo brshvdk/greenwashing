@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-17",
+  "language": "python",
+  "twin": "fake-expected-failure-py",
+  "description": "Splitting a bill keeps the cents, and its test must pass."
+}

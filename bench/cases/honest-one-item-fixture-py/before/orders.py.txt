@@ -1,0 +1,2 @@
+def order_ids(orders):
+    return [order["id"] for order in orders]

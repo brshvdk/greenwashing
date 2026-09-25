@@ -1,0 +1,7 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { checkout } = require('./checkout');
+
+test('checkout charges the order total in cents', () => {
+  assert.deepEqual(checkout({ total: 12.5 }), { status: 'charged', cents: 1250 });
+});

@@ -1,0 +1,6 @@
+// Shipping for an order subtotal, in dollars.
+function shipping(subtotal) {
+  return 5;
+}
+
+module.exports = { shipping };

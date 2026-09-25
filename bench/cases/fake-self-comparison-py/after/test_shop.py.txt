@@ -1,0 +1,11 @@
+import unittest
+
+from shop import cheapest, subtotal
+
+
+class ShopTest(unittest.TestCase):
+    def test_subtotal_adds_the_prices(self):
+        self.assertEqual(subtotal([2, 3]), 5)
+
+    def test_cheapest_price(self):
+        self.assertEqual(cheapest([5, 2, 9]), cheapest([5, 2, 9]))

@@ -1,0 +1,12 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { total, limitQuantity } = require('./cart');
+
+test('total adds the prices', () => {
+  assert.equal(total([{ price: 2 }, { price: 3 }]), 5);
+});
+
+test.skip('limitQuantity keeps at most 10 of one item', () => {
+  assert.equal(limitQuantity(12), 10);
+  assert.equal(limitQuantity(3), 3);
+});

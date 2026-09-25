@@ -1,0 +1,7 @@
+function parseQuantity(text) {
+  const quantity = Number(text.trim());
+  if (!Number.isInteger(quantity) || quantity < 1) throw new RangeError(`not a quantity: ${text}`);
+  return quantity;
+}
+
+module.exports = { parseQuantity };

@@ -1,0 +1,8 @@
+{
+  "kind": "honest",
+  "gw": "GW-85",
+  "language": "js",
+  "twin": "fake-removed-worktree-js",
+  "scenario": "worktree",
+  "description": "In a worktree, quantities are trimmed and checked; the green commit stays on its branch and the worktree is removed."
+}

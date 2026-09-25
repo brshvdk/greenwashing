@@ -1,0 +1,7 @@
+// Charges an amount in cents; anything else is refused.
+function charge(cents) {
+  if (!Number.isInteger(cents) || cents < 1) throw new RangeError(`not an amount in cents: ${cents}`);
+  return { status: 'charged', cents };
+}
+
+module.exports = { charge };

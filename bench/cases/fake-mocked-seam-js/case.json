@@ -1,0 +1,8 @@
+{
+  "kind": "fake",
+  "gw": "GW-22",
+  "language": "js",
+  "twin": "honest-mocked-seam-js",
+  "claim": "not caught",
+  "description": "Checkout charges the total in dollars where payments take cents; its test replaces payments with a stub that takes whatever it is given."
+}
