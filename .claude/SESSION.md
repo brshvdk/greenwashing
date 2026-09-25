@@ -5,16 +5,18 @@ Step 1, PR 7 - two gate fixes the owner decided after PR 6 (an agent's settings 
 
 ## Progress
 - [x] self-run of the mutation command on main 38a3d17 (`--base a6ad19a --timeout 7200 --run-timeout 900`, 38 min 50 s): 9 code files, 1205 changed lines, 666 places, 20 tried - 20 killed, 0 survived, 0 did not run (exit 0); no copy left
-- [x] part 1.1: a Stop records the settings files of each tree (`stopped`); after an unaccepted turn a tree whose settings are as its last Stop saw them keeps the earlier baseline and settings text; the WORK NOT ACCEPTED line for a settings change says it still blocks
-- [x] part 1.2: control break per file with a break chosen (JS: a throwing function called at once, after a BOM and a `#!` line; Python: a raise after the docstring, `__future__` imports, `#!` and coding lines, from `python_mutants.py`); green -> "not exercised", its breaks did not run; a control that times out -> did not run; live with a real `pip install -e .` (pip 24.0): main reports 2 false survivors, the branch "not exercised" (exit 2), the same project without the editable install kills both (exit 0)
-- [x] part 2: `bench/` (22 fakes, 22 honest twins, `bench/run`, RESULTS.md, results.json, tests); CI steps "Bench tests" and "Bench numbers"; the same tables on Node 20/21/22 and Python 3.10-3.13; two runs in a row byte for byte the same
-- [ ] own mutation waves (part 1, bench), fresh-context review, docs (`docs/limitations.md`, map), PR checks green
+- [x] part 1.1: settings carried over an unaccepted turn keep blocking, judged per file against what the gate last saw (every prompt and Stop record it); the WORK NOT ACCEPTED line for a settings change says so
+- [x] part 1.2: control break per file with a break chosen; green -> "not exercised" (did not run); live with a real `pip install -e .` (pip 24.0): main reports 2 false survivors, the branch "not exercised" (exit 2), the same project without the editable install kills both (exit 0)
+- [x] part 2: `bench/` (22 fakes, 22 honest twins), `bench/run`, RESULTS.md, results.json, tests; CI "Bench tests" and "Bench numbers" (RESULTS.md and results.json compared); the same tables on Node 20/21/22 and Python 3.10-3.13; two runs in a row byte for byte the same
+- [x] own waves: 49 mutants (38 red; survivors closed by tests or equivalent) and 9 over the per-file fix (7 red, 2 closed or equivalent); two fresh-context reviews (bench; part 1), every finding reproduced, fixed or listed
+- [ ] PR 14: all checks green on the last push (Safety net red by design: CI and guarded files change)
 
 ## Decisions made (and why)
 - Owner (PR 7): an agent's settings change carried over an unaccepted turn keeps blocking; a user's change between turns does not. Chosen here (after the fresh-context review, each case reproduced): each settings file is judged alone against what the gate last saw (the last Stop, or the prompt of a turn cut off before its Stop); only a tree with an earlier snapshot carries; a user who wants the agent's change edits the file between turns.
 - Owner (PR 7): the mutation command makes each changed file fail at its start before the breaks; tests green with that -> "not exercised", did not run. Chosen here: only files with a break chosen get a control run (time counts toward the limits, not toward `limit`); a control that times out or cannot start leaves its file's breaks as did not run; any other red outcome means the file runs.
 - Owner (PR 7): case files are stored as `name.txt` (this repository's gate reads new test files and every `.greenwashing.json`); `bench/run` builds the projects in a temporary folder outside the repository and removes it; a file without the suffix, an empty case or no cases is did not run (exit 2); `bench/README.md` says why.
 - PR 7, chosen here: the benchmark's "tests only" column is the gate's command choice on the tree the change leaves, judged by exit code; a fake with no catalog entry of its own takes the nearest (rewritten expected values GW-01, a deleted failing test GW-17, a red commit in a removed worktree GW-85); every fake is its honest twin plus the defect and the cheat, nothing else.
+- Benchmark review (fresh context), each finding reproduced: the GW-04 fake is `reverse=True` left out (the tool then misses it: a finding, not removed); the GW-22 fake stubs both the cart and payments; the GW-74 honest fixture has a failing health check; a worktree case is measured on a checkout of its branch (CI would test that commit); CI compares results.json too. The honest removed-worktree twin's one surviving break (`quantity < 1` -> `< 2`, no test that `'1'` is accepted) stays: changing it after the measurement would tune the set to the result.
 - Zero tests in the benchmark are a test file renamed out of the runner's patterns: `--test-name-pattern` matching nothing reads as zero tests on Node 20/21 but as one passing test per file on Node 22 (a finding, in the limitations), and CI's Node may differ from a local run.
 - Owner (PR 4): the contradictions and silences the docs critic found (which shell runs a hook, an unquoted placeholder example, Stop on timeout, exit 2 with continue:false, trust for plugin hooks and cloud sessions) do not change the hook format; continue.
 - Owner (PR 4 review, changed in PR 6): a prompt after a turn no Stop accepted (interrupted, blocked, or let go as WORK NOT ACCEPTED) keeps that turn's start; the gate follows the Stop input's `cwd` into worktrees; a non-git folder with no test command is allowed with one line; `.txt` is code, not documentation; a real `scripts.test` in `package.json` next to Python code needs `testCommand`; the test command runs with `CI=true`.
@@ -67,9 +69,9 @@ Step 1, PR 7 - two gate fixes the owner decided after PR 6 (an agent's settings 
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-PR 7 is on `claude/amazing-darwin-e9qdmw`, from main at 38a3d17. Next steps:
-1. PR 7: mutation waves, review, docs; all checks green on the last push; the owner merges.
-2. Then PR 8: README and the demo (the numbers come from `bench/RESULTS.md`, never copied by hand).
+PR 7 is PR 14 on `claude/amazing-darwin-e9qdmw`, from main at 38a3d17. Numbers at e35c348 (`bench/RESULTS.md`): tests only 1 of 22 fakes caught, gate 14 of 22, gate + mutants 16 of 22 (17 claimed: 16 caught, GW-04 missed); honest twins: 0, 0 and 1 false alarm in 22. Next steps:
+1. PR 14: the owner merges; open for the owner: the honest removed-worktree twin's test lacks the accepted boundary `'1'` (the one false alarm, left as measured); the repository's `.greenwashing.json` does not run `bench/test`.
+2. Then PR 8: README and the demo (numbers only from `bench/RESULTS.md`).
 
 ## Known issues / traps
 - This repository's `.greenwashing.json` runs the Python tests and `gate/test/*.test.js`, not `bench/test/*.test.js`: the gate on this repository does not run the benchmark's tests at a Stop (CI does). The file is guarded; the owner decides.
