@@ -67,8 +67,10 @@ test('JavaScript guards: one throw or return after an if with no else, alone on 
   assert.deepEqual(guards('function f(x) {\n  if (!x) { return null; }\n  go();\n}\n'), ['function f(x) {\n  go();\n}\n']);
   assert.deepEqual(guards('function f(x) {\n  if (!x) return {\n    a: 1,\n  };\n  go();\n}\n'), ['function f(x) {\n  go();\n}\n']);
   // Not guards: an else follows, two statements, another statement in the body, a braceless body of
-  // another statement, code before it on its line or after it.
+  // another statement, code or a comment before it on its line or after it, a label above it.
   const none = [
+    'function f(x) {\n  if (x < 0) return 0; /* note\n  more */ const y = 1;\n}\n', 'function f(x) {\n  /* a\n  */ if (x) return;\n}\n',
+    'function f(x) {\n  go(x);\n  outer:\n  if (x) return;\n}\n', 'function f(x) {\n  if (x) return; // why\n}\n',
     'function f(x) {\n  if (x) return 1;\n  else return 2;\n}\n', 'function f(x) {\n  if (x) { log(); return; }\n}\n',
     'function f(x) {\n  if (x) go();\n}\n', 'function f(x) {\n  for (const y of x)\n    if (y) return y;\n}\n',
     'function f(x) {\n  a(); if (x) return;\n}\n', 'function f(x) {\n  if (x) return; a();\n}\n', 'function f(x) {\n  else if (x) return;\n}\n',
@@ -89,6 +91,21 @@ test('JavaScript: only code on changed lines breaks - not strings, comments, tem
   assert.deepEqual(jsMutants(code, new Set()).map((m) => m.op), []);
   // A break that spans lines counts when any of its lines changed.
   assert.deepEqual(jsMutants('if (a &&\n  b) go();\n', new Set([2])).map((m) => m.op), ['condition']);
+});
+
+test('JavaScript comparisons: between a name, a number or a bracket and an operand, on one line - not a JSX tag or attribute', () => {
+  assert.deepEqual(ops('x = a.length > 0 && (b) <= c[1] && d !== "e" && 1 < -f;'), ['comparison', 'comparison', 'comparison', 'comparison', 'number', 'number', 'number']);
+  assert.deepEqual(ops('const a = <div\n  className="row"\n>\n  text\n</div>;'), []);
+  assert.deepEqual(ops('const a = <div className="a" > hi</div>;'), []);
+  assert.deepEqual(ops('const a = b\n  > c;'), []);
+});
+
+test('a returned value that goes on over lines in a template is replaced whole', () => {
+  const source = 'function f() {\n  return `npm <command>\n\nUsage: ${x}\n` + y;\n}\n';
+  const [ret] = jsMutants(source, everyLine(source)).filter((m) => m.op === 'return');
+  assert.equal(apply(source, ret), 'function f() {\n  return null;\n}\n');
+  // A value past 2000 characters is not replaced: its end cannot be told for sure.
+  assert.deepEqual(ops(`function f() {\n  return [${'1, '.repeat(700)}];\n}\n`).filter((op) => op === 'return'), []);
 });
 
 test('JavaScript returns and numbers that are left alone', () => {
@@ -112,10 +129,13 @@ test('every JavaScript break of this repository\'s own code still parses', () =>
 
 test('a break that does not parse is caught before it runs; files the check cannot read pass through', () => {
   assert.equal(stillParses('a.js', 'x = 1;', 'x = ;'), false);
-  // A label with nothing left to label once the guard under it is removed.
-  const labelled = 'function f(x) {\n  go(x);\n  outer:\n  if (x) return;\n}\n';
-  const guard = jsMutants(labelled, everyLine(labelled)).find((m) => m.op === 'guard');
-  assert.equal(stillParses('a.js', labelled, apply(labelled, guard)), false);
+  assert.equal(stillParses('a.js', 'label:\n  go();\n', 'label:\n'), false);
+  // A method named if reads like an if: its turned condition does not parse (in JavaScript), or it has
+  // a return type and is left alone (TypeScript).
+  const method = 'class A {\n  if(x) {\n    return x;\n  }\n}\n';
+  const [condition] = jsMutants(method, everyLine(method)).filter((m) => m.op === 'condition');
+  assert.equal(stillParses('a.js', method, apply(method, condition)), false);
+  assert.deepEqual(ops('class A {\n  if(x: number): number {\n    return x;\n  }\n}\n').filter((op) => op === 'condition'), []);
   assert.equal(stillParses('a.cjs', 'x = 1;', 'x = 2;'), true);
   // The original does not parse as CommonJS (an ES module, JSX): nothing to compare with.
   assert.equal(stillParses('a.js', 'import x from "y";', 'import x from ;'), true);

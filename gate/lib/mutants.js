@@ -100,7 +100,7 @@ function lineAt(starts, index) {
 // each replacing source[start, end) with text. Only code counts: the scanner blanks strings,
 // comments, templates and regular expressions.
 function jsMutants(source, changed) {
-  const { code } = mask(source);
+  const { code, templates } = mask(source);
   const starts = lineStarts(source);
   const found = [];
   const add = (op, start, end, text) => {
@@ -122,22 +122,30 @@ function jsMutants(source, changed) {
   for (const m of code.matchAll(/(?<![\w$.])if\s*\(/g)) {
     const open = m.index + m[0].length - 1;
     const close = closing(code, open);
-    if (close === -1) continue;
+    // A return type after the brackets: a method named if (TypeScript), not an if.
+    if (close === -1 || code[skipSpace(code, close + 1)] === ':') continue;
     add('condition', open + 1, close, `!(${source.slice(open + 1, close)})`);
+    // A guard fills its lines alone: nothing before it on its first line and nothing after it on its
+    // last, not even a comment (checked in the source); after a statement that ends, not after a
+    // label or the head of another statement.
     const guard = guardEnd(code, close + 1);
-    const before = code.slice(0, m.index);
-    const alone = /^[ \t]*$/.test(code.slice(lineStart(m.index), m.index)) && /(?:^|[;{}:])\s*$/.test(before);
-    if (guard !== -1 && alone && /^[ \t]*(?:\r?\n|\r|$)/.test(code.slice(guard)) && !/^\s*else\b/.test(code.slice(guard))) {
-      add('guard', lineStart(m.index), lineEnd(guard - 1), '');
-    }
+    const alone = guard !== -1 && /^[ \t]*$/.test(source.slice(lineStart(m.index), m.index))
+      && /^[ \t]*(?:\r?\n|\r|$)/.test(source.slice(guard)) && /(?:^|[;{}])\s*$/.test(code.slice(0, m.index));
+    if (alone && !/^\s*else\b/.test(code.slice(guard))) add('guard', lineStart(m.index), lineEnd(guard - 1), '');
   }
-  // A comparison with a space on each side (a < b): TypeScript generics and JSX tags have none.
-  for (const m of code.matchAll(/(?<=\s)(===|!==|==|!=|<=|>=|<|>)(?=\s)/g)) add('comparison', m.index, m.index + m[1].length, FLIP[m[1]]);
+  // A comparison between a name, a number or a bracket and an operand, with spaces on the same line
+  // (a < b): TypeScript generics, JSX tags (also a tag's > on a line of its own) and attributes before
+  // a > are left alone.
+  for (const m of code.matchAll(/(?<=[\w$)\]][ \t]+)(===|!==|==|!=|<=|>=|<|>)(?=[ \t]+[\w$(![\-+.'"`])/g)) add('comparison', m.index, m.index + m[1].length, FLIP[m[1]]);
   // A returned value replaced with null.
   for (const m of code.matchAll(/(?<![\w$.])return\b[ \t]*/g)) {
     const from = m.index + m[0].length;
     if (/^(?:[;})\]\r\n]|$)/.test(code.slice(from, from + 1))) continue;
-    const end = initializerEnd(code, from);
+    // A template the value holds may go on over lines: the value ends after it.
+    let end = initializerEnd(code, from);
+    for (let open = code.indexOf('`', from); open !== -1 && open < end; open = code.indexOf('`', open + 1)) {
+      if (templates.get(open) >= end) end = initializerEnd(code, templates.get(open) + 1);
+    }
     if (end - from >= INITIALIZER) continue;
     const value = source.slice(from, end).trimEnd();
     if (!/^(?:null|undefined)$/.test(value)) add('return', from, from + value.length, 'null');
@@ -167,6 +175,11 @@ function guardEnd(code, from) {
   if (end - at >= INITIALIZER) return -1;
   return code[end] === ';' ? end + 1 : end;
 }
+
+const skipSpace = (code, at) => {
+  while (at < code.length && /\s/.test(code[at])) at += 1;
+  return at;
+};
 
 // A number one higher, written the same way: 9 -> 10, 1.50 -> 2.50.
 function nextNumber(text) {

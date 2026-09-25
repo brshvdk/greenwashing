@@ -275,13 +275,14 @@ test('the changed lines: since the merge base with main, committed or not, untra
 });
 
 test('a break that would not parse is not tried: node --test would count the file that cannot load as a failed test', (t) => {
-  const code = 'function f(x) {\n  go(x);\n  outer:\n  if (x) return;\n}\nfunction go() {}\nmodule.exports = { f };\n';
+  // A method named if: its "condition" turned around is no parameter list.
+  const code = 'class A {\n  if(x) {\n    return x;\n  }\n}\nmodule.exports = { A };\n';
   const dir = project(t, { 'f.test.js': "require('node:test')('loads', () => { require('./f'); });\n" });
   write(dir, { 'f.js': code });
   const run = mutate(t, dir);
-  assert.match(run.out, /\n1 code file, 7 changed lines, 1 place to break; 1 tried at most \(limit 20\)\n/);
-  assert.match(run.out, /\n- survived: f\.js:4: if \(x\) return; {2}-> {2}if \(!\(x\)\) return;\n/);
-  assert.doesNotMatch(run.out, /removed: /);
+  assert.match(run.out, /\n1 code file, 6 changed lines, 2 places to break; 2 tried at most \(limit 20\)\n/);
+  assert.match(run.out, /\n- survived: f\.js:3: return x; {2}-> {2}return null;\n/);
+  assert.doesNotMatch(run.out, /- killed|if\(!\(x\)\)/);
 });
 
 test('a file of many tested numbers does not crowd out an untested guard in another file', (t) => {
