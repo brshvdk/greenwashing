@@ -302,6 +302,7 @@ test('the control break: the file raises as soon as it runs, before its own code
     ['ran = 1\n', 1], ['"""Doc."""\nran = 1\n', 2], ['"""Doc\n\nmore."""\nfrom __future__ import annotations\n\nran = 1\n', 5],
     ['#!/usr/bin/env python3\n# -*- coding: utf-8 -*-\nran = 1\n', 3], ['\uFEFFran = 1\n', 1], ['# a comment\nran = 1\n', 2],
     ['from __future__ import annotations', 2], ['"""Doc."""\r\nfrom __future__ import division\r\nran = 1\r\n', 3], ['', 1],
+    ['"""Doc\n\nmore."""\nran = 1\n', 4],
   ];
   for (const [source, line] of python) {
     const broken = controlled(source, 'python');

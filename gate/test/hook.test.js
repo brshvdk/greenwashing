@@ -502,6 +502,90 @@ test('after WORK NOT ACCEPTED, a .greenwashing.json git ignores: the agent\'s ch
   assert.match(red.reason, /Counts: 0 passed, 1 failed, 0 skipped/);
 });
 
+// Stops until the gate lets the turn go as WORK NOT ACCEPTED.
+function release(gate, cwd) {
+  for (const active of [false, true, true]) assert.equal(gate.stop(active, cwd).json.decision, 'block');
+  assert.match(gate.stop(true, cwd).json.systemMessage, /WORK NOT ACCEPTED/);
+}
+
+test('after WORK NOT ACCEPTED, each settings file is judged alone: the user changing another one does not make the agent\'s change theirs', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, 'pkg/.greenwashing.json': JSON.stringify({ timeoutSeconds: 100 }) }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL, '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  release(gate);
+  // The user changes the package's file between turns, not the root one.
+  write(dir, { 'pkg/.greenwashing.json': JSON.stringify({ timeoutSeconds: 200 }) });
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+  // The agent puts the root file back: the command the work started with runs.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  assert.match(gate.stop(true).json.reason, /Counts: 0 passed, 1 failed, 0 skipped/);
+});
+
+test('after WORK NOT ACCEPTED, the project\'s own settings the user changes are used while another file of the tree is carried', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS, 'pkg/.greenwashing.json': JSON.stringify({ timeoutSeconds: 100 }) }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt();
+  // The agent commits its change: the earlier state of the package's file is in the commit before.
+  write(dir, { 't.test.js': NODE_FAIL, 'pkg/.greenwashing.json': JSON.stringify({ timeoutSeconds: 5 }) });
+  git(dir, 'commit', '-qam', 'the agent commits');
+  release(gate);
+  const serial = NODE_CMD.replace('--test-reporter=tap', '--test-reporter=tap --test-concurrency=1');
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: serial }) });
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Changed: pkg\/\.greenwashing\.json\n/);
+  write(dir, { 'pkg/.greenwashing.json': JSON.stringify({ timeoutSeconds: 100 }) });
+  assert.match(gate.stop(true).json.reason, /Command: node --test --test-reporter=tap --test-concurrency=1 t\.test\.js /);
+});
+
+test('after a turn cut off before its Stop, the settings are judged against the prompt of that turn, not an older Stop', (t) => {
+  const s0 = JSON.stringify({ testCommand: NODE_CMD });
+  const dir = project(t, { 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  release(gate);
+  // The user turns the skip check off between turns, then puts the file back before the next prompt;
+  // the turn in between was cut off before any Stop.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD, checks: { skips: false } }) });
+  gate.prompt();
+  write(dir, { '.greenwashing.json': s0 });
+  gate.prompt();
+  const red = gate.stop().json;
+  assert.doesNotMatch(red.reason, /GW-114/);
+  assert.match(red.reason, /Counts: 0 passed, 1 failed, 0 skipped/);
+});
+
+test('a worktree entered after the prompt with the user\'s own settings change blocks in that turn only', (t) => {
+  const { dir, tree } = withWorktree(t);
+  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD, timeoutSeconds: 90 }) });
+  const gate = session(t, dir);
+  gate.prompt(dir);
+  write(tree, { 't.test.js': NODE_FAIL });
+  assert.match(gate.stop(false, tree).json.reason, /Changed: \.claude\/worktrees\/feat\/\.greenwashing\.json\n/);
+  for (const active of [true, true]) assert.equal(gate.stop(active, tree).json.decision, 'block');
+  assert.match(gate.stop(true, tree).json.systemMessage, /WORK NOT ACCEPTED/);
+  gate.prompt(tree);
+  write(tree, { 't.test.js': NODE_PASS });
+  assert.match(gate.stop(false, tree).json.systemMessage, /^greenwashing: tests passed/);
+});
+
+test("after WORK NOT ACCEPTED, the project's settings the user changes between turns are used while a worktree's change of the agent is carried", (t) => {
+  const { tree, gate } = seenWorktree(t);
+  const dir = path.dirname(path.dirname(path.dirname(tree)));
+  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }), 't.test.js': NODE_FAIL });
+  release(gate, tree);
+  const serial = `${NODE_CMD.replace('--test-reporter=tap', '--test-reporter=tap --test-concurrency=1')}`;
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: serial }) });
+  gate.prompt(tree);
+  assert.match(gate.stop(false, tree).json.reason, /Changed: \.claude\/worktrees\/feat\/\.greenwashing\.json\n/);
+  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  const red = gate.stop(true, tree).json.reason;
+  assert.match(red, /Command: node --test --test-reporter=tap --test-concurrency=1 t\.test\.js /);
+  assert.match(red, /Counts: 0 passed, 1 failed, 0 skipped/);
+});
+
 test("after WORK NOT ACCEPTED, a worktree's settings change of the agent still blocks; the user's between turns does not", (t) => {
   const { dir, tree, gate } = seenWorktree(t);
   write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }), 'app.js': '1;\n' });

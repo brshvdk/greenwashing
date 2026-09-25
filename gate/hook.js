@@ -41,13 +41,13 @@ function onSignal(signal) {
 // One file per session and project in a per-user folder of the temp directory. starts: in every git
 // tree the turn has seen, the last state the gate accepted - a snapshot taken at the prompt after an
 // accepted turn, or null for a tree the agent entered after it; turn: the gate's settings files of
-// each tree at the latest prompt, or kept from the turn before for an agent's change carried over
-// (a snapshot of those files only); settings: the project's .greenwashing.json text taken with them
-// (null: none; missing: no prompt recorded); stopped: the gate's settings files of each tree as the
-// last Stop saw them; seen: the branch and commit each tree had when the gate last saw it; known: the
-// commits the worktrees and branches of the repository pointed at when the starts were taken; blocks:
-// how many times in a row the gate has sent the agent back; accepted: a Stop has let the turn end with
-// green tests or with no code changed.
+// each tree at the latest prompt, a file the agent changed in a turn before and left as it was kept
+// at its earlier state (a snapshot of those files only); settings: the project's .greenwashing.json
+// text taken with them (null: none; missing: no prompt recorded); stopped: the gate's settings files of
+// each tree as the gate last saw them, at the latest prompt or Stop; seen: the branch and commit each
+// tree had when the gate last saw it; known: the commits the worktrees and branches of the repository
+// pointed at when the starts were taken; blocks: how many times in a row the gate has sent the agent
+// back; accepted: a Stop has let the turn end with green tests or with no code changed.
 const NO_STATE = { starts: {}, turn: {}, stopped: {}, seen: {}, known: [], blocks: 0, accepted: false };
 
 function stateFile(input, dir) {
@@ -659,24 +659,34 @@ function onPrompt(input) {
   // The gate's settings as they are now, at the start of this turn: the checks and the tests of the
   // turn use the project's, and a settings file that changes from now on blocks (GW-114), while a
   // human's change between turns does not, even when the starts stay older. After a turn no Stop
-  // accepted, a tree whose settings files are still as its last Stop saw them keeps the settings of
-  // the turn before: a change there is the agent's, carried over, not a human's between turns.
-  const stopped = unaccepted ? state.stopped : {};
+  // accepted, each settings file that differs from the turn before's snapshot but is still as the gate
+  // last saw it (at the last Stop, or at the prompt of a turn cut off before its Stop) keeps the
+  // earlier state: a change there is the agent's, carried over. A file changed since is the user's.
+  const lastSeen = unaccepted ? state.stopped : {};
   const turn = {};
+  const stopped = {};
   let carried = false;
   for (const tree of Object.keys(next.starts)) {
     try {
       if (!fs.existsSync(tree) || repoRoot(tree) !== tree) continue;
-      if (stopped[tree] && turnDiff(tree, stopped[tree], { tree }, isSettings).files.length === 0) {
-        if (state.turn[tree]) turn[tree] = state.turn[tree];
-        if (tree === home) carried = true;
-      } else turn[tree] = snapshot(tree, own(tree), isSettings);
+      const now = snapshot(tree, own(tree), isSettings);
+      stopped[tree] = { ...now, dirty: { ...now.dirty } };
+      const before = state.turn[tree];
+      if (lastSeen[tree] && before) {
+        const changed = new Set(turnDiff(tree, lastSeen[tree], { tree }, isSettings).files);
+        for (const f of turnDiff(tree, before, { tree }, isSettings).files) {
+          if (changed.has(f)) continue;
+          now.dirty[f] = f in before.dirty ? before.dirty[f] : committedHash(tree, before.head, f);
+          if (tree === home && f === settings) carried = true;
+        }
+      }
+      turn[tree] = now;
     } catch {
       // No record for this tree: its settings files are measured from its start instead.
     }
   }
   const text = carried && 'settings' in state ? state.settings : readRootFiles(project)[CONFIG_FILE];
-  saveState(file, { ...next, turn, settings: text });
+  saveState(file, { ...next, turn, stopped, settings: text });
 }
 
 function readStdin() {
