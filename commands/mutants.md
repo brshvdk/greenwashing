@@ -11,7 +11,9 @@ node "${CLAUDE_PLUGIN_ROOT}/gate/mutate.js" --project "${CLAUDE_PROJECT_DIR}" $A
 
 It can take as long as its timeout (10 minutes unless the options or `.greenwashing.json` say otherwise), so run it in the background and wait until it has finished. Do not stop it early: it removes its temporary copy of the project when it ends.
 
-Then report what it printed: the control run, how many breaks were killed, survived and did not run, and the exit code (0: every break was killed; 1: a break survived; 2: something did not run). "Did not run" is never a caught break.
+Then report what it printed: the control run, the control breaks, how many breaks were killed, survived and did not run, and the exit code (0: every break was killed; 1: a break survived; 2: something did not run). "Did not run" is never a caught break.
+
+For each file whose breaks are "not exercised" (the tests passed with the file failing as soon as it runs), say why the tests do not run it, if you can tell: an editable install, a built copy, a path outside the project, or no test that loads it.
 
 For each break that survived, say which it is:
 - a gap in the tests: a test that would fail with this break is missing; propose that test;

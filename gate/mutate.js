@@ -6,9 +6,12 @@
 //
 //   node gate/mutate.js [--base <ref>] [--limit <n>] [--timeout <seconds>] [--run-timeout <seconds>] [--project <folder>]
 //
+// Before the breaks, each file with a break chosen is made to fail as soon as it runs (its control
+// break): when the tests still pass, they do not run that file, and its breaks are not exercised.
+//
 // Exit 0: every break was caught; 1: a break survived; 2: nothing survived, but something did not
-// run (a break, the unchanged control run, or the command itself). This file does the I/O (git, the
-// copy, the test runs, signals); lib/mutants.js decides.
+// run (a break, a file the tests do not run, the unchanged control run, or the command itself). This
+// file does the I/O (git, the copy, the test runs, signals); lib/mutants.js decides.
 
 const { spawnSync, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -20,7 +23,8 @@ const {
 const { verdict } = require('./lib/verdict');
 const { lines: outputLines } = require('./lib/parse');
 const {
-  codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, stillParses, describe, choose, report, OUTCOMES, OPERATORS, DEPENDENCY_FOLDERS,
+  codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, controlBreak, stillParses, describe, choose, report,
+  OUTCOMES, OPERATORS, DEPENDENCY_FOLDERS, NOT_EXERCISED,
 } = require('./lib/mutants');
 const { rootFiles, readRootFiles, hasPythonTests, runTests, stopTests, OUTPUT_LIMIT } = require('./runner');
 
@@ -159,9 +163,10 @@ function changedCode(home, rel, base) {
   return { files, unread };
 }
 
-// Python's breaks of the Python files ([{file, op, start, end, text}] as offsets), or {error}.
+// Python's breaks of the Python files ([{file, op, start, end, text}] as offsets) and the line of each
+// file its control break goes before ({file: line}), or {error}.
 function pythonMutants(files, python) {
-  if (files.length === 0) return { mutants: [], errors: [] };
+  if (files.length === 0) return { mutants: [], controls: {}, errors: [] };
   const request = { files: files.map(({ file, text, lines }) => ({ file, text, lines: [...lines] })) };
   const result = spawnSync(python, ['-I', PYTHON_MUTANTS], {
     input: JSON.stringify(request), cwd: os.tmpdir(), timeout: 120000, maxBuffer: OUTPUT_LIMIT, stdio: ['pipe', 'pipe', 'pipe'],
@@ -185,7 +190,12 @@ function pythonMutants(files, python) {
   const mutants = out.mutants.map((edit) => (edit && Object.hasOwn(text, edit.file) && place(edit.start) && place(edit.end)
     ? { file: edit.file, ...fromLines(text[edit.file], [edit])[0] } : { file: null, op: null }))
     .map((m) => (m.file === null ? m : { ...m, start: m.start + bom[m.file], end: m.end + bom[m.file] }));
-  return { mutants, errors: out.errors };
+  // A control line that is no line number is left out: the control break then goes before line 1.
+  const controls = {};
+  for (const c of Array.isArray(out.controls) ? out.controls : []) {
+    if (c && Object.hasOwn(text, c.file) && Number.isInteger(c.line) && c.line >= 1) controls[c.file] = c.line;
+  }
+  return { mutants, controls, errors: out.errors };
 }
 
 // A copy of the repository's working tree in a new temporary folder: every file git lists (tracked
@@ -342,31 +352,60 @@ async function run(argv) {
       + ' (the copy holds the files git lists, with node_modules, .venv and venv linked)';
     return done({ control: [controlLine, ...tail(control.output).map((line) => `  | ${line}`)].join('\n'), notTried: chosen.length, problems: [why] });
   }
+  // One file broken, the tests run, the file back as it was: the run.
+  const runBroken = async (file, source, edit, seconds) => {
+    const target = path.join(dir, file);
+    fs.writeFileSync(target, apply(source, edit));
+    try {
+      return await runIn(seconds);
+    } finally {
+      fs.writeFileSync(target, source);
+    }
+  };
+  const named = (file) => path.relative(project, path.join(home, file));
+  // The control breaks, before the breaks: each file with a break chosen fails as soon as it runs.
+  // Tests that pass with that do not run the file, so its breaks could only survive: they are not
+  // run and count as did not run (not exercised). A control break whose run did not finish tells
+  // nothing, so the file's breaks did not run either. Any other outcome: the tests run the file.
+  const exercised = new Set();
+  const unrun = new Map();
+  const controlled = [...new Set(chosen.map((m) => m.file))];
+  let controlsTried = 0;
+  for (const file of controlled) {
+    const seconds = left();
+    if (seconds < 1) break;
+    controlsTried += 1;
+    const { text, kind } = files.find((f) => f.file === file);
+    const run = await runBroken(file, text, controlBreak(text, kind, python.controls && python.controls[file]), seconds);
+    const count = chosen.filter((m) => m.file === file).length;
+    if (run.timedOut || run.startError) {
+      unrun.set(file, { file: named(file), count, outcome: 'did not run', why: `its control break did not run (${verdict(run).why}), so whether the tests run this file is not known` });
+    } else if (verdict(run).outcome === 'passed') unrun.set(file, { file: named(file), count, outcome: 'not exercised', why: NOT_EXERCISED });
+    else exercised.add(file);
+  }
+  const unexercised = [...unrun.values()].filter((u) => u.outcome === 'not exercised').length;
+  const controls = `Control breaks: ${controlsTried} file${controlsTried === 1 ? '' : 's'}, each made to fail as soon as it runs - ${exercised.size} run by the tests, `
+    + `${unexercised} not exercised${unrun.size > unexercised ? `, ${unrun.size - unexercised} did not finish` : ''}`
+    + `${controlled.length > controlsTried ? `; ${controlled.length - controlsTried} not tried` : ''}`;
   const results = [];
   let notTried = 0;
   for (const mutant of chosen) {
-    const seconds = left();
+    if (unrun.has(mutant.file)) continue;
+    // A file whose control break found no time left is not tried either.
+    const seconds = exercised.has(mutant.file) ? left() : 0;
     if (seconds < 1) {
       notTried += 1;
       continue;
     }
     const source = files.find((f) => f.file === mutant.file).text;
-    const target = path.join(dir, mutant.file);
-    fs.writeFileSync(target, apply(source, mutant));
-    let outcome;
-    try {
-      outcome = await runIn(seconds);
-    } finally {
-      fs.writeFileSync(target, source);
-    }
-    const result = verdict(outcome);
+    const result = verdict(await runBroken(mutant.file, source, mutant, seconds));
     results.push({
-      file: path.relative(project, path.join(home, mutant.file)), op: mutant.op, ...describe(source, mutant),
+      file: named(mutant.file), op: mutant.op, ...describe(source, mutant),
       outcome: OUTCOMES[result.outcome], why: result.outcome === 'did not run' ? result.why : '',
     });
   }
   if (notTried) problems.push(`no time was left for ${notTried} of the breaks: the time for everything is ${limits.timeoutSeconds} s (--timeout)`);
-  return done({ control: controlLine, results, notTried });
+  return done({ control: controlLine, controls, results, unrun: [...unrun.values()], notTried });
 }
 
 async function main() {

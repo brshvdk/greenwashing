@@ -216,6 +216,23 @@ function touches(source, mutant, changed) {
 
 const apply = (source, mutant) => `${source.slice(0, mutant.start)}${mutant.text}${source.slice(mutant.end)}`;
 
+const CONTROL_MESSAGE = 'greenwashing control break: this file fails as soon as it runs';
+// The control break of a file ({start, end, text}, like a break): an exception as soon as the file
+// runs, before the rest of its code. JavaScript and TypeScript: a function that throws, called at
+// once (no unreachable code for a linter or a compiler to reject), after a byte order mark and a #!
+// line. Python: a raise before the line python_mutants.py gives (after the docstring, the __future__
+// imports, a #! and a coding line; 1 when it gives none).
+function controlBreak(source, kind, line = 1) {
+  const starts = lineStarts(source);
+  const bom = source.startsWith('\uFEFF') ? 1 : 0;
+  const index = kind === 'js' ? (source.startsWith('#!', bom) ? 1 : 0) : line - 1;
+  const statement = kind === 'js' ? `(() => { throw new Error('${CONTROL_MESSAGE}'); })();` : `raise RuntimeError('${CONTROL_MESSAGE}')`;
+  const at = index === 0 ? bom : starts[index];
+  // Past the last line: the file ends without a line break there.
+  if (at === undefined) return { start: source.length, end: source.length, text: `\n${statement}\n` };
+  return { start: at, end: at, text: `${statement}\n` };
+}
+
 // The text still compiles when the original did, read as a CommonJS module body: false means the
 // break itself is a syntax error, which a test runner would report as a failed test. Only .js and
 // .cjs files are checked; for others, and for a file the check cannot read (ES modules, JSX), true.
@@ -292,15 +309,26 @@ function choose(mutants, limit) {
 // survived; they did not run - did not run, never counted as caught (GW-61).
 const OUTCOMES = { failed: 'killed', passed: 'survived', 'did not run': 'did not run' };
 
+// Why the breaks of a file whose control break the tests passed are not run.
+const NOT_EXERCISED = 'the tests passed with this file failing as soon as it runs, so they do not run it: an editable install'
+  + ' (pip install -e) or a built copy they import instead, a path outside the copy, or no test that loads it';
+
 // The report and the exit code of a finished command: 0 every break killed, 1 a break survived, 2
 // nothing survived but something did not run (or nothing was tried). results: [{file, line, op,
-// change, outcome, why}].
-function report({ header, control, results, notTried, problems }) {
-  const count = (outcome) => results.filter((r) => r.outcome === outcome).length;
+// change, outcome, why}]; controls: the line on the control breaks (none when they did not run);
+// unrun: [{file, count, outcome, why}], the breaks of a file not run after its control break -
+// outcome 'not exercised' (the tests passed with it) or 'did not run' (it did not finish) - each
+// counted as did not run.
+function report({ header, control, controls = null, results, unrun = [], notTried, problems }) {
+  const unrunCount = (outcome) => unrun.filter((u) => !outcome || u.outcome === outcome).reduce((sum, u) => sum + u.count, 0);
+  const count = (outcome) => results.filter((r) => r.outcome === outcome).length + (outcome === 'did not run' ? unrunCount() : 0);
   const survived = results.filter((r) => r.outcome === 'survived');
-  const lines = [...header, control, `Mutants: ${results.length} tried - ${count('killed')} killed, ${survived.length} survived, ${count('did not run')} did not run`
-    + `${notTried ? `; ${notTried} not tried` : ''}`];
+  const unexercised = unrunCount('not exercised');
+  const lines = [...header, control, ...(controls ? [controls] : []),
+    `Mutants: ${results.length + unrunCount()} tried - ${count('killed')} killed, ${survived.length} survived, ${count('did not run')} did not run`
+    + `${unexercised ? ` (${unexercised} not exercised)` : ''}${notTried ? `; ${notTried} not tried` : ''}`];
   for (const r of results) lines.push(`- ${r.outcome}: ${r.file}:${r.line}: ${r.change}${r.why ? ` (${r.why})` : ''}`);
+  for (const u of unrun) lines.push(`- ${u.outcome}: ${u.file}: ${u.count} mutant${u.count === 1 ? '' : 's'} not run - ${u.why}`);
   if (survived.length) {
     lines.push('', 'Survived - the tests passed with the code broken:');
     for (const r of survived) {
@@ -317,5 +345,6 @@ function report({ header, control, results, notTried, problems }) {
 }
 
 module.exports = {
-  codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, stillParses, describe, choose, report, OUTCOMES, OPERATORS, HINTS, FLIP, DEPENDENCY_FOLDERS,
+  codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, controlBreak, stillParses, describe, choose, report,
+  OUTCOMES, OPERATORS, HINTS, FLIP, DEPENDENCY_FOLDERS, NOT_EXERCISED, CONTROL_MESSAGE,
 };

@@ -189,7 +189,7 @@ test('Python runs no cached bytecode: none from the user\'s tree, none of an ear
 test('each break runs alone: its file is back as it was before the next break runs', (t) => {
   const tested = "module.exports = { one: () => 1 };\n";
   const dir = project(t, { 'a.js': tested, 'z.js': 'module.exports = { two: () => 2 };\n',
-    'a.test.js': "const test = require('node:test');\nconst assert = require('node:assert');\ntest('one', () => assert.equal(require('./a').one(), 1));\n" });
+    'a.test.js': "const test = require('node:test');\nconst assert = require('node:assert');\nrequire('./z');\ntest('one', () => assert.equal(require('./a').one(), 1));\n" });
   write(dir, { 'a.js': tested.replace('1', '3'), 'z.js': 'module.exports = { two: () => 4 };\n' });
   write(dir, { 'a.test.js': fs.readFileSync(path.join(dir, 'a.test.js'), 'utf8').replace('one(), 1', 'one(), 3') });
   const run = mutate(t, dir);
@@ -308,7 +308,7 @@ test('the changed lines: since the merge base with main, committed or not, untra
   git(dir, 'add', 'd2.js', 'd.js');
   git(dir, 'commit', '-qm', 'main moves');
   git(dir, 'checkout', '-q', 'feat');
-  const files_ = (run) => [...new Set(run.out.split('\n').map((line) => /^- \w[\w ]*: ([\w/.]+):\d+:/.exec(line)).filter(Boolean).map((m) => m[1]))].sort();
+  const files_ = (run) => [...new Set(run.out.split('\n').map((line) => /^- \w[\w ]*: ([\w/.]+):/.exec(line)).filter(Boolean).map((m) => m[1]))].sort();
   assert.deepEqual(files_(mutate(t, dir)), ['a.js', 'app/e.js', 'b.js', 'c.js']);
   assert.deepEqual(files_(mutate(t, dir, ['--base', 'HEAD'])), ['app/e.js', 'b.js', 'c.js']);
   // A project in a subfolder: only its files.
@@ -334,7 +334,8 @@ test('a file of many tested numbers does not crowd out an untested guard in anot
   const dir = project(t, { 'a.test.js': "require('node:test')('ok', () => {});\n" });
   write(dir, {
     'a.js': `module.exports = [${Array.from({ length: 200 }, (_, i) => i + 1).join(', ')}];\n`,
-    'a.test.js': "const test = require('node:test');\nconst assert = require('node:assert');\ntest('table', () => assert.deepEqual(require('./a'), Array.from({ length: 200 }, (_, i) => i + 1)));\n",
+    'a.test.js': "const test = require('node:test');\nconst assert = require('node:assert');\ntest('table', () => assert.deepEqual(require('./a'), Array.from({ length: 200 }, (_, i) => i + 1)));\n"
+      + "test('small', () => assert.equal(require('./z')(1), 1));\n",
     'z.js': "module.exports = (x) => {\n  if (x > 100) throw new Error('big');\n  return x;\n};\n",
   });
   const run = mutate(t, dir);
@@ -350,7 +351,7 @@ test('the changed lines as git sees them, whatever the file and the settings: a 
   const lone = mutate(t, cr);
   assert.match(lone.out, /\n- survived: calc\.js:6: const B = 7; {2}-> {2}const B = 8;\n/);
   assert.doesNotMatch(lone.out, /const [AC] = \d; {2}->/);
-  const binary = project(t, { 'calc.js': 'module.exports = {};\n', 'calc.test.js': "require('node:test')('ok', () => {});\n" });
+  const binary = project(t, { 'calc.js': 'module.exports = {};\n', 'calc.test.js': "require('node:test')('loads', () => { require('./calc'); });\n" });
   write(binary, { '.gitattributes': 'calc.js -diff\n', 'calc.js': 'module.exports = { A: 1 };\n' });
   git(binary, 'add', '-A');
   git(binary, 'commit', '-qm', 'hidden from diff');
@@ -365,8 +366,8 @@ test('the changed lines as git sees them, whatever the file and the settings: a 
 
 test('the files of a change: new ones committed on the branch; files that are not UTF-8 or that Python cannot read are did not run', (t) => {
   const dir = project(t, { 'pass.test.js': "require('node:test')('ok', () => {});\n" });
-  write(dir, { 'new.js': 'module.exports = 1;\n' });
-  git(dir, 'add', 'new.js');
+  write(dir, { 'new.js': 'module.exports = 1;\n', 'new.test.js': "require('node:test')('loads', () => { require('./new'); });\n" });
+  git(dir, 'add', 'new.js', 'new.test.js');
   git(dir, 'commit', '-qm', 'a new file on the branch');
   const added = mutate(t, dir);
   assert.match(added.out, /\n- survived: new\.js:1: module\.exports = 1; {2}-> {2}module\.exports = 2;\n/);
@@ -385,7 +386,7 @@ test('breaks from the Python interpreter are checked: a known kind on a changed 
     fs.writeFileSync(file, `#!/bin/sh\ncat > /dev/null\nprintf '%s' ${JSON.stringify(out)}\n`, { mode: 0o755 });
     return file;
   };
-  const dir = project(t, { 'shop.py': 'A = 1\nB = 2\n', 'test_shop.py': 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertTrue(True)\n' }, null);
+  const dir = project(t, { 'shop.py': 'A = 1\nB = 2\n', 'test_shop.py': 'import unittest\n\nimport shop\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertTrue(shop.A)\n' }, null);
   write(dir, { 'shop.py': 'A = 1\nB = 3\n' });
   const config = (python) => write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: 'python3 -m unittest discover', python }) });
   // One break on the unchanged line 1, one of no kind, one past the file, one on another file.
@@ -463,4 +464,63 @@ test('did not run before any test: no main branch, a base that is no commit, an 
   const run = mutate(t, outside);
   assert.equal(run.code, 2);
   assert.match(run.out, /is not in a git repository: the changed lines come from git/);
+});
+
+test('a file the tests do not run - a built copy loaded instead of it: its breaks are not exercised, did not run, never survived', (t) => {
+  const tests = (factor) => "const test = require('node:test');\nconst assert = require('node:assert');\nconst { total } = require('./build/cart');\n"
+    + `const price = require('./price');\ntest('total', () => assert.equal(total([{ price: 2 }, { price: 3 }]), 5));\ntest('price', () => assert.equal(price(3), ${3 * factor}));\n`;
+  const dir = project(t, { 'src/cart.js': CART, 'build/cart.js': CART, 'price.js': 'module.exports = (n) => n * 2;\n', 'cart.test.js': tests(2) });
+  write(dir, { 'src/cart.js': `${CART}${ADD}`, 'price.js': 'module.exports = (n) => n * 3;\n', 'cart.test.js': tests(3) });
+  const run = mutate(t, dir);
+  assert.equal(run.code, 2, run.out);
+  assert.match(run.out, /\nControl: .* on the unchanged copy: passed \(2 passed, 0 failed, 0 skipped\)\nControl breaks: 2 files, each made to fail as soon as it runs - 1 run by the tests, 1 not exercised\n/);
+  assert.match(run.out, /\nMutants: 5 tried - 1 killed, 0 survived, 4 did not run \(4 not exercised\)\n/);
+  assert.match(run.out, /\n- killed: price\.js:1: .*\n- not exercised: src\/cart\.js: 4 mutants not run - the tests passed with this file failing as soon as it runs, so they do not run it: /);
+  assert.doesNotMatch(run.out, /survived: |Survived/);
+  assert.match(run.out, /\nResult: did not run$/m);
+  // Loaded by the tests, the same file's breaks are judged: its guard survives.
+  write(dir, { 'cart.test.js': `${tests(3).replace('./build/cart', './src/cart')}test('adds', () => require('./src/cart').add([], 1, 5));\n` });
+  const loaded = mutate(t, dir);
+  assert.equal(loaded.code, 1, loaded.out);
+  assert.match(loaded.out, /\nControl breaks: 2 files, each made to fail as soon as it runs - 2 run by the tests, 0 not exercised\n/);
+  assert.match(loaded.out, /\n- survived: src\/cart\.js:6: removed: if \(items\.length >= max\)/);
+  assert.deepEqual([run.copies, loaded.copies], [[], []]);
+});
+
+test('Python with an editable install: the tests import the user\'s files, not the copy\'s, so its breaks are not exercised', (t) => {
+  const dir = project(t, {
+    '.gitignore': '.venv/\n',
+    'src/shop/__init__.py': 'def total(prices):\n    return sum(prices)\n',
+    'tests/test_shop.py': 'import unittest\n\nfrom shop import total\n\n\nclass T(unittest.TestCase):\n    def test_total(self):\n        self.assertEqual(total([2, 3]), 5)\n',
+  }, '.venv/bin/python -m unittest discover -s tests');
+  const venv = spawnSync('python3', ['-m', 'venv', '--without-pip', path.join(dir, '.venv')], { encoding: 'utf8' });
+  assert.equal(venv.status, 0, venv.stderr);
+  const site = spawnSync(path.join(dir, '.venv', 'bin', 'python'), ['-c', 'import sysconfig; print(sysconfig.get_paths()["purelib"])'], { encoding: 'utf8' });
+  assert.equal(site.status, 0, site.stderr);
+  // What pip install -e writes for a src layout: a .pth file that puts the user's src folder on the path.
+  fs.writeFileSync(path.join(site.stdout.trim(), '__editable__.shop-0.1.pth'), `${path.join(dir, 'src')}\n`);
+  write(dir, { 'src/shop/__init__.py': 'def total(prices):\n    if not prices:\n        raise ValueError("empty")\n    return sum(prices)\n' });
+  const run = mutate(t, dir);
+  assert.equal(run.code, 2, run.out);
+  assert.match(run.out, /\nControl breaks: 1 file, each made to fail as soon as it runs - 0 run by the tests, 1 not exercised\n/);
+  assert.match(run.out, /\n- not exercised: src\/shop\/__init__\.py: 2 mutants not run - .*: an editable install \(pip install -e\)/);
+  assert.doesNotMatch(run.out, /survived: /);
+  // With the copy's own src on the path, the breaks are judged: the guard no test reaches survives.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: 'PYTHONPATH=src python3 -m unittest discover -s tests' }) });
+  const own = mutate(t, dir);
+  assert.equal(own.code, 1, own.out);
+  assert.match(own.out, /\nControl breaks: 1 file, each made to fail as soon as it runs - 1 run by the tests, 0 not exercised\n/);
+  assert.match(own.out, /\n- survived: src\/shop\/__init__\.py:2: removed: if not prices: \(2 lines\)\n/);
+});
+
+test('a control break whose run does not finish tells nothing: its file\'s breaks did not run', (t) => {
+  // The tests wait for ever when the module cannot load.
+  const tests = "const test = require('node:test');\nconst assert = require('node:assert');\nlet ok;\ntry {\n  ok = require('./ok');\n} catch {\n  for (;;);\n}\n"
+    + "test('ok', () => assert.equal(ok(), 1));\n";
+  const dir = project(t, { 'ok.js': 'module.exports = () => 1;\n', 'ok.test.js': tests });
+  write(dir, { 'ok.js': 'module.exports = () => 1;\nmodule.exports.limit = 10;\n' });
+  const run = mutate(t, dir, ['--run-timeout', '3']);
+  assert.equal(run.code, 2, run.out);
+  assert.match(run.out, /\nControl breaks: 1 file, each made to fail as soon as it runs - 0 run by the tests, 0 not exercised, 1 did not finish\n/);
+  assert.match(run.out, /\nMutants: 1 tried - 0 killed, 0 survived, 1 did not run\n- did not run: ok\.js: 1 mutant not run - its control break did not run \(the command did not finish in 3 s and was stopped\), so whether the tests run this file is not known\n/);
 });

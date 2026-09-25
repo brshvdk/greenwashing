@@ -439,6 +439,67 @@ test('settings changed between turns while unaccepted work stays: no GW-114, the
   assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
 });
 
+test("after WORK NOT ACCEPTED, the agent's settings change carried into the next turn still blocks, and the tests keep the settings the work started with", (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt();
+  // The agent breaks a test and fakes the test command.
+  write(dir, { 't.test.js': NODE_FAIL, '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /Changed: \.greenwashing\.json\n/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // The next prompt finds the settings as the last Stop saw them: the agent's change, not the user's.
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /the gate's settings changed during this turn[^]*Changed: \.greenwashing\.json\n/);
+  // A turn interrupted before any Stop changes nothing.
+  gate.prompt();
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+  // Put back by the agent: nothing changed in the settings, and the tests run with the command the
+  // work started with, not the fake one of the prompt's time.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  const red = gate.stop(true).json;
+  assert.doesNotMatch(red.reason, /GW-114/);
+  assert.match(red.reason, /Counts: 0 passed, 1 failed, 0 skipped/);
+});
+
+test('after WORK NOT ACCEPTED with a settings change of the agent, the user changing the file between turns makes it theirs', (t) => {
+  const config = (extra) => ({ '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD, ...extra }) });
+  const dir = project(t, { 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL, ...config({ checks: { skips: false } }) });
+  for (const active of [false, true, true]) assert.equal(gate.stop(active).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // The user writes the file between turns: it differs from what the last Stop saw, so it is theirs.
+  write(dir, config({ timeoutSeconds: 60 }));
+  gate.prompt();
+  const red = gate.stop().json;
+  assert.doesNotMatch(red.reason, /GW-114/);
+  assert.match(red.reason, /Counts: 0 passed, 1 failed, 0 skipped/);
+  // The agent changes it in that turn: measured from the user's version.
+  write(dir, config({ timeoutSeconds: 60, checks: { skips: false } }));
+  assert.match(gate.stop(true).json.reason, /Changed: \.greenwashing\.json\n/);
+});
+
+test("after WORK NOT ACCEPTED, a worktree's settings change of the agent still blocks; the user's between turns does not", (t) => {
+  const { dir, tree, gate } = seenWorktree(t);
+  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }), 'app.js': '1;\n' });
+  for (const active of [false, true, true]) {
+    assert.match(gate.stop(active, tree).json.reason, /Changed: \.claude\/worktrees\/feat\/\.greenwashing\.json\n/);
+  }
+  assert.match(gate.stop(true, tree).json.systemMessage, /WORK NOT ACCEPTED/);
+  gate.prompt(tree);
+  assert.match(gate.stop(false, tree).json.reason, /Changed: \.claude\/worktrees\/feat\/\.greenwashing\.json\n/);
+  assert.match(gate.stop(true, tree).json.reason, /Changed: \.claude\/worktrees\/feat\/\.greenwashing\.json\n/);
+  assert.match(gate.stop(true, tree).json.reason, /Changed: \.claude\/worktrees\/feat\/\.greenwashing\.json\n/);
+  assert.match(gate.stop(true, tree).json.systemMessage, /WORK NOT ACCEPTED/);
+  // The user sets the worktree's file between turns; the project's is unchanged all along.
+  write(tree, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD, timeoutSeconds: 60 }) });
+  gate.prompt(tree);
+  assert.match(gate.stop(false, tree).json.systemMessage, /^greenwashing: tests passed/);
+  assert.equal(fs.readFileSync(path.join(dir, '.greenwashing.json'), 'utf8'), JSON.stringify({ testCommand: NODE_CMD }));
+});
+
 test('when the agent works in another worktree of the repository, that worktree is tested', (t) => {
   // Claude Code's default place for worktrees, which its docs say to add to .gitignore: then the
   // main checkout shows no change at all (code.claude.com/docs/en/worktrees).
