@@ -111,6 +111,11 @@ test('a returned value that goes on over lines in a template is replaced whole',
   assert.equal(apply(source, ret), 'function f() {\n  return null;\n}\n');
   // A value past 2000 characters is not replaced: its end cannot be told for sure.
   assert.deepEqual(ops(`function f() {\n  return [${'1, '.repeat(700)}];\n}\n`).filter((op) => op === 'return'), []);
+  // Nor is a guard removed whose statement runs past 2000 characters, also when the 2000th ends a line.
+  const head = 'function f(x) {\n  if (x) throw [';
+  const long = `${head}${'a'.repeat(head.indexOf('throw') + 2005 - head.length)}\n    2,\n  ];\n  go();\n}\n`;
+  assert.equal(long[head.indexOf('throw') + 2005], '\n');
+  assert.deepEqual(ops(long).filter((op) => op === 'guard'), []);
 });
 
 test('JavaScript returns and numbers that are left alone', () => {

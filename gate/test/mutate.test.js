@@ -54,7 +54,8 @@ function mutate(t, dir, args = [], tmp = tempDir(t)) {
   return { code: result.status, out: result.stdout + result.stderr, tmp, copies: fs.readdirSync(tmp).filter((name) => name.startsWith('greenwashing-mutants-')) };
 }
 
-// Every file under dir, .git and links included, with its bytes (a link: its target).
+// Every file under dir, .git and links included, with its bytes (a link: its target), its mode and its
+// modification time: a file written and then restored during the run counts as changed.
 function snapshot(dir) {
   const files = {};
   const walk = (at) => {
@@ -62,7 +63,7 @@ function snapshot(dir) {
       const full = path.join(at, entry.name);
       const stat = fs.lstatSync(full);
       if (stat.isDirectory()) walk(full);
-      else files[path.relative(dir, full)] = crypto.createHash('sha256').update(stat.isSymbolicLink() ? `link ${fs.readlinkSync(full)}` : fs.readFileSync(full)).digest('hex') + stat.mode;
+      else files[path.relative(dir, full)] = `${crypto.createHash('sha256').update(stat.isSymbolicLink() ? `link ${fs.readlinkSync(full)}` : fs.readFileSync(full)).digest('hex')} ${stat.mode} ${stat.mtimeMs}`;
     }
   };
   walk(dir);
@@ -148,7 +149,7 @@ test("the user's files stay byte for byte; node_modules, .venv and venv are link
     '.gitignore': 'node_modules/\n.venv/\nvenv/\n',
     'cart.js': "const { rate } = require('dep');\nconst { round } = require('./round');\n" + CART.replace('return items.reduce((sum, item) => sum + item.price, 0);', 'return round(items.reduce((sum, item) => sum + item.price, 0) * rate);'),
     'cart.test.js': CART_TEST,
-  }, `test -L node_modules/dep && test -L .venv && test -L venv && test -L link.js && mkdir -p node_modules/.vite node_modules/.cache && echo run > node_modules/.vite/results.json && echo run > node_modules/.cache/x && ${NODE_CMD}`);
+  }, `test -L node_modules/dep && test -L .venv && test -L venv && test -L link.js && test ! -L cart.js && test ! -L round.js && mkdir -p node_modules/.vite node_modules/.cache && echo run > node_modules/.vite/results.json && echo run > node_modules/.cache/x && ${NODE_CMD}`);
   write(dir, {
     'node_modules/dep/index.js': 'module.exports = { rate: 1 };\n', 'node_modules/dep/package.json': '{"name": "dep", "main": "index.js"}\n',
     // The caches the user's own runs left: the copy's runs must not write into them.

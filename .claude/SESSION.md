@@ -11,8 +11,9 @@ Step 1, PR 6 - four gate changes the owner decided after PR 5 (the start moves o
 - [x] fresh-context review at 5c066eb (21 findings, a 64-mutant wave with 20 survivors): HIGH ones reproduced and fixed, the rest fixed or listed; own wave 3 over the fixes (28 mutants): 25 red, tests for 2 (a late kind of break, the user's caches in node_modules), 1 unreachable (a removal that fails after the chmod)
 - [x] first self-run on this repository (e239748): the control run failed in the copy - the read-only-folder test ran the command as nobody from the copy, which nobody cannot read (0700); the test now copies the gate to a folder of /tmp nobody can read (red again without the chmod fix)
 - [x] CI at e239748: 358 of 359 gate tests; the one red test ran a configured Python that exits before it reads its input, and the gate said "spawnSync ... EPIPE" instead of the exit code (a race on the runner; reproduced here for certain with an input larger than a pipe holds). Fixed in both callers (gate checks, mutation command): an exit before reading reports its exit code and message
-- [ ] self-run of the command on this repository at the final commit
-- [ ] PR: all three checks green
+- [x] self-run on this repository at a8d201e (`--timeout 7200 --run-timeout 900`, 38 min): 9 code files, 1201 changed lines, 662 places, 20 tried - 18 killed, 2 survived, 0 did not run (exit 1); no copy left; the tree changed only in the 5 files edited during the run (the EPIPE fix). Both survivors were gaps in the tests, now closed: the 2000-character stop of a guard (a statement whose 2000th character ends a line) and a regular file linked into the copy instead of copied (a break then writes into the user's file and restores it; the snapshot now keeps modification times and the copy is checked for links)
+- [x] PR 13: all three checks green at 992d0b1
+- [ ] PR 13: all three checks green on the last push
 
 ## Decisions made (and why)
 - Owner (PR 4): the contradictions and silences the docs critic found (which shell runs a hook, an unquoted placeholder example, Stop on timeout, exit 2 with continue:false, trust for plugin hooks and cloud sessions) do not change the hook format; continue.
