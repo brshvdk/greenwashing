@@ -136,6 +136,13 @@ test('.greenwashing.json: every quick check is on unless the file turns it off',
     { skips: false, assertions: false, selfComparisons: false });
 });
 
+test('.greenwashing.json: "python" names the Python for the checks, and is absent unless set', () => {
+  assert.equal(readConfig('{"python": ".venv/bin/python"}').python, '.venv/bin/python');
+  assert.equal(readConfig('{"python": "python3.12", "testCommand": "make test"}').python, 'python3.12');
+  assert.equal('python' in readConfig('{"testCommand": "make test"}'), false);
+  assert.equal('python' in readConfig(null), false);
+});
+
 test('.greenwashing.json: a config that cannot be trusted is an error, not a default', () => {
   const bad = {
     '{"testCommand": ': /not valid JSON/,
@@ -157,6 +164,10 @@ test('.greenwashing.json: a config that cannot be trusted is an error, not a def
     '{"checks": {"skip": false}}': /checks must be an object/,
     '{"checks": {"skips": "false"}}': /checks must be an object/,
     '{"checks": {"skips": 0}}': /checks must be an object/,
+    '{"python": ""}': /python must be a non-empty string/,
+    '{"python": "  "}': /python must be a non-empty string/,
+    '{"python": ["python3.12"]}': /python must be a non-empty string/,
+    '{"python": null}': /python must be a non-empty string/,
   };
   for (const [text, message] of Object.entries(bad)) {
     assert.match(readConfig(text).error, message, text);

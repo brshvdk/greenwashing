@@ -279,6 +279,35 @@ test('GW-17: a changed condition of skipIf, or a new test in a suite that never 
   assert.deepEqual(edited("it.skip('old', () => {\n  run(1);\n});\n", "it.skip('old', () => {\n  run(2);\n});\n"), []);
 });
 
+test('GW-17: a suite that a condition on CI skips never runs under the gate; a platform or version condition stays honest', () => {
+  const one = "  test('a', () => { expect(f()).toBe(1); });\n";
+  const two = `${one}  test('b', () => { expect(g()).toBe(2); });\n`;
+  const suite = (marker, body, above = '') => `${above}describe.${marker}('old', () => {\n${body}});\n`;
+  const line = (above) => above.split('\n').length + 2;
+  const ci = {
+    'skipIf(process.env.CI)': '', "skipIf(process.env['CI'])": '', 'skipIf(!!process.env.CI === true)': '', 'runIf(!process.env.CI)': '',
+    'runIf(process.env.CI)': '', 'skipIf(import.meta.env.CI)': '', 'skipIf(isCI)': 'const isCI = Boolean(process.env.CI);\n',
+    'skipIf(CI)': 'const { CI } = process.env;\n', "skipIf(Deno.env.get('CI'))": '',
+  };
+  for (const [marker, above] of Object.entries(ci)) {
+    const found = checkJs(suite(marker, two, above), lineChanges(suite(marker, one, above), suite(marker, two, above)), ALL, suite(marker, one, above));
+    assert.deepEqual(brief(found), [[line(above), 'GW-17']], marker);
+    assert.match(found[0].what, /^a test inside describe\.(skipIf|runIf) on CI - whether it runs depends on CI \(the gate runs the tests with CI=true\)$/, marker);
+  }
+  const honest = {
+    "skipIf(process.platform === 'win32')": '', "runIf(process.version.startsWith('v22'))": '', 'skipIf(/* CI */ onWindows)': '',
+    'skipIf(isWindows)': "const isWindows = process.platform === 'win32'; // not on CI\n", 'skipIf(process.env.CIRCLECI_X)': '',
+  };
+  for (const [marker, above] of Object.entries(honest)) assert.deepEqual(edited(suite(marker, one, above), suite(marker, two, above)), [], marker);
+  // A test brought into such a suite from outside it, and a new such suite (one finding, for the marker).
+  const failing = "test('fails', () => {\n  expect(g()).toBe(2);\n});\n";
+  const onCi = (body) => suite('skipIf(process.env.CI)', body);
+  assert.deepEqual(edited(`${onCi(one)}${failing}`, onCi(`${one}${failing}`)), [[3, 'GW-17']]);
+  assert.deepEqual(fresh(onCi(two)), [[1, 'GW-17']]);
+  // A test edited in a suite skipped on CI still runs elsewhere: it is read for assertions.
+  assert.deepEqual(edited(onCi("  test('c', () => { run(1); });\n"), onCi("  test('c', () => { run(2); });\n")), [[2, 'GW-18']]);
+});
+
 test('GW-17: a test commented out by a new /* and */ around its old lines', () => {
   const failing = "test('multiplies', () => {\n  expect(total(2, 3)).toBe(6);\n});\n";
   assert.deepEqual(edited(`${OK}\n${failing}`, `${OK}\n/*\n${failing}*/\n`), [[3, 'GW-17']]);
@@ -497,6 +526,32 @@ test('Python GW-17: __test__ = False, a new test in a class or module that never
   // A class marked xfail still runs its tests: a new test in it without assertions is also GW-18.
   const xfail = 'import pytest\n\n\n@pytest.mark.xfail\nclass TestOld:\n    def test_a(self):\n        assert f()\n';
   assert.deepEqual(python(xfail, `${xfail}\n    def test_b(self):\n        run()\n`), [[9, 'GW-17'], [9, 'GW-18']]);
+});
+
+test('Python GW-17: a class or module that a condition on CI skips never runs under the gate; platform and version conditions stay honest', () => {
+  const cls = (mark, body, above = '') => `import os\nimport sys\nimport unittest\n\nimport pytest\n${above}\n\n${mark}\nclass TestX:\n    def test_a(self):\n        assert f()\n${body}`;
+  const two = '\n    def test_b(self):\n        assert g()\n';
+  const ci = {
+    '@pytest.mark.skipif(os.environ.get("CI"), reason="x")': '', '@pytest.mark.skipif("CI" in os.environ, reason="x")': '',
+    '@pytest.mark.skipif(condition=os.getenv("CI") == "true", reason="x")': '', '@pytest.mark.skipif("os.environ.get(\'CI\')", reason="x")': '',
+    '@pytest.mark.skipif(IS_CI, reason="x")': 'IS_CI = bool(os.getenv("CI"))\n', '@unittest.skipIf(os.environ["CI"], "x")': '',
+    '@unittest.skipUnless(not os.getenv("CI"), "x")': '', '@ci_only': 'ci_only = pytest.mark.skipif(os.getenv("CI"), reason="x")\n',
+  };
+  for (const [mark, above] of Object.entries(ci)) {
+    const found = python(cls(mark, '', above), cls(mark, two, above));
+    assert.equal(found.length, 1, mark);
+    assert.equal(found[0][1], 'GW-17', mark);
+  }
+  const honest = {
+    '@pytest.mark.skipif(sys.platform == "win32", reason="flaky on CI")': '', '@pytest.mark.skipif(sys.version_info < (3, 12), reason="x")': '',
+    '@unittest.skipIf(os.environ.get("CIRCLE_X"), "x")': '', '@pytest.mark.skipif(ON_WINDOWS, reason="x")': 'ON_WINDOWS = sys.platform == "win32"  # CI\n',
+  };
+  for (const [mark, above] of Object.entries(honest)) assert.deepEqual(python(cls(mark, '', above), cls(mark, two, above)), [], mark);
+  const module = (body) => `import os\n\nimport pytest\n\npytestmark = pytest.mark.skipif(os.getenv("CI"), reason="x")\n\n\ndef test_a():\n    assert f()\n${body}`;
+  assert.deepEqual(python(module(''), module('\n\ndef test_b():\n    assert g()\n')), [[12, 'GW-17']]);
+  // A test edited in a class skipped on CI still runs elsewhere: it is read for assertions.
+  const mark = '@pytest.mark.skipif(os.getenv("CI"), reason="x")';
+  assert.deepEqual(python(cls(mark, '\n    def test_c(self):\n        run(1)\n'), cls(mark, '\n    def test_c(self):\n        run(2)\n')), [[13, 'GW-18']]);
 });
 
 test('Python edges: markers and messages, an old comment, removed lines above a test, other same sides', () => {

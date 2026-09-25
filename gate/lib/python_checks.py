@@ -38,7 +38,13 @@ CHECKING_CALLS = {"pytest.raises", "pytest.warns", "pytest.deprecated_call", "py
 # Comparisons that hold whenever both sides are the same.
 SAME_OPS = (ast.Eq, ast.Is, ast.GtE, ast.LtE)
 TEST_NAME = re.compile(r"test(?:$|_|[A-Z0-9])")
+# A name the CI variable goes by: os.environ["CI"], os.getenv("CI"), "CI" in os.environ, a pytest
+# string condition "os.environ.get('CI')".
+CI_WORD = re.compile(r"(?<![\w$])CI(?![\w$])")
 COMMENTED_TEST = re.compile(r"#\s*(?:async\s+)?def\s+test")
+
+
+CI_EFFECT = "whether it runs depends on CI (the gate runs the tests with CI=true)"
 
 
 def what(marker):
@@ -103,6 +109,30 @@ def marker_names(tree, names):
             if marker and node.targets[0].id != "pytestmark":
                 given[node.targets[0].id] = marker
     return given
+
+
+def reads_ci(node, tree):
+    """The condition of a conditional marker (the first argument of skipif, skipIf, skipUnless, or
+    condition=) reads the CI variable, itself or through a module-level name bound to such a read
+    (IS_CI = bool(os.getenv("CI"))). The gate runs the tests with CI=true, so such a condition decides
+    by where the tests run, not by the code: a skip, unlike a platform or version condition. node: a
+    marker call, or a name given one."""
+    values = {t.id: s.value for s in tree.body if isinstance(s, ast.Assign) for t in s.targets if isinstance(t, ast.Name)}
+    if isinstance(node, ast.Name) and isinstance(values.get(node.id), ast.Call):
+        node = values[node.id]
+    if not isinstance(node, ast.Call):
+        return False
+    condition = node.args[:1] + [k.value for k in node.keywords if k.arg == "condition"]
+
+    def mentions(expr):
+        for inner in ast.walk(expr):
+            if isinstance(inner, ast.Constant) and isinstance(inner.value, str) and CI_WORD.search(inner.value):
+                return True
+            if (isinstance(inner, ast.Name) and inner.id == "CI") or (isinstance(inner, ast.Attribute) and inner.attr == "CI"):
+                return True
+        return False
+    return any(mentions(c) or any(isinstance(n, ast.Name) and n.id in values and mentions(values[n.id]) for n in ast.walk(c))
+               for c in condition)
 
 
 def read(source, file):
@@ -185,11 +215,13 @@ def check(file, source, added, gaps, checks, entries, before=None):
         # around it. A new marker of the suite is reported above, not again for each test in it.
         for function, start, suite in tests:
             if suite and not added_in(suite[1]) and (is_new(start, added, gaps) or was_outside(function)):
-                report(entries["skips"], start, f"a test inside {suite[0]} - {what(suite[2])}")
+                effect = CI_EFFECT if suite[2] in CONDITIONAL else what(suite[2])
+                report(entries["skips"], start, f"a test inside {suite[0]} - {effect}")
 
     if checks.get("assertions") is not False:
         for function, start, suite in tests:
-            stopped = suite and suite[2] not in PASSES_WHEN_FAILING
+            # A test in a suite skipped on CI still runs elsewhere: it is read for assertions.
+            stopped = suite and suite[2] not in PASSES_WHEN_FAILING | CONDITIONAL
             if not stopped and touched(function, start, added, gaps) and runs(function, names, marker) and not asserts(function, names):
                 report(entries["assertions"], start, f"{function.name} has no assertion")
 
@@ -248,13 +280,17 @@ def test_functions(tree, names, marker):
     """(function, first line with its decorators, suite) for each test function in the module or its
     classes. suite is (what, node, marker) when a marker on its class, in the class's or the module's
     pytestmark, keeps every test in it from running as written whatever the environment (not a
-    condition, CONDITIONAL); node is where that marker is written. pytest fixtures named test_* are
+    condition, CONDITIONAL, unless it reads CI); node is where that marker is written. pytest fixtures named test_* are
     not tests, nor methods of a class no runner collects."""
     def suite_mark(nodes):
         # Decorators, or pytestmark values and the items of their lists; not marks deeper inside, such
-        # as pytest.param(..., marks=pytest.mark.skip) for one case of a parametrize.
+        # as pytest.param(..., marks=pytest.mark.skip) for one case of a parametrize. A condition counts
+        # only when it reads CI (reads_ci).
         items = [item for node in nodes for item in (node.elts if isinstance(node, (ast.List, ast.Tuple)) else [node])]
-        return next((n for n in items if marker(n) and marker(n) not in CONDITIONAL), None)
+        return next((n for n in items if marker(n) and (marker(n) not in CONDITIONAL or reads_ci(n, tree))), None)
+
+    def described(kind, mark):
+        return f"a {kind} marked {marker(mark)}{' on CI' if marker(mark) in CONDITIONAL else ''}", mark, marker(mark)
 
     def pytestmark(body):
         return [s.value for s in body if isinstance(s, ast.Assign)
@@ -266,7 +302,7 @@ def test_functions(tree, names, marker):
     inherited = {base.id for node in ast.walk(tree) if isinstance(node, ast.ClassDef)
                  for base in node.bases if isinstance(base, ast.Name)}
     found = []
-    bodies = [(tree.body, module and (f"a module marked {marker(module)}", module, marker(module)))]
+    bodies = [(tree.body, module and described("module", module))]
     while bodies:
         body, suite = bodies.pop()
         for node in body:
@@ -274,7 +310,7 @@ def test_functions(tree, names, marker):
                 if not node.name.startswith("Test") and not node.bases and node.name not in inherited:
                     continue
                 mark = suite_mark(node.decorator_list + pytestmark(node.body))
-                bodies.append((node.body, suite or (mark and (f"a class marked {marker(mark)}", mark, marker(mark)))))
+                bodies.append((node.body, suite or (mark and described("class", mark))))
             elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and TEST_NAME.match(node.name):
                 if any(dotted(d.func if isinstance(d, ast.Call) else d, names) == "pytest.fixture" for d in node.decorator_list):
                     continue

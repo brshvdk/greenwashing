@@ -24,8 +24,10 @@ function countsText(sum) {
   return `${sum.passed} passed, ${sum.failed} failed, ${sum.skipped} skipped`;
 }
 
-// Where a run was, when not in the project itself (another worktree of its repository).
-const place = (run) => (run.where ? ` in ${run.where}` : '');
+// Where a run was, when not in the project itself (another worktree of its repository), and whether
+// that folder's own .greenwashing.json was ignored.
+const IGNORED = 'its own .greenwashing.json ignored, the project\'s used';
+const place = (run) => (run.where ? ` in ${run.where}${run.ignoredSettings ? ` (${IGNORED})` : ''}` : '');
 
 // run: {command, source, where, timeoutSeconds, configError, startError, timedOut, outputTooLarge, exitCode, output};
 // the gate's checks of the changed test lines add kind 'checks' with findings [{file, line, gw, what}],
@@ -96,7 +98,7 @@ function blockReason(run, result) {
       ...listed,
       `See each entry in ${CATALOG}`,
       'Fix the tests. What is meant stays red until a human accepts it: between turns, a human can turn a check off in '
-        + '.greenwashing.json, for example {"checks": {"skips": false}} (skips, assertions, selfComparisons).',
+        + 'the project\'s .greenwashing.json, for example {"checks": {"skips": false}} (skips, assertions, selfComparisons).',
     ].join('\n');
   }
   const subject = run.kind === 'checks' ? 'checks of the changed tests' : 'tests';
@@ -105,6 +107,7 @@ function blockReason(run, result) {
     `Command: ${run.command} (${run.source})`,
   ];
   if (run.where) parts.push(`Folder: ${run.where}`);
+  if (run.ignoredSettings) parts.push('Settings: the project\'s .greenwashing.json; the one in this folder is ignored');
   parts.push(`Result: ${result.outcome}${result.why ? ` - ${result.why}` : ''}`);
   if (result.counts) parts.push(`Counts: ${countsText(result.counts)}`);
   if (result.gw) parts.push(`See ${result.gw} in ${CATALOG}`);
@@ -136,7 +139,8 @@ function decide(runs, results, state, stopHookActive) {
       action: 'release',
       message: `greenwashing: ${run.kind ? 'CHECKS' : 'TESTS'} DID NOT PASS - WORK NOT ACCEPTED. The gate sent the agent back ${blocks} times in a row `
         + `and now lets it stop so it does not loop. Last result: ${result.outcome}`
-        + `${result.why ? ` - ${result.why}` : ''} (${run.command}${place(run)}).`,
+        + `${result.why ? ` - ${result.why}` : ''} (${run.command}${place(run)}).`
+        + `${run.kind === 'config' ? ' The next prompt takes the settings as they are then: undo the change first unless you made it.' : ''}`,
       state: { blocks: 0 },
     };
   }
