@@ -524,3 +524,24 @@ test('a control break whose run does not finish tells nothing: its file\'s break
   assert.match(run.out, /\nControl breaks: 1 file, each made to fail as soon as it runs - 0 run by the tests, 0 not exercised, 1 did not finish\n/);
   assert.match(run.out, /\nMutants: 1 tried - 0 killed, 0 survived, 1 did not run\n- did not run: ok\.js: 1 mutant not run - its control break did not run \(the command did not finish in 3 s and was stopped\), so whether the tests run this file is not known\n/);
 });
+
+test('a control break that leaves the tests without counts: the tests run the file, and its breaks are judged', (t) => {
+  // The command loads the module before the runner starts: failing there, it prints no counts.
+  const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST }, `node -e "require('./cart')" && ${NODE_CMD}`);
+  write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}${STOPS}` });
+  const run = mutate(t, dir);
+  assert.equal(run.code, 0, run.out);
+  assert.match(run.out, /\nControl breaks: 1 file, each made to fail as soon as it runs - 1 run by the tests, 0 not exercised\n/);
+  assert.match(run.out, /\nMutants: 4 tried - 4 killed, 0 survived, 0 did not run\n/);
+});
+
+test('a Python control break goes after the __future__ imports: a compile step before the tests does not read it as run', (t) => {
+  const shop = '"""Prices."""\nfrom __future__ import annotations\n\n\ndef total(prices: list[int]) -> int:\n    return sum(prices)\n';
+  const tests = 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_nothing_of_shop(self):\n        self.assertEqual(1 + 1, 2)\n';
+  const dir = project(t, { 'shop.py': shop, 'test_other.py': tests }, 'python3 -m py_compile shop.py && python3 -m unittest discover');
+  write(dir, { 'shop.py': shop.replace('return sum(prices)', 'return sum(prices) + 0') });
+  const run = mutate(t, dir);
+  assert.equal(run.code, 2, run.out);
+  assert.match(run.out, /\nControl breaks: 1 file, each made to fail as soon as it runs - 0 run by the tests, 1 not exercised\n/);
+  assert.match(run.out, /\n- not exercised: shop\.py: /);
+});
