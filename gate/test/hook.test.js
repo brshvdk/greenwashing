@@ -1566,6 +1566,13 @@ test('"python" in .greenwashing.json runs the Python checks: a path from the pro
     assert.match(gate.stop().json.reason, /- test_a\.py:5: test_saves has no assertion \(GW-18\)/, python);
     assert.ok(fs.existsSync(mark), python);
   }
+  // A configured Python that fails is named as it is.
+  fs.writeFileSync(path.join(bin, 'failing'), '#!/bin/sh\necho boom >&2\nexit 3\n', { mode: 0o755 });
+  const failing = project(t, { 'test_a.py': PY_OK, '.greenwashing.json': config(path.join(bin, 'failing')) }, null);
+  const other = session(t, failing);
+  other.prompt();
+  write(failing, { 'test_a.py': `${PY_OK}# more\n` });
+  assert.match(other.stop().json.reason, new RegExp(`the Python test checks could not run: ${path.join(bin, 'failing').replace(/[.*+?^${}()|[\]\\/]/g, '\\$&')} exited with code 3: boom`));
   // A configured Python that is not there: did not run, with its name and how to fix it.
   const dir = project(t, { 'test_a.py': PY_OK, '.greenwashing.json': config('.venv/bin/python') }, null);
   const gate = session(t, dir);
