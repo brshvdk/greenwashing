@@ -72,6 +72,8 @@ PR 7 is on `claude/amazing-darwin-e9qdmw`, from main at 38a3d17. Next steps:
 2. Then PR 8: README and the demo (the numbers come from `bench/RESULTS.md`, never copied by hand).
 
 ## Known issues / traps
+- This repository's `.greenwashing.json` runs the Python tests and `gate/test/*.test.js`, not `bench/test/*.test.js`: the gate on this repository does not run the benchmark's tests at a Stop (CI does). The file is guarded; the owner decides.
+- Adding or changing a benchmark case: keep every stored file `<name>.txt`, run `node bench/run` on Node 20 and on Node 22 (`/opt/node20/bin` in this environment) and commit `bench/RESULTS.md` and `bench/results.json`, or CI "Bench numbers" goes red.
 - Gate limits: `docs/limitations.md` (user-facing, one list; keep it true when the gate changes). The traps for working on the gate stay in the map.
 - Subagent worktrees (`.claude/worktrees/`) are nested repositories to git: each shows as one untracked folder entry, and tree walks must skip folders with their own `.git`.
 - The CI "Gate tests" step, like the unit tests step, passes a suite whose tests are all skipped (mutant C6 survives as the stricter variant); CI stays as is (owner: no CI changes in PR 5), while the gate on this repository now blocks a new skip in a changed test file (GW-17).
