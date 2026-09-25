@@ -5,7 +5,7 @@
 // the turn changed code, it runs the tests and blocks the stop unless they passed. This file only
 // does I/O (hook JSON, git, files, the test process); every decision is made in lib/.
 
-const { spawn, spawnSync, execFileSync } = require('node:child_process');
+const { spawnSync, execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -13,27 +13,27 @@ const path = require('node:path');
 const { candidatePaths, changedPaths, classify } = require('./lib/changes');
 const { checkJs, testFileKind } = require('./lib/checks');
 const {
-  chooseCommand, readConfig, isPythonTest, ROOT_FILES, CONFIG_FILE, CHECKS, DEFAULT_TIMEOUT_SECONDS, PYTHON_HOW_TO,
+  chooseCommand, readConfig, pythonOf, CONFIG_FILE, CHECKS, DEFAULT_TIMEOUT_SECONDS, PYTHON_HOW_TO,
 } = require('./lib/command');
 const { lineChanges, splitLines } = require('./lib/diff');
 const { verdict, decide } = require('./lib/verdict');
+const {
+  readRootFiles, rootFiles, hasPythonTests, runTests, stopTests, OUTPUT_LIMIT,
+} = require('./runner');
 
-const OUTPUT_LIMIT = 64 * 1024 * 1024;
 // The start text of a test file that is dirty when the turn starts is kept up to this size; past it
 // every line of the file counts as changed.
 const TEXT_LIMIT = 1024 * 1024;
 const PYTHON_CHECKS = path.join(__dirname, 'lib', 'python_checks.py');
 const PYTHON_CHECKS_SECONDS = 60;
-const GRACE_MS = 5000;
 const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
 
-// While a Stop runs: the test command running now and the temporary checkouts (folder ->
-// repository), so that a signal to the hook stops and removes them too.
-let running = null;
+// While a Stop runs: the temporary checkouts (folder -> repository), so that a signal to the hook
+// removes them too, as it stops the test command running now.
 const checkouts = new Map();
 
 function onSignal(signal) {
-  if (running) killGroup(running);
+  stopTests();
   for (const [dir, root] of checkouts) removeWorktree(root, dir);
   process.exit(128 + (os.constants.signals[signal] || 0));
 }
@@ -204,89 +204,6 @@ function turnDiff(root, start, now, only = () => true) {
     before: (file) => (file in start.dirty ? texts[file] ?? null : text(committedBlob(root, start.head, file))),
     after: (file) => (now.tree ? worktreeText(now.tree, file) : text(committedBlob(root, now.commit, file))),
   };
-}
-
-function readRootFiles(dir) {
-  const files = {};
-  for (const name of ROOT_FILES) {
-    try {
-      files[name] = fs.readFileSync(path.join(dir, name), 'utf8');
-    } catch (error) {
-      files[name] = error.code === 'ENOENT' ? null : '';
-    }
-  }
-  return files;
-}
-
-// The root files the command is chosen from, with the gate's settings (the project's) in place of
-// the folder's own .greenwashing.json.
-function rootFiles(dir, settings) {
-  return { ...readRootFiles(dir), [CONFIG_FILE]: settings };
-}
-
-// Python test files git knows of, tracked or not ignored; outside git, the folder's own files only.
-function hasPythonTests(dir) {
-  try {
-    return nulList(git(dir, ['ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.py'])).some(isPythonTest);
-  } catch {
-    return fs.readdirSync(dir).some(isPythonTest);
-  }
-}
-
-function killGroup(child) {
-  try {
-    if (process.platform === 'win32') child.kill('SIGKILL');
-    else process.kill(-child.pid, 'SIGKILL');
-  } catch {
-    // Already gone.
-  }
-}
-
-// Runs the command in a shell, in its own process group, with CI=true (test scripts that check it
-// skip their watch mode), and collects stdout and stderr together. If the hook itself is stopped,
-// the command's whole process group is stopped with it (onSignal).
-function runTests(dir, choice) {
-  return new Promise((resolve) => {
-    const run = { command: choice.command, source: choice.source, timeoutSeconds: choice.timeoutSeconds, exitCode: null, output: '' };
-    const chunks = [];
-    let size = 0;
-    let child;
-    try {
-      child = spawn(choice.command, {
-        cwd: dir, shell: true, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, CI: 'true' },
-      });
-    } catch (error) {
-      resolve({ ...run, startError: error.message });
-      return;
-    }
-    running = child;
-    const collect = (chunk) => {
-      size += chunk.length;
-      if (size <= OUTPUT_LIMIT) chunks.push(chunk);
-    };
-    child.stdout.on('data', collect);
-    child.stderr.on('data', collect);
-    let done = false;
-    let grace;
-    const finish = (fields) => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      clearTimeout(grace);
-      running = null;
-      killGroup(child);
-      resolve({ ...run, output: Buffer.concat(chunks).toString('utf8'), ...fields });
-    };
-    const timer = setTimeout(() => finish({ timedOut: true }), choice.timeoutSeconds * 1000);
-    child.on('error', (error) => finish({ startError: error.message }));
-    child.on('exit', (code, signal) => {
-      if (done) return;
-      run.exitCode = code !== null ? code : 128 + (os.constants.signals[signal] || 0);
-      // Something the tests started may keep the output pipes open after the command ended.
-      grace = setTimeout(() => finish({}), GRACE_MS);
-    });
-    child.on('close', () => finish(size > OUTPUT_LIMIT ? { outputTooLarge: OUTPUT_LIMIT } : {}));
-  });
 }
 
 function realpath(dir) {
@@ -646,13 +563,6 @@ function quickChecks(checked, config, project, deadline) {
     findings.push(...result.findings);
   }
   return findings.length ? { kind: 'checks', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', findings } : null;
-}
-
-// The Python that runs the Python checks: "python" in the gate's settings (a path relative to the
-// project folder, or a name on PATH), else python3 from PATH.
-function pythonOf(config, project) {
-  if (!config.python) return 'python3';
-  return config.python.includes('/') ? path.resolve(project, config.python) : config.python;
 }
 
 // A new test file that keeps, in order, at least half of its lines from a test file the turn

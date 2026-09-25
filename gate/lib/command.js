@@ -1,6 +1,8 @@
 'use strict';
 // Which command runs the project's tests. Pure functions over file texts the hook read.
 
+const path = require('node:path');
+
 const CONFIG_FILE = '.greenwashing.json';
 const DEFAULT_TIMEOUT_SECONDS = 600;
 // The Stop hook's own timeout in hooks/hooks.json and .claude/settings.json is this plus 60 s:
@@ -65,6 +67,13 @@ function readConfig(text) {
   return { testCommand: config.testCommand, timeoutSeconds: config.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS, checks: { ...ALL_CHECKS, ...checks }, ...python };
 }
 
+// The Python for the Python checks: "python" in the settings (config: readConfig()), a path taken
+// from the project folder or a name on PATH; else python3 from PATH.
+function pythonOf(config, project) {
+  if (!config.python) return 'python3';
+  return config.python.includes('/') ? path.resolve(project, config.python) : config.python;
+}
+
 function pytestConfigured(files) {
   return PYTEST_FILES.some((name) => files[name] !== null)
     || /^\[tool\.pytest(\.ini_options)?\]/m.test(files['pyproject.toml'] || '')
@@ -104,6 +113,6 @@ function chooseCommand(files, hasPythonTests) {
 const ROOT_FILES = [CONFIG_FILE, 'package.json', ...PYTEST_FILES, ...PYTEST_SECTION_FILES];
 
 module.exports = {
-  chooseCommand, readConfig, pytestConfigured, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
+  chooseCommand, readConfig, pytestConfigured, pythonOf, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
   PYTHON_HOW_TO,
 };
