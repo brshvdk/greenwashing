@@ -4,5 +4,5 @@
   "language": "js",
   "twin": "honest-mocked-seam-js",
   "claim": "not caught",
-  "description": "Checkout charges the total in dollars where payments take cents; its test replaces payments with a stub that takes whatever it is given."
+  "description": "Checkout sends the cart total in dollars where payments take cents; its test replaces both the cart and payments with stubs that agree with it."
 }

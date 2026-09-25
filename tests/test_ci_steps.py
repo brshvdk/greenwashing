@@ -211,63 +211,94 @@ RESULTS = """# Benchmark
 | --- | --- | --- | --- |
 | All fakes (22) | 0 of 22 caught | {gate} of 22 caught | 17 of 22 caught |
 | Honest twins (22) | 0 false alarms in 22 | 0 false alarms in 22 | 0 false alarms in 22 |
+
+## Fakes the gate misses
+
+- `fake-a` (GW-02, claim: caught): tests passed - npm test: 3 passed
+"""
+JSON_RESULTS = """{{
+  "commit": "{commit}",
+  "date": "{date}",
+  "node": "v22.0.0",
+  "python": "3.12.3",
+  "summary": [
+    {{
+      "red": {gate}
+    }}
+  ],
+  "cases": [
+    {{
+      "id": "fake-a"
+    }}
+  ]
+}}
 """
 
 
 class BenchNumbersStepTest(StepCase):
-    """The step runs bench/run: here a stand-in that writes a RESULTS.md given to it and exits as told."""
+    """The step runs bench/run: here a stand-in that writes the files given to it and exits as told."""
 
     def run_numbers_step(self, committed, fresh, exit_code=0):
         run = ("const fs = require('fs');\nconst path = require('path');\n"
-               f"const text = {json.dumps(fresh)};\n"
-               "if (text !== null) {\n  fs.mkdirSync(process.argv[3], { recursive: true });\n"
-               "  fs.writeFileSync(path.join(process.argv[3], 'RESULTS.md'), text);\n}\n"
+               f"const files = {json.dumps(fresh)};\n"
+               "fs.mkdirSync(process.argv[3], { recursive: true });\n"
+               "for (const [name, text] of Object.entries(files)) fs.writeFileSync(path.join(process.argv[3], name), text);\n"
                f"process.exitCode = {exit_code};\n")
-        files = {"bench/run": run}
-        if committed is not None:
-            files["bench/RESULTS.md"] = committed
-        return self.run_step("ci.yml", "Bench numbers", self.make_dir(files))
+        return self.run_step("ci.yml", "Bench numbers", self.make_dir({"bench/run": run, **{f"bench/{k}": v for k, v in committed.items()}}))
+
+    @staticmethod
+    def results(commit="aaa", date="2026-01-01", gate=14, json_gate=None):
+        return {"RESULTS.md": RESULTS.format(commit=commit, date=date, gate=gate),
+                "results.json": JSON_RESULTS.format(commit=commit, date=date, gate=gate if json_gate is None else json_gate)}
 
     def test_same_numbers_with_another_header_pass(self):
-        committed = RESULTS.format(commit="aaa", date="2026-01-01", gate=14)
-        code, out = self.run_numbers_step(committed, RESULTS.format(commit="bbb", date="2026-09-25", gate=14))
+        code, out = self.run_numbers_step(self.results(), self.results(commit="bbb", date="2026-09-25"))
         self.assertEqual(code, 0, out)
-        self.assertIn("bench/RESULTS.md matches this run", out)
+        self.assertIn("bench/RESULTS.md and bench/results.json match this run", out)
 
     def test_a_changed_number_fails(self):
-        committed = RESULTS.format(commit="aaa", date="2026-01-01", gate=14)
-        code, out = self.run_numbers_step(committed, RESULTS.format(commit="aaa", date="2026-01-01", gate=13))
+        code, out = self.run_numbers_step(self.results(), self.results(gate=13))
         self.assertNotEqual(code, 0, out)
         self.assertIn("bench/RESULTS.md differs from this run", out)
         self.assertIn("13 of 22 caught", out)
 
-    def test_a_changed_line_outside_the_header_fails(self):
-        committed = RESULTS.format(commit="aaa", date="2026-01-01", gate=14)
-        code, out = self.run_numbers_step(committed, committed.replace("# Benchmark", "# Bench"))
+    def test_a_changed_number_in_results_json_fails(self):
+        code, out = self.run_numbers_step(self.results(), self.results(json_gate=13))
         self.assertNotEqual(code, 0, out)
+        self.assertIn("bench/results.json differs from this run", out)
+
+    def test_a_changed_line_outside_the_header_fails(self):
+        for old, new in (("# Benchmark", "# Bench"), ("- `fake-a` (GW-02", "- `fake-a` (GW-04")):
+            fresh = self.results()
+            fresh["RESULTS.md"] = fresh["RESULTS.md"].replace(old, new)
+            code, out = self.run_numbers_step(self.results(), fresh)
+            self.assertNotEqual(code, 0, f"{new}: {out}")
 
     def test_a_failed_run_fails(self):
-        results = RESULTS.format(commit="aaa", date="2026-01-01", gate=14)
-        code, out = self.run_numbers_step(results, results, exit_code=2)
+        code, out = self.run_numbers_step(self.results(), self.results(), exit_code=2)
         self.assertNotEqual(code, 0, out)
-        self.assertNotIn("matches this run", out)
+        self.assertNotIn("match this run", out)
 
     def test_a_run_that_wrote_nothing_fails(self):
-        code, out = self.run_numbers_step(RESULTS.format(commit="aaa", date="2026-01-01", gate=14), None)
+        code, out = self.run_numbers_step(self.results(), {})
         self.assertNotEqual(code, 0, out)
-        self.assertIn("bench did not run: no summary", out)
+        self.assertIn("bench did not run: no summary or no cases", out)
 
-    def test_a_run_with_no_summary_fails(self):
-        # Both files hold only header lines: without the summary check they would compare equal.
-        header = "- Commit: aaa\n- Date: 2026-01-01\n"
-        code, out = self.run_numbers_step(header, header)
-        self.assertNotEqual(code, 0, out)
-        self.assertIn("bench did not run: no summary", out)
+    def test_a_run_with_no_summary_or_no_cases_fails(self):
+        # Files of header lines only: without the checks they would compare equal.
+        header = {"RESULTS.md": "- Commit: aaa\n- Date: 2026-01-01\n", "results.json": '{\n  "commit": "aaa"\n}\n'}
+        for fresh in (header, {**self.results(), "results.json": header["results.json"]}):
+            code, out = self.run_numbers_step(fresh, fresh)
+            self.assertNotEqual(code, 0, out)
+            self.assertIn("bench did not run: no summary or no cases", out)
 
     def test_no_committed_results_fail(self):
-        code, out = self.run_numbers_step(None, RESULTS.format(commit="aaa", date="2026-01-01", gate=14))
+        code, out = self.run_numbers_step({}, self.results())
         self.assertNotEqual(code, 0, out)
         self.assertIn("bench/RESULTS.md differs from this run", out)
+        code, out = self.run_numbers_step({"RESULTS.md": self.results()["RESULTS.md"]}, self.results())
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("bench/results.json differs from this run", out)
 
 
 class ToolsVenvStepTest(StepCase):

@@ -11,5 +11,5 @@ class MetricsTest(unittest.TestCase):
     def test_error_rate_of_user_requests(self):
         requests = [{"path": "/cart", "status": 200}, {"path": "/cart", "status": 500},
                     {"path": "/cart", "status": 200}, {"path": "/cart", "status": 200},
-                    {"path": "/health", "status": 200}, {"path": "/health", "status": 200}]
+                    {"path": "/health", "status": 200}, {"path": "/health", "status": 503}]
         self.assertEqual(error_rate(requests), 0.25)

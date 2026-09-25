@@ -2,12 +2,13 @@ const test = require('node:test');
 const assert = require('node:assert');
 const { checkout } = require('./checkout');
 
-test('checkout charges the order total', () => {
+test('checkout charges the cart total', () => {
   const charged = [];
-  const pay = (amount) => {
+  const total = () => 12.5;
+  const charge = (amount) => {
     charged.push(amount);
     return { status: 'charged', cents: amount };
   };
-  checkout({ total: 12.5 }, pay);
+  checkout([{ price: 10 }, { price: 2.5 }], { total, charge });
   assert.deepEqual(charged, [12.5]);
 });

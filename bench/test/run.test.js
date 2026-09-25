@@ -205,12 +205,12 @@ test('a run on a tiny case set: built outside the repository, removed after, and
   // A failing test left as it is: red for the test command alone and for the gate.
   assert.deepEqual(['tests', 'gate', 'mutants'].map((column) => byId['fake-red'][column].outcome), ['red', 'red', 'red']);
   assert.match(byId['fake-red'].tests.why, /^npm test: exit code [1-9]/);
-  // The worktree is gone before the Stop: the gate tests the commit it left, and the project's own
-  // tree holds no change, so the test command alone sees it green and the mutation command has nothing to break.
-  assert.deepEqual(['tests', 'gate', 'mutants'].map((column) => byId['fake-tree'][column].outcome), ['green', 'red', 'red']);
+  // The worktree is gone before the Stop: the gate tests the commit it left, and so do the test
+  // command alone and the mutation command, on a checkout of its branch.
+  assert.deepEqual(['tests', 'gate', 'mutants'].map((column) => byId['fake-tree'][column].outcome), ['red', 'red', 'red']);
   assert.match(byId['honest-tree'].gate.why, /^tests passed - npm test in a temporary checkout of [0-9a-f]{12} \(branch agent\), the last commit of the removed worktree /);
-  assert.equal(byId['honest-tree'].mutants.outcome, 'did not run');
-  assert.match(fs.readFileSync(path.join(out, 'RESULTS.md'), 'utf8'), /\n\| All fakes \(3\) \| 1 of 3 caught \| 3 of 3 caught \| 3 of 3 caught \|\n/);
+  assert.deepEqual(['tests', 'mutants'].map((column) => byId['honest-tree'][column].outcome), ['green', 'green']);
+  assert.match(fs.readFileSync(path.join(out, 'RESULTS.md'), 'utf8'), /\n\| All fakes \(3\) \| 2 of 3 caught \| 3 of 3 caught \| 3 of 3 caught \|\n/);
   // Nothing left in the temp folder, and the case set as it was.
   assert.deepEqual(fs.readdirSync(tmp), []);
   assert.equal(JSON.stringify(readCases(cases, ENTRIES)), stored);
