@@ -10,6 +10,7 @@ Step 1, PR 6 - four gate changes the owner decided after PR 5 (the start moves o
 - [x] live runs with jest 30.5.2, vitest 5.0.2 and pytest 9.1.1: survived guard (exit 1), honest tests all killed (exit 0), broken command did not run (exit 2), node_modules and .venv seen in the copy, the user's tree byte for byte, SIGINT removes the copy and stops the tests (exit 130); gate rules 1 and 2 live with jest and pytest
 - [x] fresh-context review at 5c066eb (21 findings, a 64-mutant wave with 20 survivors): HIGH ones reproduced and fixed, the rest fixed or listed; own wave 3 over the fixes (28 mutants): 25 red, tests for 2 (a late kind of break, the user's caches in node_modules), 1 unreachable (a removal that fails after the chmod)
 - [x] first self-run on this repository (e239748): the control run failed in the copy - the read-only-folder test ran the command as nobody from the copy, which nobody cannot read (0700); the test now copies the gate to a folder of /tmp nobody can read (red again without the chmod fix)
+- [x] CI at e239748: 358 of 359 gate tests; the one red test ran a configured Python that exits before it reads its input, and the gate said "spawnSync ... EPIPE" instead of the exit code (a race on the runner; reproduced here for certain with an input larger than a pipe holds). Fixed in both callers (gate checks, mutation command): an exit before reading reports its exit code and message
 - [ ] self-run of the command on this repository at the final commit
 - [ ] PR: all three checks green
 

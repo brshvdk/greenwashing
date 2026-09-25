@@ -401,6 +401,12 @@ test('breaks from the Python interpreter are checked: a known kind on a changed 
   assert.match(mutate(t, dir).out, /\nDid not run: the Python files could not be read: \S+ printed no list of breaks\n/);
   config('no-such-python');
   assert.match(mutate(t, dir).out, /\nDid not run: the Python files could not be read: no-such-python could not run: not found\n/);
+  // One that exits before it reads a request larger than a pipe holds: named with its exit code.
+  const failing = path.join(bin, 'failing');
+  fs.writeFileSync(failing, '#!/bin/sh\necho boom >&2\nexit 3\n', { mode: 0o755 });
+  config(failing);
+  write(dir, { 'shop.py': `A = 1\nB = 3\n${'# more\n'.repeat(40000)}` });
+  assert.match(mutate(t, dir).out, /\nDid not run: the Python files could not be read: \S+failing exited with code 3: boom\n/);
 });
 
 test('the base named as git names it: origin/main when origin/HEAD points there', (t) => {

@@ -166,7 +166,10 @@ function pythonMutants(files, python) {
   const result = spawnSync(python, ['-I', PYTHON_MUTANTS], {
     input: JSON.stringify(request), cwd: os.tmpdir(), timeout: 120000, maxBuffer: OUTPUT_LIMIT, stdio: ['pipe', 'pipe', 'pipe'],
   });
-  if (result.error) return { error: `${python} could not run: ${result.error.code === 'ENOENT' ? 'not found' : result.error.message}` };
+  // EPIPE: it exited before it read the request; its exit code and message say why.
+  if (result.error && !(result.error.code === 'EPIPE' && result.status !== null)) {
+    return { error: `${python} could not run: ${result.error.code === 'ENOENT' ? 'not found' : result.error.message}` };
+  }
   if (result.status !== 0) return { error: `${python} exited with code ${result.status}: ${result.stderr.toString('utf8').trim().split('\n').slice(-2).join(' ')}` };
   let out;
   try {

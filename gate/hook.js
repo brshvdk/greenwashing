@@ -597,7 +597,8 @@ function pythonChecks(files, deadline, python) {
   if (result.error && result.error.code === 'ENOENT') {
     return { error: `${python === 'python3' ? 'python3 was not found on PATH' : `${python} was not found`}; ${PYTHON_HOW_TO}` };
   }
-  if (result.error) return { error: result.error.message };
+  // EPIPE: it exited before it read the request; its exit code and message say why.
+  if (result.error && !(result.error.code === 'EPIPE' && result.status !== null)) return { error: result.error.message };
   const stderr = result.stderr.toString('utf8').trim().split('\n').slice(-3).join(' ');
   if (result.status !== 0) return { error: `${python} exited with code ${result.status}${stderr ? `: ${stderr}` : ''}` };
   try {
