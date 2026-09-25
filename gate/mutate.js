@@ -161,8 +161,8 @@ function pythonMutants(files, python) {
 
 // A copy of the repository's working tree in a new temporary folder: every file git lists (tracked
 // as it is now, and untracked files git does not ignore), symbolic links as links. Dependency folders
-// (node_modules, .venv, venv), submodules and nested repositories are linked, not copied: the same
-// code, the same dependencies. No bytecode caches.
+// (.venv, venv, the entries of node_modules), submodules and nested repositories are linked, not
+// copied: the same code, the same dependencies. No bytecode caches.
 function makeCopy(home) {
   copy = fs.mkdtempSync(path.join(os.tmpdir(), 'greenwashing-mutants-'));
   const links = new Set();
@@ -197,9 +197,39 @@ function makeCopy(home) {
     const to = path.join(copy, folder);
     if (fs.existsSync(to) || !fs.existsSync(path.join(home, folder))) continue;
     fs.mkdirSync(path.dirname(to), { recursive: true });
-    fs.symlinkSync(path.join(home, folder), to);
+    if (path.basename(folder) === 'node_modules') linkModules(home, path.join(home, folder), to);
+    else fs.symlinkSync(path.join(home, folder), to);
   }
   return copy;
+}
+
+// The tools' caches in node_modules: the copy keeps its own, so the runs never write into the user's.
+const MODULE_CACHES = new Set(['.cache', '.vite', '.vitest']);
+
+// node_modules as a folder of the copy's own with a link to each entry of the user's (in a scope
+// folder, @name, each entry of it): the caches stay out (MODULE_CACHES), and an entry that links into
+// the repository (a workspace package) links to the copy's files, so its breaks reach the tests.
+function linkModules(home, from, to) {
+  fs.mkdirSync(to, { recursive: true });
+  for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
+    if (MODULE_CACHES.has(entry.name)) continue;
+    const source = path.join(from, entry.name);
+    const target = path.join(to, entry.name);
+    if (entry.name.startsWith('@') && entry.isDirectory()) {
+      linkModules(home, source, target);
+      continue;
+    }
+    let inside = null;
+    if (entry.isSymbolicLink()) {
+      try {
+        const rel = path.relative(home, fs.realpathSync(source));
+        if (rel && !rel.startsWith('..') && !path.isAbsolute(rel)) inside = path.join(copy, rel);
+      } catch {
+        // A broken link stays one.
+      }
+    }
+    fs.symlinkSync(inside || source, target);
+  }
 }
 
 // The last lines of a run's output, for a control run that was not green.

@@ -148,7 +148,7 @@ test("the user's files stay byte for byte; node_modules, .venv and venv are link
     '.gitignore': 'node_modules/\n.venv/\nvenv/\n',
     'cart.js': "const { rate } = require('dep');\nconst { round } = require('./round');\n" + CART.replace('return items.reduce((sum, item) => sum + item.price, 0);', 'return round(items.reduce((sum, item) => sum + item.price, 0) * rate);'),
     'cart.test.js': CART_TEST,
-  }, `test -L node_modules && test -L .venv && test -L venv && ${NODE_CMD}`);
+  }, `test -L node_modules/dep && test -L .venv && test -L venv && test -L link.js && mkdir -p node_modules/.vite node_modules/.cache && echo run > node_modules/.vite/results.json && echo run > node_modules/.cache/x && ${NODE_CMD}`);
   write(dir, {
     'node_modules/dep/index.js': 'module.exports = { rate: 1 };\n', 'node_modules/dep/package.json': '{"name": "dep", "main": "index.js"}\n',
     '.venv/pyvenv.cfg': 'home = /usr/bin\n', 'venv/pyvenv.cfg': 'home = /usr/bin\n', 'cart.js': `${fs.readFileSync(path.join(dir, 'cart.js'), 'utf8')}${ADD}`,
@@ -191,6 +191,19 @@ test('each break runs alone: its file is back as it was before the next break ru
   write(dir, { 'a.test.js': fs.readFileSync(path.join(dir, 'a.test.js'), 'utf8').replace('one(), 1', 'one(), 3') });
   const run = mutate(t, dir);
   assert.match(run.out, /\n- killed: a\.js:1: .*\n- survived: z\.js:1: .*\n/);
+});
+
+test('a workspace package linked in node_modules is the copy\'s: its breaks reach the tests', (t) => {
+  const dir = project(t, {
+    '.gitignore': 'node_modules/\n', 'packages/pkg/package.json': '{"name": "@w/pkg", "main": "index.js"}\n', 'packages/pkg/index.js': 'module.exports = { rate: () => 1 };\n',
+    'app/rate.test.js': "const test = require('node:test');\nconst assert = require('node:assert');\nconst { rate } = require('@w/pkg');\ntest('rate', () => assert.equal(rate(), 2));\n",
+  });
+  fs.mkdirSync(path.join(dir, 'node_modules', '@w'), { recursive: true });
+  fs.symlinkSync('../../packages/pkg', path.join(dir, 'node_modules', '@w', 'pkg'));
+  write(dir, { 'packages/pkg/index.js': 'module.exports = { rate: () => 2 };\n' });
+  const run = mutate(t, dir);
+  assert.match(run.out, /\n- killed: packages\/pkg\/index\.js:1: module\.exports = \{ rate: \(\) => 2 \}; {2}-> {2}module\.exports = \{ rate: \(\) => 3 \};\n/);
+  assert.equal(run.code, 0, run.out);
 });
 
 test('a signal stops the tests and removes the copy', async (t) => {
