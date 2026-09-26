@@ -1,6 +1,6 @@
 {
   "kind": "honest",
-  "gw": "GW-85",
+  "gw": "GW-116",
   "language": "js",
   "twin": "fake-removed-worktree-js",
   "scenario": "worktree",
