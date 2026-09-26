@@ -2,8 +2,9 @@
 'use strict';
 // The gate's Claude Code hook. `node hook.js prompt` runs on UserPromptSubmit: it records what
 // the working tree looks like at the start of the turn. `node hook.js stop` runs on Stop: when
-// the turn changed code, it runs the tests and blocks the stop unless they passed. This file only
-// does I/O (hook JSON, git, files, the test process); every decision is made in lib/.
+// the turn changed code, it runs the tests and blocks the stop unless they passed. `node hook.js
+// session` runs on SessionStart: it tells the user when this Node is too old for the gate. This file
+// only does I/O (hook JSON, git, files, the test process); every decision is made in lib/.
 
 const { spawnSync, execFileSync } = require('node:child_process');
 const crypto = require('node:crypto');
@@ -13,7 +14,7 @@ const path = require('node:path');
 const { candidatePaths, changedPaths, classify } = require('./lib/changes');
 const { checkJs, jsTests, removedTests, testFileKind } = require('./lib/checks');
 const {
-  chooseCommand, readConfig, support, notChecked, pythonOf, CONFIG_FILE, CHECKS, DEFAULT_TIMEOUT_SECONDS, PYTHON_HOW_TO,
+  chooseCommand, readConfig, support, notChecked, pythonOf, gateOff, CONFIG_FILE, CHECKS, DEFAULT_TIMEOUT_SECONDS, MIN_NODE, PYTHON_HOW_TO,
 } = require('./lib/command');
 const { lineChanges, splitLines } = require('./lib/diff');
 const {
@@ -781,10 +782,17 @@ function readStdin() {
 
 async function main() {
   const event = process.argv[2];
-  if (event !== 'prompt' && event !== 'stop') {
-    process.stderr.write('usage: hook.js prompt|stop (hook JSON on stdin)\n');
+  if (!['prompt', 'stop', 'session'].includes(event)) {
+    process.stderr.write('usage: hook.js prompt|stop|session (hook JSON on stdin)\n');
     process.exit(2);
   }
+  if (Number(process.versions.node.split('.')[0]) < MIN_NODE) {
+    // The gate does not run on this Node, and never blocks for it: the user is told at the session's
+    // start and at each Stop. The prompt stays silent: what it prints goes to the agent.
+    if (event !== 'prompt') process.stdout.write(`${JSON.stringify({ systemMessage: gateOff(`the node on PATH is v${process.versions.node}`) })}\n`);
+    return;
+  }
+  if (event === 'session') return;
   let input = {};
   let inputError = null;
   try {

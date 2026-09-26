@@ -1,6 +1,16 @@
 {
-  "description": "greenwashing gate: record the start of each turn; at the end of a turn that changed code, run the tests and block the stop unless they passed",
+  "description": "greenwashing gate: say at the start of a session when Node is missing or too old for the gate; record the start of each turn; at the end of a turn that changed code, run the tests and block the stop unless they passed",
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/gate/hook.js\" session || echo '{\"systemMessage\":\"greenwashing: the gate is OFF - it needs Node.js 20 or newer, and node could not start it. No turn is checked until a human installs Node.js 20 or newer and restarts Claude Code.\"}'"
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

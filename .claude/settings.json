@@ -1,5 +1,15 @@
 {
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/gate/hook.js\" session || echo '{\"systemMessage\":\"greenwashing: the gate is OFF - it needs Node.js 20 or newer, and node could not start it. No turn is checked until a human installs Node.js 20 or newer and restarts Claude Code.\"}'"
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "hooks": [

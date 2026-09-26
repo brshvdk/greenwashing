@@ -2039,3 +2039,23 @@ test('outside git, a test command the work started with and the turn removes is 
   write(dir, { 'package.json': '{}' });
   assert.match(gate.stop().json.reason, /Result: did not run - no test command found/);
 });
+
+test('on a Node older than the gate needs, no turn is blocked: the session start and each Stop tell the user, the prompt says nothing', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  // The hook runs with this Node claiming to be 18.20.8 (process.versions.node can be redefined).
+  const preload = path.join(tempDir(t), 'old-node.js');
+  fs.writeFileSync(preload, "Object.defineProperty(process.versions, 'node', { value: '18.20.8' });\n");
+  const gate = session(t, dir, { env: { NODE_OPTIONS: `--require ${preload}` } });
+  const off = { systemMessage: 'greenwashing: the gate is OFF - it needs Node.js 20 or newer, and the node on PATH is v18.20.8. '
+    + 'No turn is checked until a human installs Node.js 20 or newer and restarts Claude Code.' };
+  const started = gate.raw('session', { session_id: 's', cwd: dir, hook_event_name: 'SessionStart', source: 'startup' });
+  assert.deepEqual([started.code, started.json, started.stderr], [0, off, '']);
+  const prompt = gate.prompt();
+  assert.deepEqual([prompt.code, prompt.stdout, prompt.stderr], [0, '', '']);
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.deepEqual(gate.stop().json, off);
+  assert.deepEqual(gate.stop(true).json, off);
+  // On a Node it runs on, the session hook says nothing and the same turn blocks.
+  const fine = session(t, dir, { tmp: gate.tmp });
+  assert.deepEqual(fine.raw('session', { session_id: 's', cwd: dir, hook_event_name: 'SessionStart', source: 'startup' }).stdout, '');
+});

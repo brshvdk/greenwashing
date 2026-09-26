@@ -8,6 +8,14 @@ const DEFAULT_TIMEOUT_SECONDS = 600;
 // The Stop hook's own timeout in hooks/hooks.json and .claude/settings.json is this plus 60 s:
 // Claude Code cancels a hook that runs longer and lets the agent stop (gate/test/plugin.test.js).
 const MAX_TIMEOUT_SECONDS = 3600;
+// The oldest Node the gate runs on: the oldest one CI tests (.github/workflows/ci.yml). On an older one
+// the gate does not run and says so (gateOff): in runs, Node 14 and 16 blocked every turn.
+const MIN_NODE = 20;
+// Why the gate is not running (found: what was found instead), for the user; hooks/hooks.json and
+// .claude/settings.json print it with NO_NODE when node cannot start the gate at all.
+const NO_NODE = 'node could not start it';
+const gateOff = (found) => `greenwashing: the gate is OFF - it needs Node.js ${MIN_NODE} or newer, and ${found}. `
+  + `No turn is checked until a human installs Node.js ${MIN_NODE} or newer and restarts Claude Code.`;
 const CONFIG_KEYS = ['testCommand', 'timeoutSeconds', 'checks', 'python', 'mutants'];
 // The mutation command's limits (gate/mutate.js): how many breaks, the time for everything, and the
 // time for one test run; "mutants" in the settings and the command's options change them.
@@ -170,5 +178,5 @@ const notChecked = (why) => `greenwashing: this turn was NOT checked - ${why}, a
 
 module.exports = {
   chooseCommand, readConfig, support, notChecked, pytestConfigured, pythonOf, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS,
-  MAX_TIMEOUT_SECONDS, HOW_TO, PYTHON_HOW_TO, MUTANT_LIMITS, MUTANT_MAX,
+  MAX_TIMEOUT_SECONDS, MIN_NODE, NO_NODE, gateOff, HOW_TO, PYTHON_HOW_TO, MUTANT_LIMITS, MUTANT_MAX,
 };
