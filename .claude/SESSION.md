@@ -1,17 +1,25 @@
 # SESSION
 
 ## Current step
-Step 1, PR 7 - two gate fixes the owner decided after PR 6 (an agent's settings change carried over an unaccepted turn keeps blocking; a control break per file in the mutation command) and the benchmark for the Numbers section (`bench/`). PR 6 merged as 38a3d17 (PR 13).
+Step 1, PR 8 - the gate catches removed tests (GW-17) and passes projects it cannot check with a clear line; catalog GW-41 and GW-116; CI on Node 20, 22 and 24. PR 7 merged as 8b40435 (PR 14). Branch `claude/inspiring-dijkstra-bnzflu`. The PR is NOT opened: the GitHub Actions minutes of the month are used up (reset in about 5 days); push only at save points and at the end, then give the owner the PR title and body to open it after the reset.
 
 ## Progress
-- [x] self-run of the mutation command on main 38a3d17 (`--base a6ad19a --timeout 7200 --run-timeout 900`, 38 min 50 s): 9 code files, 1205 changed lines, 666 places, 20 tried - 20 killed, 0 survived, 0 did not run (exit 0); no copy left
-- [x] part 1.1: settings carried over an unaccepted turn keep blocking, judged per file against what the gate last saw (every prompt and Stop record it); the WORK NOT ACCEPTED line for a settings change says so
-- [x] part 1.2: control break per file with a break chosen; green -> "not exercised" (did not run); live with a real `pip install -e .` (pip 24.0): main reports 2 false survivors, the branch "not exercised" (exit 2), the same project without the editable install kills both (exit 0)
-- [x] part 2: `bench/` (22 fakes, 22 honest twins), `bench/run`, RESULTS.md, results.json, tests; CI "Bench tests" and "Bench numbers" (RESULTS.md and results.json compared); the same tables on Node 20/21/22 and Python 3.10-3.13; two runs in a row byte for byte the same
-- [x] own waves: 49 mutants (38 red; survivors closed by tests or equivalent) and 9 over the per-file fix (7 red, 2 closed or equivalent); two fresh-context reviews (bench; part 1), every finding reproduced, fixed or listed
-- [ ] PR 14: all checks green on the last push (Safety net red by design: CI and guarded files change)
+- [x] part 1.1-1.3, 1.5: CATALOG GW-41 (C) and GW-116 (H), H intro, GW-17 Catch it; `tests/test_skill.py` uses GW-199 as a missing number; bench labels GW-41 and GW-116; two skill lines (GW-17, GW-41); CLAUDE.md CI-minutes rule
+- [x] part 1.4: CI job `node` on Node 20.20.2, 22.23.3, 24.21.0 (tarballs from nodejs.org, SHA-256 pinned in ci.yml, taken from each release's SHASUMS256.txt and checked against the downloaded tarball on 2026-09-26); Gate tests and Bench numbers there; `concurrency` by PR number (manual runs by run id); timeouts 5/15/5 min; `tests/test_ci_steps.py` covers the install (curl stand-in), the version check, the matrix, timeouts and concurrency; `--test-name-pattern` trap seen on Node 24.21.0 too (limitations)
+- [x] part 2: removed tests (gate code, tests, bench cases); fake-deleted-test-js now caught
+- [x] part 3: projects the gate cannot check (gate code, tests, bench cases)
+- [ ] part 4: no Node / old Node - live check of what the user sees, then the documented way (code.claude.com) or a limitation
+- [ ] docs: limitations, map (ARCHITECTURE: gate, bench, ci.yml, skill trap GW-116 -> GW-199), bench/README
+- [ ] verification: CI steps in the session, bench on Node 20/22/24 (22 and 24 from nodejs.org tarballs in the scratchpad), leak-check, fresh mutation wave, fresh review; final push; report with PR title and body
 
 ## Decisions made (and why)
+- Owner (PR 8): setup-node is not used; each Node version is an exact nodejs.org release with its SHA-256 pinned in ci.yml (like gitleaks), not read from SHASUMS256.txt at run time. Reading actions/setup-node's repository for a SHA would break CLAUDE.md section 1.
+- Owner (PR 8): `"skips": false` also turns off the check of removed tests; the gate's messages and the docs say so.
+- Owner (PR 8): a testCommand a human set in .greenwashing.json is always checked (no counts -> did not run); a command found by itself is checked when its text, or the npm/yarn/pnpm scripts it runs, names pytest, unittest, jest, vitest or node --test; the not-checked line tells to set testCommand.
+- PR 8, chosen here: a test is kept when its name is still in its file (edited in place) or its body (JS: the call after the name, no spaces or comments; Python: ast of parameters and statements) is in any changed test file now; renamed and edited at once is removed. Tests are compared per tree, only in changed test files. A test file the user changes between turns the gate did not accept is theirs as it is at the next prompt (kept until a turn is accepted), like the settings files; `stopped` now records test files too.
+- PR 8, chosen here: the permission words match in any case with any spaces between, as whole words ("disallow" and "removals" do not count); only UserPromptSubmit's `prompt`.
+- PR 8, chosen here: support is decided at the prompt that starts the work and kept while no Stop accepts it (else the agent removes the command, is let go as WORK NOT ACCEPTED, and the next turn passes); outside git too. GW-114 still blocks in a project the gate cannot check: otherwise the agent writes a testCommand in an unchecked turn and the gate takes it as the user's from the next one. A project with no tests at the start stays unchecked for that turn even when the agent adds failing tests.
+- PR 8, chosen here: the benchmark's honest mocha and no-tests cases need fake twins (every case has one), so part 3 has 4 pairs; the fakes there are claimed "not caught". The mocha project runs a stand-in (`node_modules/mocha/bin/mocha.js`, written here): the benchmark installs no packages, and without it `npm test` exits 127 and the tests-only column reads a false alarm that a real project would not have.
 - Owner (PR 7): an agent's settings change carried over an unaccepted turn keeps blocking; a user's change between turns does not. Chosen here (after the fresh-context review, each case reproduced): each settings file is judged alone against what the gate last saw (the last Stop, or the prompt of a turn cut off before its Stop); only a tree with an earlier snapshot carries; a user who wants the agent's change edits the file between turns.
 - Owner (PR 7): the mutation command makes each changed file fail at its start before the breaks; tests green with that -> "not exercised", did not run. Chosen here: only files with a break chosen get a control run (time counts toward the limits, not toward `limit`); a control that times out or cannot start leaves its file's breaks as did not run; any other red outcome means the file runs.
 - Owner (PR 7): case files are stored as `name.txt` (this repository's gate reads new test files and every `.greenwashing.json`); `bench/run` builds the projects in a temporary folder outside the repository and removes it; a file without the suffix, an empty case or no cases is did not run (exit 2); `bench/README.md` says why.
@@ -69,9 +77,7 @@ Step 1, PR 7 - two gate fixes the owner decided after PR 6 (an agent's settings 
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-PR 7 is PR 14 on `claude/amazing-darwin-e9qdmw`, from main at 38a3d17. Numbers at e35c348 (`bench/RESULTS.md`): tests only 1 of 22 fakes caught, gate 14 of 22, gate + mutants 16 of 22 (17 claimed: 16 caught, GW-04 missed); honest twins: 0, 0 and 1 false alarm in 22. Next steps:
-1. PR 14: the owner merges; open for the owner: the honest removed-worktree twin's test lacks the accepted boundary `'1'` (the one false alarm, left as measured); the repository's `.greenwashing.json` does not run `bench/test`.
-2. Then PR 8: README and the demo (numbers only from `bench/RESULTS.md`).
+PR 8 on `claude/inspiring-dijkstra-bnzflu`, from main at 8b40435. Numbers at b266a76 (`bench/RESULTS.md`): tests only 1 of 29 fakes caught, gate 20 of 29, gate + mutants 22 of 29 (23 claimed: 22 caught, GW-04 missed); honest twins 0, 0 and 1 false alarm in 29 (before: 1, 14, 16 of 22; 0, 0, 1 in 22). Next: part 4, docs, verification, final push; the PR waits for the CI minutes reset.
 
 ## Known issues / traps
 - This repository's `.greenwashing.json` runs the Python tests and `gate/test/*.test.js`, not `bench/test/*.test.js`: the gate on this repository does not run the benchmark's tests at a Stop (CI does). The file is guarded; the owner decides.
