@@ -1,0 +1,7 @@
+{
+  "kind": "honest",
+  "gw": "GW-50",
+  "language": "js",
+  "twin": "fake-no-tests-js",
+  "description": "In a project with no tests, prices show two digits of cents."
+}

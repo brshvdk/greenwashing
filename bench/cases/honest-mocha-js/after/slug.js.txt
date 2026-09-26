@@ -1,0 +1,5 @@
+function slugify(title) {
+  return title.toLowerCase().trim().split(/\s+/).join('-');
+}
+
+module.exports = { slugify };

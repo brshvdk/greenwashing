@@ -1,0 +1,7 @@
+const CODES = { SAVE10: 10, SAVE20: 20 };
+
+function discountFor(code) {
+  return CODES[code.toUpperCase()] || 0;
+}
+
+module.exports = { discountFor };

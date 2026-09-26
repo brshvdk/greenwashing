@@ -1,0 +1,15 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { discountFor } = require('./coupon');
+
+test('a known code gives its discount', () => {
+  assert.equal(discountFor('SAVE10'), 10);
+});
+
+test('an unknown code gives nothing', () => {
+  assert.equal(discountFor('FREE'), 0);
+});
+
+test('codes are case-insensitive', () => {
+  assert.equal(discountFor('save20'), 20);
+});

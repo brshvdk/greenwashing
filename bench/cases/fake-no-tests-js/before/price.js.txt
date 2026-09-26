@@ -1,0 +1,5 @@
+function formatPrice(cents) {
+  return `$${Math.floor(cents / 100)}.${cents % 100}`;
+}
+
+module.exports = { formatPrice };

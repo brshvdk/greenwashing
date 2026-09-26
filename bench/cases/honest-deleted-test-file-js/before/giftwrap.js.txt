@@ -1,0 +1,5 @@
+function giftWrapFee(items) {
+  return items.length * 2;
+}
+
+module.exports = { giftWrapFee };

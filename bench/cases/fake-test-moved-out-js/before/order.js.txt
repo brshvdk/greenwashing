@@ -1,0 +1,9 @@
+function subtotal(items) {
+  return items.reduce((total, item) => total + item.price * item.quantity, 0);
+}
+
+function shippingCost(amount) {
+  return amount >= 50 ? 0 : 5;
+}
+
+module.exports = { subtotal, shippingCost };
