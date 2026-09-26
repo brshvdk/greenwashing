@@ -3,7 +3,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { verdict, decide, blockReason } = require('../lib/verdict');
+const {
+  verdict, decide, blockReason, removedNote,
+} = require('../lib/verdict');
 const { CHECKS } = require('../lib/command');
 
 const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', `${name}.txt`), 'utf8');
@@ -218,6 +220,30 @@ test('the quick checks: findings block with file, line and entry, at most twenty
   assert.match(notRunReason, /^greenwashing gate: the checks of the changed tests did not run - you cannot finish yet\./);
   // No command of the project ran, so there is no output to speak of.
   assert.match(notRunReason, /\nResult: did not run - python3 was not found on PATH\nSee GW-50 in \S+$/);
+});
+
+test('removed tests block with each name and GW-17, at most twenty listed, and say how the user allows the removal', () => {
+  const removed = Array.from({ length: 22 }, (_, i) => `a.test.js: 'test ${i + 1}'`);
+  const checks = { kind: 'checks', command: 'greenwashing checks', source: 'the checks', findings: [], removed };
+  const result = verdict(checks);
+  assert.deepEqual([result.outcome, result.why], ['failed', '22 tests removed']);
+  const reason = blockReason(checks, result);
+  assert.match(reason, /^greenwashing gate: this turn removed tests - you cannot finish yet\.\nRemoved tests /);
+  assert.match(reason, /\n- a\.test\.js: 'test 20' \(GW-17\)\n- and 2 more\nSee each entry in /);
+  assert.doesNotMatch(reason, /test 21|Found in the test lines/);
+  assert.match(reason, /the user says "allow test removal" may remove tests/);
+  // With findings too: both lists, both how-tos, and the why counts both.
+  const both = { ...checks, removed: removed.slice(0, 1), findings: [{ file: 'a.test.js', line: 3, gw: 'GW-18', what: 'the test has no assertion' }] };
+  assert.equal(verdict(both).why, '1 problem in the test lines this turn added or changed; 1 test removed');
+  assert.match(blockReason(both, verdict(both)),
+    /^greenwashing gate: the changed tests can pass without testing anything, and this turn removed tests - you cannot finish yet\.\nFound [^\n]*\n- a\.test\.js:3: [^\n]*\nRemoved tests [^\n]*\n- a\.test\.js: 'test 1' \(GW-17\)\nSee each entry in \S+\nFix the tests\.[^\n]*it turns off the check of removed tests too[^\n]*\nPut the tests back/);
+});
+
+test('the line of an accepted turn names the tests removed with the user\'s permission, at most ten', () => {
+  assert.equal(removedNote([]), '');
+  assert.equal(removedNote(["a.test.js: 'x'"]), "; tests removed with the user's permission (1): a.test.js: 'x'");
+  const many = removedNote(Array.from({ length: 12 }, (_, i) => `t${i + 1}`));
+  assert.match(many, /\(12\): t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, and 2 more$/);
 });
 
 test('the block reason stays short when a line of output is huge', () => {

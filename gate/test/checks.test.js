@@ -1,7 +1,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { checkJs, testFileKind, mask } = require('../lib/checks');
+const {
+  checkJs, jsTests, removedTests, testFileKind, mask,
+} = require('../lib/checks');
 const { lineChanges } = require('../lib/diff');
 
 const ALL = { skips: true, assertions: true, selfComparisons: true };
@@ -595,4 +597,71 @@ test('Python edges: markers and messages, an old comment, removed lines above a 
   assert.deepEqual(inside(old, `${old}\n    def test_b(self):\n        assert g()\n`), ['a test inside a class marked pytest.mark.skip - the test does not run']);
   const xfailed = 'import pytest\n\npytestmark = pytest.mark.xfail\n';
   assert.deepEqual(inside(xfailed, `${xfailed}\n\ndef test_b():\n    assert g()\n`), ['a test inside a module marked pytest.mark.xfail - the test passes when it fails']);
+});
+
+// The tests a turn removed: listed by jsTests() or python_checks.py, compared by removedTests().
+const within = (file, source) => jsTests(source).map((one) => ({ file, ...one }));
+const named = (removed) => removed.map((one) => `${one.file}: ${one.name}`);
+
+test('jsTests names each test with the suites and tests around it, and reads its body without spaces or comments', () => {
+  const source = "describe('cart', () => {\n  it('adds', () => {\n    // one\n    expect(add(1, 2)).toBe(3);\n  });\n  it.todo('later');\n});\n"
+    + "test('subtracts', (t) => {\n  t.test('by one', () => {});\n});\n";
+  assert.deepEqual(jsTests(source).map((one) => one.name), ["'cart' > 'adds'", "'cart' > 'later'", "'subtracts'", "'subtracts' > 'by one'"]);
+  assert.equal(jsTests("it('renamed', () => { expect(add(1, 2)).toBe(3); /* two */ });\n")[0].body, jsTests(source)[0].body);
+  assert.equal(jsTests(source)[1].body, null);
+  // Another string, table or option is another body; the function and the runner's name are not part of it.
+  const body = (text) => jsTests(text)[0].body;
+  assert.notEqual(body("it('a', () => { expect(f('x y')).toBe(1); });"), body("it('a', () => { expect(f('xy')).toBe(1); });"));
+  assert.notEqual(body("test.each([[1]])('a %i', (n) => { expect(n).toBe(1); });"), body("test.each([[2]])('a %i', (n) => { expect(n).toBe(1); });"));
+  assert.notEqual(body("test('a', { skip: true }, () => { assert.ok(f()); });"), body("test('a', () => { assert.ok(f()); });"));
+  assert.equal(body("it.only('a', () => { expect(f()).toBe(1); });"), body("test('b', () => { expect(f()).toBe(1); });"));
+});
+
+test('removedTests: a test no changed test file has any more is removed; renamed, moved or edited under its name it is not', () => {
+  const a = "test('adds', () => { expect(add(1, 2)).toBe(3); });\ntest('subtracts', () => { expect(sub(3, 2)).toBe(1); });\n";
+  const adds = "test('adds', () => { expect(add(1, 2)).toBe(3); });\n";
+  const before = within('a.test.js', a);
+  assert.deepEqual(named(removedTests(before, within('a.test.js', adds))), ["a.test.js: 'subtracts'"]);
+  assert.deepEqual(named(removedTests(before, [])), ["a.test.js: 'adds'", "a.test.js: 'subtracts'"]);
+  // Renamed with the same body, moved into a suite of another test file, edited under its name.
+  assert.deepEqual(removedTests(before, within('a.test.js', a.replace("'adds'", "'adds two numbers'"))), []);
+  const moved = "describe('math', () => {\n  test('subtracts', () => {\n    expect(sub(3, 2)).toBe(1);\n  });\n});\n";
+  assert.deepEqual(removedTests(before, [...within('a.test.js', adds), ...within('b.test.js', moved)]), []);
+  assert.deepEqual(removedTests(before, within('a.test.js', a.replace('toBe(1)', 'toBe(2)'))), []);
+  // Renamed and changed at once: removed.
+  assert.deepEqual(named(removedTests(before, within('a.test.js', a.replace("'subtracts', () => { expect(sub(3, 2)).toBe(1)", "'minus', () => { expect(sub(3, 2)).toBe(2)")))),
+    ["a.test.js: 'subtracts'"]);
+  // Of two tests with one name, the one whose body is gone is removed, whichever comes first.
+  const f = "test('x', () => { expect(f()).toBe(1); });\n";
+  const g = "test('x', () => { expect(g()).toBe(2); });\n";
+  assert.deepEqual(removedTests(within('t.test.js', f + g), within('t.test.js', g)).map((one) => one.body), [jsTests(f)[0].body]);
+  assert.deepEqual(removedTests(within('t.test.js', g + f), within('t.test.js', g)).map((one) => one.body), [jsTests(f)[0].body]);
+  // One of them edited, the other gone: one is removed.
+  assert.equal(removedTests(within('t.test.js', f + g), within('t.test.js', "test('x', () => { expect(h()).toBe(3); });\n")).length, 1);
+  // A todo has no body: only its name keeps it.
+  assert.deepEqual(named(removedTests(within('t.test.js', "it.todo('later');\n"), within('t.test.js', "it.todo('soon');\n"))), ["t.test.js: 'later'"]);
+});
+
+test('python_checks.py lists the tests of a text with their classes; a start text Python cannot read has none', () => {
+  const list = (items) => {
+    const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+      input: JSON.stringify({ files: [], list: items, entries: CHECKS }), encoding: 'utf8',
+    });
+    assert.equal(run.status, 0, run.stderr);
+    return JSON.parse(run.stdout);
+  };
+  const method = '    def test_total(self):\n        self.assertEqual(total([1, 2]), 3)\n';
+  const out = list([
+    { key: 'a', file: 'test_a.py', text: `import unittest\n\n\nclass TestCart(unittest.TestCase):\n${method}\n    def helper(self):\n        pass\n`, start: false },
+    { key: 'b', file: 'test_b.py', text: `import unittest\n\n\nclass TestTotals(unittest.TestCase):\n    class TestNested(unittest.TestCase):\n    ${method.replace(/\n {8}/, '\n            ')}`, start: false },
+    { key: 'c', file: 'test_c.py', text: 'def test_(:\n', start: true },
+    { key: 'd', file: 'test_d.py', text: 'def test_(:\n', start: false },
+  ]);
+  assert.deepEqual(out.tests.a.map((one) => one.name), ['TestCart.test_total']);
+  assert.deepEqual(out.tests.b.map((one) => one.name), ['TestTotals.TestNested.test_total']);
+  assert.equal(out.tests.b[0].body, out.tests.a[0].body);
+  assert.deepEqual(out.tests.c, []);
+  assert.deepEqual(out.errors.map((one) => one.file), ['test_d.py']);
+  assert.notEqual(list([{ key: 'e', file: 'test_e.py', text: method.replace('3)', '4)').replace(/^ {4}/gm, ''), start: false }]).tests.e[0].body,
+    list([{ key: 'f', file: 'test_f.py', text: method.replace(/^ {4}/gm, ''), start: false }]).tests.f[0].body);
 });

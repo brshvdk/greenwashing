@@ -11,6 +11,8 @@ const FAILED_NAMES = 10;
 const FINDINGS = 20;
 // Claude Code caps a hook's text fields at 10,000 characters; a tail line can be a whole file.
 const TAIL_LINE_CHARS = 300;
+// The words the user writes in a prompt to let that turn remove tests (hook.js reads them in any case).
+const PERMISSION_WORDS = 'allow test removal';
 
 function totals(summaries) {
   const sum = { passed: 0, failed: 0, skipped: 0, brokenFiles: 0, errors: 0 };
@@ -30,15 +32,21 @@ const IGNORED = 'its own .greenwashing.json ignored';
 const place = (run) => (run.where ? ` in ${run.where}${run.ignoredSettings ? ` (${IGNORED})` : ''}` : '');
 
 // run: {command, source, where, timeoutSeconds, configError, startError, timedOut, outputTooLarge, exitCode, output};
-// the gate's checks of the changed test lines add kind 'checks' with findings [{file, line, gw, what}],
-// or kind 'config' with files: the .greenwashing.json files the turn changed.
+// the gate's checks of the changed test lines add kind 'checks' with findings [{file, line, gw, what}]
+// and removed ['file: test name'] (the tests the turn removed), or kind 'config' with files: the
+// .greenwashing.json files the turn changed.
 // Returns {outcome: 'passed' | 'failed' | 'did not run', why, gw, counts}.
 function verdict(run) {
   const didNotRun = (why, gw = 'GW-50', counts = null) => ({ outcome: 'did not run', why, gw, counts });
   if (run.kind === 'config') return { outcome: 'failed', why: `${run.files.join(', ')} changed during this turn`, gw: 'GW-114', counts: null };
   if (run.findings) {
     const count = run.findings.length;
-    return { outcome: 'failed', why: `${count} problem${count === 1 ? '' : 's'} in the test lines this turn added or changed`, gw: null, counts: null };
+    const removed = (run.removed || []).length;
+    const why = [
+      count ? `${count} problem${count === 1 ? '' : 's'} in the test lines this turn added or changed` : null,
+      removed ? `${removed} test${removed === 1 ? '' : 's'} removed` : null,
+    ].filter(Boolean).join('; ');
+    return { outcome: 'failed', why, gw: null, counts: null };
   }
   if (run.configError) return didNotRun(run.configError);
   if (run.startError) return didNotRun(`the command could not start: ${run.startError}`);
@@ -90,16 +98,29 @@ function blockReason(run, result) {
     ].join('\n');
   }
   if (run.findings) {
-    const listed = run.findings.slice(0, FINDINGS).map((f) => `- ${f.file}:${f.line}: ${cut(f.what)} (${f.gw})`);
-    if (run.findings.length > FINDINGS) listed.push(`- and ${run.findings.length - FINDINGS} more`);
-    return [
-      'greenwashing gate: the changed tests can pass without testing anything - you cannot finish yet.',
-      'Found in the test lines this turn added or changed:',
-      ...listed,
-      `See each entry in ${CATALOG}`,
-      'Fix the tests. What is meant stays red until a human accepts it: between turns, a human can turn a check off in '
-        + 'the project\'s .greenwashing.json, for example {"checks": {"skips": false}} (skips, assertions, selfComparisons).',
-    ].join('\n');
+    const removed = run.removed || [];
+    const list = (items) => [...items.slice(0, FINDINGS), ...(items.length > FINDINGS ? [`- and ${items.length - FINDINGS} more`] : [])];
+    const what = [run.findings.length ? 'the changed tests can pass without testing anything' : null, removed.length ? 'this turn removed tests' : null];
+    const parts = [`greenwashing gate: ${what.filter(Boolean).join(', and ')} - you cannot finish yet.`];
+    if (run.findings.length) {
+      parts.push('Found in the test lines this turn added or changed:', ...list(run.findings.map((f) => `- ${f.file}:${f.line}: ${cut(f.what)} (${f.gw})`)));
+    }
+    if (removed.length) {
+      parts.push('Removed tests (a test renamed, or moved to another test file, with the same body is not removed):',
+        ...list(removed.map((name) => `- ${cut(name)} (GW-17)`)));
+    }
+    parts.push(`See each entry in ${CATALOG}`);
+    if (run.findings.length) {
+      parts.push('Fix the tests. What is meant stays red until a human accepts it: between turns, a human can turn a check off in '
+        + 'the project\'s .greenwashing.json, for example {"checks": {"skips": false}} (skips - it turns off the check of removed tests too -, '
+        + 'assertions, selfComparisons).');
+    }
+    if (removed.length) {
+      parts.push(`Put the tests back, or leave the removal to the user: a turn whose prompt from the user says "${PERMISSION_WORDS}" may remove `
+        + 'tests. Between turns, a human can also turn the check off with {"checks": {"skips": false}} in the project\'s .greenwashing.json '
+        + '(it turns off the check of new skips too).');
+    }
+    return parts.join('\n');
   }
   const subject = run.kind === 'checks' ? 'checks of the changed tests' : 'tests';
   const parts = [
@@ -118,6 +139,13 @@ function blockReason(run, result) {
   const last = tail(run.output || '');
   parts.push(last ? `Last ${TAIL_LINES} lines of output:\n${last}` : 'The command printed nothing.');
   return parts.join('\n');
+}
+
+// What the line of an accepted turn adds for the tests it removed with the user's permission.
+function removedNote(names) {
+  if (names.length === 0) return '';
+  const shown = names.slice(0, FAILED_NAMES).map(cut).join(', ');
+  return `; tests removed with the user's permission (${names.length}): ${shown}${names.length > FAILED_NAMES ? `, and ${names.length - FAILED_NAMES} more` : ''}`;
 }
 
 // runs, results: the test runs of one stop, in order, with their verdicts; the first that is not
@@ -147,4 +175,6 @@ function decide(runs, results, state, stopHookActive) {
   return { action: 'block', reason: blockReason(run, result), state: { blocks: blocks + 1 } };
 }
 
-module.exports = { verdict, decide, blockReason, MAX_BLOCKS, TAIL_LINES, TAIL_LINE_CHARS, FAILED_NAMES, FINDINGS, CATALOG };
+module.exports = {
+  verdict, decide, blockReason, removedNote, MAX_BLOCKS, TAIL_LINES, TAIL_LINE_CHARS, FAILED_NAMES, FINDINGS, CATALOG, PERMISSION_WORDS,
+};

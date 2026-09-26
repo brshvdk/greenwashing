@@ -9,6 +9,9 @@ the lines a turn added or changed. The hook runs it as
      "entries": {"skips": "GW-17", ...}}
 and reads JSON from stdout:
     {"findings": [{"file", "line", "gw", "what"}], "errors": [{"file", "error"}]}
+The request can also ask for the tests of texts, for the tests a turn removed:
+    "list": [{"key", "file", "text", "start"}]  ->  "tests": {key: [{"name", "body"}]}
+A text from the start of the turn that Python cannot read ran no tests: its list is empty.
 """
 
 import ast
@@ -318,6 +321,24 @@ def test_functions(tree, names, marker):
     return found
 
 
+def list_tests(file, source):
+    """The tests of a file, as the checks see them: [{"name", "body"}]. name: its classes and its own
+    name (TestCart.test_total); body: its parameters and statements (ast.dump, without line numbers),
+    the same wherever the test is indented."""
+    tree, names, _, marker = read(source, file)
+    qualified = {}
+    bodies = [(tree.body, "")]
+    while bodies:
+        body, prefix = bodies.pop()
+        for node in body:
+            if isinstance(node, ast.ClassDef):
+                bodies.append((node.body, f"{prefix}{node.name}."))
+            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                qualified[id(node)] = prefix + node.name
+    return [{"name": qualified[id(function)], "body": ast.dump(function.args) + "".join(ast.dump(s) for s in function.body)}
+            for function, _, _ in test_functions(tree, names, marker)]
+
+
 def runs(function, names, marker):
     """The test runs as written: no skip decorator, and no skipTest() or pytest.skip() in its body."""
     if any(marker(d) in NOT_RUN for d in function.decorator_list):
@@ -358,14 +379,26 @@ def truthy_constant(node):
 
 def main():
     request = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-    findings, errors = [], []
+    findings, errors, tests = [], [], {}
+
+    def unreadable(file, error):
+        if all(e["file"] != file for e in errors):
+            errors.append({"file": file, "error": f"Python could not read it ({type(error).__name__}: {error})"})
     for item in request["files"]:
         try:
             findings += check(item["file"], item["text"], set(item["added"]), set(item["gaps"]), item["checks"], request["entries"],
                               item.get("before"))
         except (SyntaxError, ValueError, tokenize.TokenError) as error:
-            errors.append({"file": item["file"], "error": f"Python could not read it ({type(error).__name__}: {error})"})
-    sys.stdout.buffer.write(json.dumps({"findings": findings, "errors": errors}).encode("utf-8"))
+            unreadable(item["file"], error)
+    for item in request.get("list", []):
+        try:
+            tests[item["key"]] = list_tests(item["file"], item["text"])
+        except (SyntaxError, ValueError) as error:
+            if item["start"]:
+                tests[item["key"]] = []
+            else:
+                unreadable(item["file"], error)
+    sys.stdout.buffer.write(json.dumps({"findings": findings, "errors": errors, "tests": tests}).encode("utf-8"))
 
 
 if __name__ == "__main__":

@@ -11,12 +11,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { candidatePaths, changedPaths, classify } = require('./lib/changes');
-const { checkJs, testFileKind } = require('./lib/checks');
+const { checkJs, jsTests, removedTests, testFileKind } = require('./lib/checks');
 const {
   chooseCommand, readConfig, pythonOf, CONFIG_FILE, CHECKS, DEFAULT_TIMEOUT_SECONDS, PYTHON_HOW_TO,
 } = require('./lib/command');
 const { lineChanges, splitLines } = require('./lib/diff');
-const { verdict, decide } = require('./lib/verdict');
+const {
+  verdict, decide, removedNote, PERMISSION_WORDS,
+} = require('./lib/verdict');
 const {
   readRootFiles, rootFiles, hasPythonTests, runTests, stopTests, OUTPUT_LIMIT,
 } = require('./runner');
@@ -27,6 +29,8 @@ const TEXT_LIMIT = 1024 * 1024;
 const PYTHON_CHECKS = path.join(__dirname, 'lib', 'python_checks.py');
 const PYTHON_CHECKS_SECONDS = 60;
 const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP'];
+// The words in the user's prompt that let the turn remove tests (GW-17): in any case, any spaces between.
+const PERMISSION = new RegExp(`(?<![\\w-])${PERMISSION_WORDS.split(' ').join('\\s+')}(?![\\w-])`, 'i');
 
 // While a Stop runs: the temporary checkouts (folder -> repository), so that a signal to the hook
 // removes them too, as it stops the test command running now.
@@ -47,8 +51,12 @@ function onSignal(signal) {
 // each tree as the gate last saw them, at the latest prompt or Stop; seen: the branch and commit each
 // tree had when the gate last saw it; known: the commits the worktrees and branches of the repository
 // pointed at when the starts were taken; blocks: how many times in a row the gate has sent the agent
-// back; accepted: a Stop has let the turn end with green tests or with no code changed.
-const NO_STATE = { starts: {}, turn: {}, stopped: {}, seen: {}, known: [], blocks: 0, accepted: false };
+// back; accepted: a Stop has let the turn end with green tests or with no code changed. stopped also
+// holds the test files, and adopted, per tree, the test files the user changed between turns the
+// gate did not accept, as they were at the prompt after (text, or null: gone): tests they no longer
+// have were removed by the user, not the agent. allowRemoval: the user's prompt for this turn lets it
+// remove tests (PERMISSION).
+const NO_STATE = { starts: {}, turn: {}, stopped: {}, adopted: {}, seen: {}, known: [], blocks: 0, accepted: false, allowRemoval: false };
 
 function stateFile(input, dir) {
   const key = crypto.createHash('sha256').update(`${input.session_id || 'no-session'}\0${dir}`).digest('hex');
@@ -66,10 +74,12 @@ function loadState(file) {
       turn: isObject(state.turn) ? state.turn : {},
       ...(typeof state.settings === 'string' || state.settings === null ? { settings: state.settings } : {}),
       stopped: isObject(state.stopped) ? state.stopped : {},
+      adopted: isObject(state.adopted) ? state.adopted : {},
       seen: state.seen,
       known: state.known,
       blocks: Number.isInteger(state.blocks) ? state.blocks : 0,
       accepted: state.accepted === true,
+      allowRemoval: state.allowRemoval === true,
     };
   } catch {
     return NO_STATE;
@@ -167,6 +177,8 @@ function sighting(root) {
 
 // A settings file of the gate, in any folder.
 const isSettings = (file) => path.basename(file) === CONFIG_FILE;
+// What the gate records of a tree as it last saw it: its settings files and its test files.
+const isWatched = (file) => isSettings(file) || testFileKind(file) !== null;
 
 // The state of one tree: HEAD, a hash of every dirty file (of those `only` keeps), and the text of
 // each dirty test file (a clean one's is in HEAD), for the lines a turn changes in it. settings: the
@@ -477,13 +489,16 @@ async function onStop(input) {
         } catch {
           // Stays null: git cannot tell what the commit changed.
         }
-        checked.push({ diff, settings: settingsIn(home, state.turn[tree], now, diff), label: `the removed worktree ${name}`, show: (f) => `${f} (last commit of the removed worktree ${name})` });
+        checked.push({
+          diff, settings: settingsIn(home, state.turn[tree], now, diff), adopted: state.adopted[tree] || {}, label: `the removed worktree ${name}`,
+          show: (f) => `${f} (last commit of the removed worktree ${name})`,
+        });
       }
       continue;
     }
     seen[tree] = sighting(tree);
     try {
-      if (repoRoot(tree) === tree) stopped[tree] = snapshot(tree, tree === home ? settingsFile : null, isSettings);
+      if (repoRoot(tree) === tree) stopped[tree] = { ...snapshot(tree, tree === home ? settingsFile : null, isWatched), texts: {} };
     } catch {
       // No record: the next prompt takes the settings of this tree as they are then.
     }
@@ -495,7 +510,10 @@ async function onStop(input) {
     // at the start of the work.
     if (split === null || split.code.length > 0 || edited === null || edited.length > 0) {
       pending.push(tree);
-      checked.push({ diff, settings: edited, label: path.relative(project, tree) || 'the project', show: (f) => path.relative(project, path.join(tree, f)) });
+      checked.push({
+        diff, settings: edited, adopted: state.adopted[tree] || {}, label: path.relative(project, tree) || 'the project',
+        show: (f) => path.relative(project, path.join(tree, f)),
+      });
     } else docs += split.docs.length;
   }
   const next = { ...state, starts, seen, stopped };
@@ -507,10 +525,10 @@ async function onStop(input) {
   // of its repository), within the timeout the project sets.
   const config = readConfig(settings);
   const deadline = Date.now() + (config.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS) * 1000;
-  const problem = recorded ? quickChecks(checked, config, project, deadline) : null;
-  if (problem) return settle(file, next, [problem], active);
+  const checks = recorded ? quickChecks(checked, config, project, deadline, state.allowRemoval) : { problem: null, permitted: [] };
+  if (checks.problem) return settle(file, next, [checks.problem], active);
   const targets = [...pending.map((tree) => ({ dir: path.join(tree, path.relative(home, project)) })), ...removed];
-  const outcome = settle(file, next, await runAll(targets, project, home, deadline, settings), active);
+  const outcome = settle(file, next, await runAll(targets, project, home, deadline, settings), active, removedNote(checks.permitted));
   if (!recorded && outcome.systemMessage) outcome.systemMessage += '; quick checks of changed tests not run (no start of the turn was recorded)';
   return outcome;
 }
@@ -535,25 +553,39 @@ const checksNotRun = (why) => ({ kind: 'checks', command: 'greenwashing checks',
 
 // The quick checks on the test lines the turn added or changed. First, no .greenwashing.json may have
 // changed since the start of this turn (GW-114); then each changed test file is read for new skips
-// (GW-17), tests with no assertion (GW-18) and checks whose sides are the same (GW-01), as the
-// gate's settings (config: the project's, read) turn them on. Returns a red run, or null when all is
-// clear.
-function quickChecks(checked, config, project, deadline) {
+// (GW-17), tests with no assertion (GW-18) and checks whose sides are the same (GW-01), and the
+// changed test files for tests the turn removed (GW-17, with the skips), as the gate's settings
+// (config: the project's, read) turn them on. allowRemoval: the user's prompt lets this turn remove
+// tests. Returns {problem: a red run or null, permitted: the tests removed with the user's permission}.
+function quickChecks(checked, config, project, deadline, allowRemoval) {
+  const clear = { problem: null, permitted: [] };
   const edited = [];
   for (const target of checked) {
-    if (!target.diff || !target.settings) return checksNotRun(`git cannot tell which lines changed in ${target.label}`);
+    if (!target.diff || !target.settings) return { ...clear, problem: checksNotRun(`git cannot tell which lines changed in ${target.label}`) };
     for (const f of target.settings) edited.push(target.show(f));
   }
-  if (edited.length) return { kind: 'config', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', files: edited };
-  if (config.error) return checksNotRun(config.error);
-  if (!Object.values(config.checks).includes(true)) return null;
+  if (edited.length) return { ...clear, problem: { kind: 'config', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', files: edited } };
+  if (config.error) return { ...clear, problem: checksNotRun(config.error) };
+  if (!Object.values(config.checks).includes(true)) return clear;
   const findings = [];
   const python = [];
-  for (const target of checked) {
+  // The tests of the changed test files at the start (a file the user changed between turns as it was
+  // then) and now, per target; Python files are listed by python_checks.py.
+  const lists = checked.map(() => ({ before: [], after: [] }));
+  const listed = [];
+  for (const [i, target] of checked.entries()) {
     const tests = target.diff.files.filter(testFileKind)
       .map((f) => ({ f, kind: testFileKind(f), before: target.diff.before(f), text: target.diff.after(f) }));
     const deleted = tests.filter((t) => t.text === null && t.before !== null);
     for (const { f, kind, before, text } of tests) {
+      if (config.checks.skips) {
+        const start = Object.hasOwn(target.adopted, f) ? target.adopted[f] : before;
+        for (const [side, content] of [['before', start], ['after', text]]) {
+          if (content === null) continue;
+          if (kind === 'js') lists[i][side].push(...jsTests(content).map((test) => ({ file: f, ...test })));
+          else listed.push({ key: JSON.stringify([i, side, f]), file: target.show(f), text: content, start: side === 'before' });
+        }
+      }
       if (text === null) continue;
       const start = before !== null ? before : movedFrom(deleted.filter((t) => t.kind === kind).map((t) => t.before), text);
       const changes = lineChanges(start, text);
@@ -564,16 +596,28 @@ function quickChecks(checked, config, project, deadline) {
       }
     }
   }
-  if (python.length) {
-    const result = pythonChecks(python, deadline, pythonOf(config, project));
-    if (result.error) return checksNotRun(`the Python test checks could not run: ${result.error}`);
+  if (python.length || listed.length) {
+    const result = pythonChecks({ files: python, list: listed }, deadline, pythonOf(config, project));
+    if (result.error) return { ...clear, problem: checksNotRun(`the Python test checks could not run: ${result.error}`) };
     if (result.errors.length) {
-      return checksNotRun(`the Python test checks could not read ${result.errors.map((e) => `${e.file} - ${e.error}`).join('; ')}; `
-        + `if the project's Python reads it, ${PYTHON_HOW_TO}`);
+      return {
+        ...clear,
+        problem: checksNotRun(`the Python test checks could not read ${result.errors.map((e) => `${e.file} - ${e.error}`).join('; ')}; `
+          + `if the project's Python reads it, ${PYTHON_HOW_TO}`),
+      };
     }
     findings.push(...result.findings);
+    for (const { key } of listed) {
+      const [i, side, f] = JSON.parse(key);
+      lists[i][side].push(...result.tests[key].map((test) => ({ file: f, ...test })));
+    }
   }
-  return findings.length ? { kind: 'checks', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', findings } : null;
+  const removed = checked.flatMap((target, i) => removedTests(lists[i].before, lists[i].after).map((test) => `${target.show(test.file)}: ${test.name}`));
+  const permitted = allowRemoval ? removed : [];
+  const problem = findings.length || (removed.length && !allowRemoval)
+    ? { kind: 'checks', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', findings, removed: allowRemoval ? [] : removed }
+    : null;
+  return { problem, permitted };
 }
 
 // A new test file that keeps, in order, at least half of its lines from a test file the turn
@@ -597,13 +641,14 @@ function movedFrom(deleted, text) {
   return best && lineChanges(best.old, text).added.size * 2 <= lines.length ? best.old : null;
 }
 
-// python_checks.py under `<python> -I` (the files' own folder cannot shadow the standard library):
-// {findings, errors}, or {error} when it could not run.
-function pythonChecks(files, deadline, python) {
+// python_checks.py under `<python> -I` (the files' own folder cannot shadow the standard library),
+// asked to check files and to list the tests of texts (request: {files, list}): {findings, errors,
+// tests}, or {error} when it could not run.
+function pythonChecks(request, deadline, python) {
   const seconds = Math.min(PYTHON_CHECKS_SECONDS, Math.ceil((deadline - Date.now()) / 1000));
   if (seconds < 1) return { error: 'no time was left: the timeout was used up' };
   const result = spawnSync(python, ['-I', PYTHON_CHECKS], {
-    input: JSON.stringify({ files, entries: CHECKS }), cwd: os.tmpdir(), timeout: seconds * 1000, maxBuffer: OUTPUT_LIMIT, stdio: ['pipe', 'pipe', 'pipe'],
+    input: JSON.stringify({ ...request, entries: CHECKS }), cwd: os.tmpdir(), timeout: seconds * 1000, maxBuffer: OUTPUT_LIMIT, stdio: ['pipe', 'pipe', 'pipe'],
   });
   if (result.error && result.error.code === 'ENOENT') {
     return { error: `${python === 'python3' ? 'python3 was not found on PATH' : `${python} was not found`}; ${PYTHON_HOW_TO}` };
@@ -614,18 +659,21 @@ function pythonChecks(files, deadline, python) {
   if (result.status !== 0) return { error: `${python} exited with code ${result.status}${stderr ? `: ${stderr}` : ''}` };
   try {
     const out = JSON.parse(result.stdout.toString('utf8'));
-    if (Array.isArray(out.findings) && Array.isArray(out.errors)) return out;
+    const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
+    if (Array.isArray(out.findings) && Array.isArray(out.errors) && isObject(out.tests)
+      && request.list.every(({ key }) => out.errors.length || Array.isArray(out.tests[key]))) return out;
   } catch {
     // Not JSON: said below.
   }
   return { error: `${python} printed no findings list` };
 }
 
-function settle(file, state, runs, stopHookActive) {
+// note: added to the line of a turn the gate accepts.
+function settle(file, state, runs, stopHookActive, note = '') {
   const decision = decide(runs, runs.map(verdict), state, stopHookActive);
   saveState(file, { ...state, blocks: decision.state.blocks, accepted: decision.action === 'allow' });
   if (decision.action === 'block') return { decision: 'block', reason: decision.reason };
-  return { systemMessage: decision.message };
+  return { systemMessage: decision.action === 'allow' ? `${decision.message}${note}` : decision.message };
 }
 
 function onPrompt(input) {
@@ -662,15 +710,24 @@ function onPrompt(input) {
   // accepted, each settings file that differs from the turn before's snapshot but is still as the gate
   // last saw it (at the last Stop, or at the prompt of a turn cut off before its Stop) keeps the
   // earlier state: a change there is the agent's, carried over. A file changed since is the user's.
+  // The same goes for test files: one changed since the gate last saw it is the user's as it is now,
+  // so the tests it no longer has were removed by the user (adopted, kept until a turn is accepted).
   const lastSeen = unaccepted ? state.stopped : {};
   const turn = {};
   const stopped = {};
+  const adopted = unaccepted ? { ...state.adopted } : {};
   let carried = false;
   for (const tree of Object.keys(next.starts)) {
     try {
       if (!fs.existsSync(tree) || repoRoot(tree) !== tree) continue;
-      const now = snapshot(tree, own(tree), isSettings);
-      stopped[tree] = { ...now, dirty: { ...now.dirty } };
+      const seenNow = snapshot(tree, own(tree), isWatched);
+      stopped[tree] = { ...seenNow, texts: {} };
+      if (lastSeen[tree]) {
+        for (const f of turnDiff(tree, lastSeen[tree], { tree }, testFileKind).files) {
+          adopted[tree] = { ...adopted[tree], [f]: worktreeText(tree, f, TEXT_LIMIT) };
+        }
+      }
+      const now = { ...seenNow, dirty: Object.fromEntries(Object.entries(seenNow.dirty).filter(([f]) => isSettings(f))), texts: {} };
       const before = state.turn[tree];
       if (lastSeen[tree] && before) {
         const changed = new Set(turnDiff(tree, lastSeen[tree], { tree }, isSettings).files);
@@ -686,7 +743,9 @@ function onPrompt(input) {
     }
   }
   const text = carried && 'settings' in state ? state.settings : readRootFiles(project)[CONFIG_FILE];
-  saveState(file, { ...next, turn, stopped, settings: text });
+  // Only the user's prompt can let the turn remove tests, and only this turn.
+  const allowRemoval = typeof input.prompt === 'string' && PERMISSION.test(input.prompt);
+  saveState(file, { ...next, turn, stopped, adopted, settings: text, allowRemoval });
 }
 
 function readStdin() {

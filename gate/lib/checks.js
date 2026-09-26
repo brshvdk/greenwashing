@@ -459,6 +459,66 @@ function testNames(source) {
   return names;
 }
 
+// Code between from and to without its spaces and comments, the text of strings kept: how the two
+// sides of a check, and the bodies of two tests, are compared.
+function normalText(source, kinds, from, to) {
+  let text = '';
+  for (let i = from; i < to; i += 1) {
+    if (kinds[i] === TEXT || (kinds[i] === CODE && !/\s/.test(source[i]))) text += source[i];
+  }
+  return text;
+}
+
+// The tests of a JavaScript or TypeScript file, as the checks see them: [{name, body}]. name: the
+// names of the suites and tests around the test and its own, as written, joined by ' > '; body: the
+// rest of the call without its name (a skip condition, a table, options, the function), with no
+// spaces or comments, or null for a call with no function (a todo).
+function jsTests(source) {
+  const { code, kinds, templates } = mask(source);
+  const calls = testCalls(code, templates);
+  const named = (call) => (call.list.length ? normalText(source, kinds, call.list[0][0], call.list[0][1]) : '');
+  return calls.filter(isTest).map((test) => {
+    const around = calls.filter((call) => (SUITES.has(call.name) || isTest(call)) && call.start < test.start && test.end < call.end)
+      .sort((a, b) => a.start - b.start);
+    const [from, to] = test.list[0] || [test.end, test.end];
+    return {
+      name: [...around, test].map(named).join(' > '),
+      body: test.fn ? normalText(source, kinds, test.chainEnd, from) + normalText(source, kinds, to, test.end + 1) : null,
+    };
+  });
+}
+
+// The tests a turn removed: before and after are the tests of the changed test files at the start
+// and now, [{file, name, body}] (jsTests(), or python_checks.py's list). A test stays when a test of
+// its name is still in its file (edited in place; of several with one name, those with the same body
+// pair first), or when any test now has its body (renamed, or moved to another test file). Returns
+// the tests of before that stay neither way.
+function removedTests(before, after) {
+  const byName = (tests) => {
+    const groups = new Map();
+    for (const test of tests) {
+      const key = `${test.file}\0${test.name}`;
+      groups.set(key, [...(groups.get(key) || []), test]);
+    }
+    return groups;
+  };
+  const now = byName(after);
+  const bodies = new Set(after.map((test) => test.body).filter((body) => body !== null));
+  const unmatched = [];
+  for (const [key, old] of byName(before)) {
+    const left = [...(now.get(key) || [])];
+    const rest = [];
+    for (const test of old) {
+      const same = left.findIndex((one) => one.body === test.body);
+      if (same === -1) rest.push(test);
+      else left.splice(same, 1);
+    }
+    // The others of the name are edited in place, one for one.
+    unmatched.push(...rest.slice(left.length));
+  }
+  return unmatched.filter((test) => test.body === null || !bodies.has(test.body));
+}
+
 // Checks one JavaScript or TypeScript test file. changes: {added, gaps} from lineChanges();
 // checks: {skips, assertions, selfComparisons} (false turns one off); before: the file's text at the
 // start of the turn, or null. Returns [{line, gw, what}].
@@ -482,14 +542,7 @@ function checkJs(source, changes, checks, before = null) {
     return added(from, to) || [...changes.gaps].some((gap) => gap > first && gap <= last);
   };
   const report = (gw, at, what) => findings.push({ line: lineOf(at), gw, what });
-  // Code without its spaces and comments, the text of strings kept: how two sides are compared.
-  const normal = (from, to) => {
-    let text = '';
-    for (let i = from; i < to; i += 1) {
-      if (kinds[i] === TEXT || (kinds[i] === CODE && !/\s/.test(source[i]))) text += source[i];
-    }
-    return text;
-  };
+  const normal = (from, to) => normalText(source, kinds, from, to);
   const brief = (from, to) => {
     const text = normal(from, to);
     return text.length > 80 ? `${text.slice(0, 77)}...` : text;
@@ -695,5 +748,5 @@ function checkJs(source, changes, checks, before = null) {
 }
 
 module.exports = {
-  checkJs, testFileKind, mask, closing, initializerEnd, JS_EXTENSION, INITIALIZER,
+  checkJs, jsTests, removedTests, testFileKind, mask, closing, initializerEnd, JS_EXTENSION, INITIALIZER,
 };
