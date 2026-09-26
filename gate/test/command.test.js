@@ -1,7 +1,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CHECKS, MUTANT_LIMITS } = require('../lib/command');
+const {
+  chooseCommand, readConfig, support, isPythonTest, ROOT_FILES, CHECKS, MUTANT_LIMITS,
+} = require('../lib/command');
 
 // Every root file the rules look at is absent unless the case names it.
 const files = (present = {}) => ({ ...Object.fromEntries(ROOT_FILES.map((name) => [name, null])), ...present });
@@ -189,4 +191,34 @@ test('.greenwashing.json: a config that cannot be trusted is an error, not a def
     assert.equal(pick({ '.greenwashing.json': text }).none, undefined, text);
     assert.match(pick({ '.greenwashing.json': text, 'package.json': '{"scripts": {"test": "jest"}}' }).error, message, text);
   }
+});
+
+test('the gate checks a project whose test command is one of the five kinds, or one a human set; not one with none or another kind', () => {
+  const scripts = (all) => support(files({ 'package.json': JSON.stringify({ scripts: all }) }), false);
+  for (const test of ['node --test', 'node --import tsx --test src', 'jest --coverage', 'npx vitest run', 'node node_modules/.bin/jest',
+    'python3 -m pytest -q', 'py.test', 'python3 -m unittest discover', 'tsc && vitest']) {
+    assert.deepEqual(scripts({ test }), { supported: true }, test);
+  }
+  // Through the scripts it runs: npm, yarn, pnpm; a loop of scripts ends.
+  for (const all of [{ test: 'npm run unit', unit: 'node --test' }, { test: 'npm run-script unit', unit: 'jest' }, { test: 'yarn unit', unit: 'vitest' },
+    { test: 'yarn run lint && pnpm run unit', lint: 'eslint .', unit: 'pytest' }, { test: 'pnpm unit', unit: 'npm run deep', deep: 'node --test' }]) {
+    assert.deepEqual(scripts(all), { supported: true }, JSON.stringify(all));
+  }
+  // Another kind, a name inside a longer word or a file name, or a script that runs no runner.
+  for (const all of [{ test: 'mocha' }, { test: 'go test ./...' }, { test: 'make test' }, { test: 'nodemon --test' }, { test: 'node --test-reporter=tap' },
+    { test: 'eslint --plugin eslint-plugin-jest .' }, { test: 'node scripts/jest.config.js' }, { test: 'npm run unit', unit: 'mocha' },
+    { test: 'npm run a', a: 'npm run b', b: 'npm run a' }, { test: 'npm test' }, { test: 'npm run missing' }]) {
+    const found = scripts(all);
+    assert.equal(found.supported, false, JSON.stringify(all));
+    assert.equal(found.why, `the test command npm test runs ${JSON.stringify(all.test)}`);
+  }
+  assert.deepEqual(support(files(), false), { supported: false, why: 'no test command was found' });
+  assert.deepEqual(support(files({ 'package.json': '{"scripts": {"test": "echo \\"Error: no test specified\\" && exit 1"}}' }), false),
+    { supported: false, why: 'no test command was found' });
+  // Found without a script: pytest settings, Python tests; set by a human: whatever it is; a broken setup: checked, and did not run.
+  assert.deepEqual(support(files({ 'pytest.ini': '' }), false), { supported: true });
+  assert.deepEqual(support(files(), true), { supported: true });
+  assert.deepEqual(support(files({ '.greenwashing.json': '{"testCommand": "go test ./..."}', 'package.json': '{"scripts": {"test": "mocha"}}' }), false), { supported: true });
+  assert.deepEqual(support(files({ 'package.json': '{' }), false), { supported: true });
+  assert.deepEqual(support(files({ 'package.json': '{"scripts": {"test": "mocha"}}' }), true), { supported: true });
 });

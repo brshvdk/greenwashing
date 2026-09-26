@@ -125,7 +125,50 @@ function chooseCommand(files, hasPythonTests) {
 
 const ROOT_FILES = [CONFIG_FILE, 'package.json', ...PYTEST_FILES, ...PYTEST_SECTION_FILES];
 
+// The test runners whose output the gate reads, and how a command names each: a word of its own, not
+// part of a package or file name (eslint-plugin-jest, jest.config.js); node with --test.
+const RUNNERS = [
+  ['pytest', /(?<![\w.-])(?:pytest|py\.test)(?![\w.-])/],
+  ['unittest', /(?<![\w.-])unittest(?![\w.-])/],
+  ['jest', /(?<![\w.-])jest(?![\w.-])/],
+  ['vitest', /(?<![\w.-])vitest(?![\w.-])/],
+  ['node --test', /(?<![\w.-])node(?![\w.-])[^;&|]*\s--test(?![\w-])/],
+];
+const RUNNER_NAMES = 'pytest, unittest, jest, vitest and node --test';
+// A script that runs another script of package.json: npm test, npm t, npm run X, npm run-script X,
+// yarn X, yarn run X, pnpm X, pnpm run X.
+const SCRIPT_CALL = /(?<![\w.-])(?:npm\s+t(?:est)?(?![\w:.-])|(?:npm\s+run(?:-script)?|yarn(?:\s+run)?|pnpm(?:\s+run)?)\s+([\w:.-]+))/g;
+
+// The runners a script of package.json names, itself or through the scripts it runs.
+function runnersIn(scripts, name, seen = new Set()) {
+  if (seen.has(name) || typeof scripts[name] !== 'string') return [];
+  seen.add(name);
+  const found = RUNNERS.filter(([, pattern]) => pattern.test(scripts[name])).map(([kind]) => kind);
+  for (const call of scripts[name].matchAll(SCRIPT_CALL)) found.push(...runnersIn(scripts, call[1] || 'test', seen));
+  return found;
+}
+
+// Whether the gate can check a project, from its files at the start of the turn (as chooseCommand()
+// takes them): a command a human set in .greenwashing.json always counts (the gate reads its output as
+// usual, and no counts is did not run); a command found by itself counts when it runs one of RUNNERS:
+// pytest settings, Python tests (unittest), or a test script of package.json that names one, itself
+// or through the scripts it runs. No test command, or a script of another kind (mocha, go test), does
+// not. A broken setup counts: the gate says how to fix it. Returns {supported: true} or {supported:
+// false, why}.
+function support(files, hasPythonTests) {
+  const choice = chooseCommand(files, hasPythonTests);
+  if (choice.none) return { supported: false, why: 'no test command was found' };
+  if (choice.source !== 'package.json scripts.test') return { supported: true };
+  const { scripts } = JSON.parse(withoutBom(files['package.json']));
+  if (runnersIn(scripts, 'test').length) return { supported: true };
+  return { supported: false, why: `the test command npm test runs ${JSON.stringify(scripts.test)}` };
+}
+
+// The line of a turn in a project the gate cannot check.
+const notChecked = (why) => `greenwashing: this turn was NOT checked - ${why}, and the gate reads only the test output of ${RUNNER_NAMES}. `
+  + `To have turns checked, a human sets {"testCommand": "<the command that runs your tests>"} in ${CONFIG_FILE} in the project root, between turns.`;
+
 module.exports = {
-  chooseCommand, readConfig, pytestConfigured, pythonOf, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS, MAX_TIMEOUT_SECONDS, HOW_TO,
-  PYTHON_HOW_TO, MUTANT_LIMITS, MUTANT_MAX,
+  chooseCommand, readConfig, support, notChecked, pytestConfigured, pythonOf, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS,
+  MAX_TIMEOUT_SECONDS, HOW_TO, PYTHON_HOW_TO, MUTANT_LIMITS, MUTANT_MAX,
 };

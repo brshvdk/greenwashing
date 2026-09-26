@@ -19,6 +19,9 @@ const PY_FAIL = 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_
 // A command that prints the counts of a green unittest run without running anything.
 const GREEN_ECHO = "printf 'Ran 1 test in 0.1s\\n\\nOK\\n'";
 const NO_CHANGES = { systemMessage: 'greenwashing: no files changed this turn - tests not run' };
+// The line of a turn in a project the gate cannot check.
+const NOT_CHECKED = (why) => `greenwashing: this turn was NOT checked - ${why}, and the gate reads only the test output of pytest, unittest, jest, vitest and node --test. `
+  + 'To have turns checked, a human sets {"testCommand": "<the command that runs your tests>"} in .greenwashing.json in the project root, between turns.';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function tempDir(t) {
@@ -304,10 +307,11 @@ test('a Python project without a test command runs unittest', (t) => {
 });
 
 test('no way to find a test command: blocked, and the reason says how to set one', (t) => {
-  const dir = project(t, { 'main.go': 'package main\n' }, null);
+  // A project the gate checked when the work started, whose test script the turn removes.
+  const dir = project(t, { 'package.json': '{"scripts": {"test": "node --test"}}', 'app.js': '1;\n' }, null);
   const gate = session(t, dir);
   gate.prompt();
-  write(dir, { 'main.go': 'package main\n\nfunc main() {}\n' });
+  write(dir, { 'package.json': '{"scripts": {}}', 'app.js': '2;\n' });
   const { json } = gate.stop();
   assert.equal(json.decision, 'block');
   assert.match(json.reason, /a human adds \{"testCommand": "<the command that runs your tests>"\} to \.greenwashing\.json in the project root, between turns/);
@@ -1191,8 +1195,8 @@ test('a repository whose .git is a symbolic link still has its worktrees followe
 test('a folder git cannot read is not taken for one outside git', (t) => {
   const dir = tempDir(t);
   write(dir, { '.git': 'gitdir: /nonexistent/greenwashing-gate-test\n', 'main.go': 'package main\n' });
+  // No prompt recorded: nothing says whether the gate could check the project.
   const gate = session(t, dir);
-  gate.prompt();
   const { json } = gate.stop();
   assert.equal(json.decision, 'block');
   assert.match(json.reason, /git cannot read the repository this folder is in/);
@@ -1213,8 +1217,8 @@ test('an empty .git folder above a folder outside git is not a checkout', (t) =>
   const dir = tempDir(t);
   fs.mkdirSync(path.join(dir, '.git'));
   write(dir, { 'p/main.go': 'package main\n' });
+  // No prompt recorded, as for a folder git cannot read.
   const gate = session(t, path.join(dir, 'p'));
-  gate.prompt();
   assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: not a git repository and no test command - tests not run' });
 });
 
@@ -1279,7 +1283,7 @@ test('outside a git repository with no test command, the stop is allowed with on
   write(dir, { 'main.go': 'package main\n', 'helper.py': 'print("helper")\n' });
   const gate = session(t, dir);
   gate.prompt();
-  assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: not a git repository and no test command - tests not run' });
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
   // A broken config is a broken setup, not "nothing to test".
   write(dir, { '.greenwashing.json': '{"testCommand": ' });
   gate.prompt();
@@ -1300,9 +1304,10 @@ test('outside git too, the tests run with the settings the turn started with', (
 
 test('Python files git does not track yet make a Python project; outside git, a top-level .py does', (t) => {
   const dir = project(t, { 'data.json': '{}\n' }, null);
+  write(dir, { 'tests/__init__.py': '', 'tests/test_a.py': PY_PASS });
   const gate = session(t, dir);
   gate.prompt();
-  write(dir, { 'tests/__init__.py': '', 'tests/test_a.py': PY_FAIL });
+  write(dir, { 'tests/test_a.py': PY_FAIL });
   const { json } = gate.stop();
   assert.equal(json.decision, 'block');
   assert.match(json.reason, /Command: python3 -m unittest discover \(Python project\)/);
@@ -1668,7 +1673,7 @@ test('a copied test file is new: the file it came from is still there, so its ol
 });
 
 test('GW-114 for a .greenwashing.json git ignores: changed or created during the turn blocks, alone too', (t) => {
-  const dir = project(t, { 'a.test.js': JEST_OK, '.gitignore': '.greenwashing.json\n' }, null);
+  const dir = project(t, { 'a.test.js': JEST_OK, '.gitignore': '.greenwashing.json\n', 'package.json': '{"scripts": {"test": "jest"}}' }, null);
   const settings = (checks) => ({ '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, ...(checks ? { checks } : {}) }) });
   const gate = session(t, dir);
   // Created during the turn, with nothing else changed; removed again, nothing changed.
@@ -1948,4 +1953,89 @@ test('a test removed in a worktree the agent works in, or in the last commit of 
   git(dir, 'worktree', 'remove', tree);
   assert.match(gate.stop(true, dir).json.reason, /\n- a\.test\.js \(last commit of the removed worktree \.claude\/worktrees\/feat\): 'subtracts' \(GW-17\)\n/);
   assert.deepEqual(leftovers(gate, dir), []);
+});
+
+// A project the gate cannot check: no test command, or one of another kind, when the work started.
+const MOCHA_PKG = '{"scripts": {"test": "mocha"}}';
+
+test('a project with no test command, or a test script of another kind, ends each turn with a line saying it was not checked', (t) => {
+  const none = project(t, { 'main.go': 'package main\n' }, null);
+  const gate = session(t, none);
+  gate.prompt();
+  write(none, { 'main.go': 'package main\n\nfunc main() {}\n' });
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+  // Also a turn that changed nothing: the gate says it is not checking.
+  gate.prompt();
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+  // Tests the agent adds in the turn do not make that turn checked: the start decides.
+  gate.prompt();
+  write(none, { 'a.test.js': NODE_FAIL, 'package.json': '{"scripts": {"test": "node --test"}}' });
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+  // From the next turn on the project has them, so the gate checks it.
+  gate.prompt();
+  write(none, { 'a.test.js': `${NODE_FAIL}// more\n` });
+  assert.match(gate.stop().json.reason, /the tests failed/);
+
+  const mocha = project(t, { 'package.json': MOCHA_PKG, 'test/cart.js': "it('adds', () => {});\n", 'cart.js': '1;\n' }, null);
+  const other = session(t, mocha);
+  other.prompt();
+  write(mocha, { 'cart.js': '2;\n' });
+  assert.deepEqual(other.stop().json, { systemMessage: NOT_CHECKED('the test command npm test runs "mocha"') });
+});
+
+test('a test script that runs one of the five kinds through another script is checked; emptied or removed by the agent it is did not run', (t) => {
+  const pkg = (unit) => JSON.stringify({ scripts: { test: 'npm run unit', unit } });
+  const dir = project(t, { 'package.json': pkg('node --test --test-reporter=tap'), 't.test.js': NODE_PASS, 'app.js': '1;\n' }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'package.json': pkg('exit 0'), 'app.js': '2;\n' });
+  const { json } = gate.stop();
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /Command: npm test \(package\.json scripts\.test\)\nResult: did not run - no test counts/);
+  // The test script removed: no test command, still did not run.
+  write(dir, { 'package.json': '{"scripts": {}}' });
+  assert.match(gate.stop(true).json.reason, /Result: did not run - no test command found/);
+  // After WORK NOT ACCEPTED the next turn keeps what the work started with.
+  gate.stop(true);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Result: did not run - no test command found/);
+});
+
+test('a test command a human set in .greenwashing.json is always checked: output with no counts is did not run', (t) => {
+  const dir = project(t, { 'main.go': 'package main\n' }, 'go-test-that-is-not-installed ./...');
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'main.go': 'package main\n\nfunc main() {}\n' });
+  assert.match(gate.stop().json.reason, /Result: did not run - the command was not found \(exit code 127\)/);
+});
+
+test('in a project the gate cannot check, a .greenwashing.json the agent writes during the turn still blocks (GW-114)', (t) => {
+  const dir = project(t, { 'package.json': MOCHA_PKG, 'cart.js': '1;\n' }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /Changed: \.greenwashing\.json\n/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // Left as the gate last saw it, it is still the agent's in the next turn: the project stays one the
+  // gate cannot check, and the change still blocks.
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+  // Put back: the turn is not checked, as before.
+  fs.unlinkSync(path.join(dir, '.greenwashing.json'));
+  assert.deepEqual(gate.stop(true).json, { systemMessage: NOT_CHECKED('the test command npm test runs "mocha"') });
+  // A human who sets it between turns makes the project one the gate checks.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  gate.prompt();
+  write(dir, { 'cart.js': '2;\n' });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - printf/);
+});
+
+test('outside git, a test command the work started with and the turn removes is did not run, not "no test command"', (t) => {
+  const dir = tempDir(t);
+  write(dir, { 'package.json': '{"scripts": {"test": "node --test"}}', 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'package.json': '{}' });
+  assert.match(gate.stop().json.reason, /Result: did not run - no test command found/);
 });
