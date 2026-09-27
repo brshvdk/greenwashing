@@ -627,6 +627,20 @@ test('without --run-timeout, a run with a break gets the control run\'s length x
   assert.doesNotMatch(run.out, /survived: /);
 });
 
+test('no time left for the control run: it does not run, nothing is estimated, and no break is tried', (t) => {
+  // A Python that takes 2 s to list the breaks uses up the 1 s for everything.
+  const slow = path.join(tempDir(t), 'slow-python');
+  fs.writeFileSync(slow, '#!/bin/sh\nsleep 2\nexec python3 "$@"\n', { mode: 0o755 });
+  const tests = 'import unittest\n\nfrom shop import LIMIT\n\n\nclass T(unittest.TestCase):\n    def test_limit(self):\n        self.assertEqual(LIMIT, 7)\n';
+  const dir = project(t, { 'shop.py': 'LIMIT = 6\n', 'test_shop.py': tests.replace('7', '6') }, null);
+  write(dir, { 'shop.py': 'LIMIT = 7\n', 'test_shop.py': tests, '.greenwashing.json': JSON.stringify({ python: slow }) });
+  const run = mutate(t, dir, ['--timeout', '1']);
+  assert.equal(run.code, 2, run.out);
+  assert.match(run.out, /\nControl: not run\nMutants: 0 tried - 0 killed, 0 survived, 0 did not run; 1 not tried\n/);
+  assert.match(run.out, /\nDid not run: no time was left for the control run: the time for everything is 1 s \(--timeout\)\n/);
+  assert.doesNotMatch(run.out, /Estimate/);
+});
+
 test('a --run-timeout a human set is kept: shorter than the control run, no break runs, and the estimate says what to set', (t) => {
   const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST }, `sleep 1; ${NODE_CMD}`);
   write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}` });
