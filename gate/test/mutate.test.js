@@ -169,6 +169,9 @@ test('did not run: a command with no counts, a red control, a break past the run
   assert.equal(redRun.code, 2, redRun.out);
   assert.match(redRun.out, /on the unchanged copy: failed - 1 failed/);
   assert.doesNotMatch(redRun.out, /killed: /);
+  // The estimate says no break runs, at once and in the report, and there is no time to compare with.
+  assert.equal(redRun.out.match(/^Estimate: one test run takes [\d.]+ s \(the control run\), which is not green, so no break runs$/gm).length, 2, redRun.out);
+  assert.match(redRun.out, /\nTime: [\d.]+ s in all\nResult: did not run\n$/);
 
   // Two steps at a time from an odd number never reach zero: that break runs until its timeout.
   const down = "function down(n) {\n  let i = n;\n  while (i !== 0) i -= 1;\n  return i;\n}\nmodule.exports = { down };\n";
@@ -273,6 +276,23 @@ test('a folder the tests leave read-only goes with the copy, and the report is s
   }
   assert.equal(run.status, 1, run.stdout + run.stderr);
   assert.match(run.stdout, /\nResult: 1 mutant survived\n$/);
+  assert.deepEqual(fs.readdirSync(tmp).filter((name) => name.startsWith('greenwashing-mutants-')), []);
+});
+
+test('a reader that goes away does not stop the command halfway: the copy is still removed, the exit code kept', async (t) => {
+  const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST });
+  write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}${STOPS}` });
+  const tmp = tempDir(t);
+  const env = { ...process.env, TMPDIR: tmp };
+  delete env.NODE_TEST_CONTEXT;
+  const child = spawn(process.execPath, [MUTATE], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  // Nobody reads the estimate, printed while the copy is there, or the report.
+  child.stdout.destroy();
+  let errors = '';
+  child.stderr.on('data', (data) => { errors += data; });
+  const code = await new Promise((resolve) => child.on('close', resolve));
+  assert.equal(code, 0, errors);
+  assert.equal(errors, '');
   assert.deepEqual(fs.readdirSync(tmp).filter((name) => name.startsWith('greenwashing-mutants-')), []);
 });
 

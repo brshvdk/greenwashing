@@ -322,42 +322,42 @@ function choose(mutants, limit) {
 // Seconds as the report writes them: tenths below 10 s.
 const seconds = (value) => (Math.round(value * 10) < 100 ? `${value.toFixed(1)} s` : `${Math.round(value)} s`);
 // Without a --run-timeout a human set, a run with a break gets the control run's time half again and
-// 10 s more; the --timeout the estimate proposes lets every run take half again as long too.
+// 10 s more; the --timeout the estimate proposes lets the runs take half again as long too, and one
+// of them all the time it gets (a break that loops).
 const SLACK = 1.5;
 const MARGIN = 10;
 
 // What the runs after the control run will take, from its length: {line, perRun, expected}, printed as
 // soon as it is known and again in the report. run: the seconds the control run took; finished: false
-// when it was stopped at the end of the time for everything; controls and mutants: the runs to go (the
-// control breaks run first); spent: the seconds taken so far; timeoutSeconds: the time for everything;
-// runTimeoutSeconds: the time for one run a human set (--run-timeout or .greenwashing.json), or null.
-// perRun: the time each run with a break gets; expected: the seconds the command is expected to take
-// (the time for everything when the runs do not fit in it); both null when no break can run. When not
-// every run fits, the line says what to run the command again with: only the options that change.
-function estimate({ run, finished, controls, mutants, spent, timeoutSeconds, runTimeoutSeconds }) {
+// when it was stopped at the end of the time for everything; green: it passed; controls and mutants:
+// the runs to go (the control breaks run first); spent: the seconds taken so far; timeoutSeconds: the
+// time for everything; runTimeoutSeconds: the time for one run a human set (--run-timeout or
+// .greenwashing.json), or null. perRun: the time each run with a break gets; expected: the seconds the
+// command is expected to take (the time for everything when the runs do not fit in it); both null when
+// no break can run. When not every run fits, the line says what to run the command again with: only
+// the options that change.
+function estimate({ run, finished, green, controls, mutants, spent, timeoutSeconds, runTimeoutSeconds }) {
+  const none = (line) => ({ perRun: null, expected: null, line });
+  if (!finished) {
+    return none(`Estimate: one test run takes more than ${seconds(run)}: the control run did not finish in the ${timeoutSeconds} s for everything (--timeout),`
+      + ' so no break runs. For all of them, run it again with a longer --timeout');
+  }
+  const head = `Estimate: one test run takes ${seconds(run)} (the control run)`;
+  if (!green) return none(`${head}, which is not green, so no break runs`);
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const runs = controls + mutants;
   const total = spent + runs * run;
-  const needed = Math.ceil(spent + runs * run * SLACK);
+  const own = Math.ceil(run * SLACK + MARGIN);
+  const short = runTimeoutSeconds !== null && run > runTimeoutSeconds;
+  const perRun = runTimeoutSeconds === null || short ? own : runTimeoutSeconds;
+  const needed = Math.ceil(spent + (runs - 1) * run * SLACK + perRun);
   const again = (options) => {
-    if (total > timeoutSeconds && needed > MUTANT_MAX) return `For all of them it needs about ${needed} s, past the ${MUTANT_MAX} s --timeout takes at most; lower --limit`;
+    if (total > timeoutSeconds && needed > MUTANT_MAX) {
+      return `For all of them it needs about ${needed} s, past the ${MUTANT_MAX} s --timeout takes at most: run it again with ${[...options, 'a lower --limit'].join(' and ')}`;
+    }
     return `For all of them, run it again with ${[...options, ...(total > timeoutSeconds ? [`--timeout ${needed}`] : [])].join(' ')}`;
   };
-  if (!finished) {
-    return {
-      perRun: null, expected: null,
-      line: `Estimate: one test run takes more than ${seconds(run)}: the control run did not finish in the ${timeoutSeconds} s for everything (--timeout), so no break runs.`
-        + ' For all of them, run it again with a longer --timeout',
-    };
-  }
-  const head = `Estimate: one test run takes ${seconds(run)} (the control run)`;
-  if (runTimeoutSeconds !== null && run > runTimeoutSeconds) {
-    return {
-      perRun: null, expected: null,
-      line: `${head}, more than the ${runTimeoutSeconds} s --run-timeout gives a run with a break, so no break runs. ${again([`--run-timeout ${Math.ceil(run * SLACK + MARGIN)}`])}`,
-    };
-  }
-  const perRun = runTimeoutSeconds === null ? Math.ceil(run * SLACK + MARGIN) : runTimeoutSeconds;
+  if (short) return none(`${head}, more than the ${runTimeoutSeconds} s --run-timeout gives a run with a break, so no break runs. ${again([`--run-timeout ${own}`])}`);
   const each = runTimeoutSeconds === null ? `the control run x ${SLACK} + ${MARGIN} s, as --run-timeout is not set` : '--run-timeout';
   const plan = `${head}; ${plural(runs, 'run')} to go (${plural(controls, 'control break')}, ${plural(mutants, 'mutant')}), up to ${perRun} s each (${each}): about ${seconds(total)} in all`;
   if (total <= timeoutSeconds) return { perRun, expected: total, line: `${plan}, within the ${timeoutSeconds} s for everything (--timeout): all of them fit` };

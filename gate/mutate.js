@@ -351,12 +351,12 @@ async function run(argv) {
   const controlled = [...new Set(chosen.map((m) => m.file))];
   const controlStarted = Date.now();
   const control = await runIn(timeLeft());
+  const green = verdict(control);
   const estimated = estimate({
-    run: (Date.now() - controlStarted) / 1000, finished: !control.timedOut, controls: controlled.length, mutants: chosen.length,
-    spent: took(), timeoutSeconds: limits.timeoutSeconds, runTimeoutSeconds: limits.runTimeoutSeconds,
+    run: (Date.now() - controlStarted) / 1000, finished: !control.timedOut, green: green.outcome === 'passed', controls: controlled.length,
+    mutants: chosen.length, spent: took(), timeoutSeconds: limits.timeoutSeconds, runTimeoutSeconds: limits.runTimeoutSeconds,
   });
   process.stdout.write(`${estimated.line}\n`);
-  const green = verdict(control);
   const counts = green.counts ? `${green.counts.passed} passed, ${green.counts.failed} failed, ${green.counts.skipped} skipped` : 'no counts';
   const controlLine = `Control: ${choice.command} (${choice.source}) on the unchanged copy: ${green.outcome}${green.why ? ` - ${green.why}` : ''} (${counts})`;
   if (green.outcome !== 'passed') {
@@ -371,7 +371,7 @@ async function run(argv) {
     });
   }
   // Each run with a break: the time the estimate gives it, within the time left.
-  const left = () => Math.min(estimated.perRun, timeLeft());
+  const runSeconds = () => Math.min(estimated.perRun, timeLeft());
   // One file broken, the tests run, the file back as it was: the run.
   const runBroken = async (file, source, edit, seconds) => {
     const target = path.join(dir, file);
@@ -391,7 +391,7 @@ async function run(argv) {
   const unrun = new Map();
   let controlsTried = 0;
   for (const file of controlled) {
-    const seconds = left();
+    const seconds = runSeconds();
     if (seconds < 1) break;
     controlsTried += 1;
     const { text, kind } = files.find((f) => f.file === file);
@@ -413,7 +413,7 @@ async function run(argv) {
   for (const mutant of chosen) {
     if (unrun.has(mutant.file)) continue;
     // A file whose control break found no time left is not tried either.
-    const seconds = exercised.has(mutant.file) ? left() : 0;
+    const seconds = exercised.has(mutant.file) ? runSeconds() : 0;
     if (seconds < 1) {
       notTried += 1;
       continue;
@@ -432,6 +432,9 @@ async function run(argv) {
 
 async function main() {
   for (const signal of SIGNALS) process.on(signal, onSignal);
+  // A reader gone before the end (a closed pipe) does not stop the command halfway: the copy is still
+  // removed and the exit code kept.
+  process.stdout.on('error', () => {});
   let outcome;
   try {
     outcome = await run(process.argv.slice(2));
