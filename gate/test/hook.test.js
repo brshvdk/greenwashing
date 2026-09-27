@@ -2442,3 +2442,77 @@ test('a project the gate cannot check is decided again only after a turn the gat
   write(dir, { 'main.go': 'package main\n\nfunc main() {}\n' });
   assert.match(gate.stop().json.reason, /the tests failed/);
 });
+
+test('after WORK NOT ACCEPTED of a turn with the words, a Stop with no prompt before it has no permission', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'allow test removal');
+  write(dir, { 'a.test.js': JEST_OK, 't.test.js': NODE_FAIL });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /the tests failed/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // A turn a background task starts: no prompt of the user, so the words do not count.
+  write(dir, { 't.test.js': NODE_PASS });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+});
+
+test('a test file moved with exactly half of its lines new is a move: its tests keep their names', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  // The 6 lines of a.test.js and 6 new ones (both tests edited), with no line break at the end: 12 lines, half new.
+  fs.unlinkSync(path.join(dir, 'a.test.js'));
+  const moved = TWO_JS.replace('expect(add(1, 2)).toBe(3);', 'expect(add(1, 2)).toBe(3);\n  expect(add(0, 0)).toBe(0);\n  expect(add(1, 0)).toBe(1);\n  expect(add(0, 1)).toBe(1);')
+    .replace('expect(sub(3, 2)).toBe(1);', 'expect(sub(3, 2)).toBe(1);\n  expect(sub(0, 0)).toBe(0);\n  expect(sub(5, 5)).toBe(0);\n  expect(sub(2, 1)).toBe(1);').trimEnd();
+  assert.equal(moved.split('\n').length, 12);
+  write(dir, { 'b.test.js': moved });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  // One more new line: a new file, so the tests of the deleted one are removed.
+  write(dir, { 'b.test.js': moved.replace('expect(add(0, 0)).toBe(0);', 'expect(add(0, 0)).toBe(0);\n  expect(add(2, 0)).toBe(2);') });
+  assert.match(gate.stop(true).json.reason, /\n- a\.test\.js: 'adds' \(GW-17\)\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+});
+
+test('the Stop that let the agent stop is used by the next prompt only: a removal after a later blocked, cut-off turn stays the agent\'s', (t) => {
+  const three = `${TWO_JS}${MUL_JS}`;
+  const dir = project(t, { 'a.test.js': three }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': three.replace(/test\('subtracts'[^]*?\}\);\n/, '') });
+  for (const active of [false, true, true]) assert.equal(gate.stop(active).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // No edit of the user; the next turn removes another test, is blocked, and is cut off.
+  gate.prompt();
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\n- a\.test\.js: 'multiplies' \(GW-17\)\nSee each/);
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\n- a\.test\.js: 'multiplies' \(GW-17\)\nSee each/);
+});
+
+test('the words must stand alone: "auto-allow test removal" is not them; the line of a turn let go never names the permission', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'Our policy: never auto-allow test removal.');
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  // Allowed, but the tests fail until the gate lets the agent stop: the release line does not list the removal.
+  gate.prompt(dir, 'allow test removal');
+  write(dir, { 't.test.js': NODE_FAIL });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /the tests failed/);
+  const released = gate.stop(true).json.systemMessage;
+  assert.match(released, /WORK NOT ACCEPTED.*\(node --test --test-reporter=tap t\.test\.js\)\.$/);
+  assert.doesNotMatch(released, /permission/);
+});
+
+test('a test the user removes in a worktree after WORK NOT ACCEPTED stays theirs when the agent commits and removes the worktree', (t) => {
+  const { dir, tree, gate } = seenWorktree(t, { 'a.test.js': `${TWO_JS}${MUL_JS}`, 't.test.js': NODE_PASS });
+  write(tree, { 't.test.js': NODE_FAIL });
+  for (const active of [false, true, true]) assert.match(gate.stop(active, tree).json.reason, /the tests failed/);
+  assert.match(gate.stop(true, tree).json.systemMessage, /WORK NOT ACCEPTED/);
+  // Between turns the user removes a test there; the agent fixes the tests, commits and removes the worktree.
+  write(tree, { 'a.test.js': TWO_JS });
+  gate.prompt(tree);
+  write(tree, { 't.test.js': NODE_PASS });
+  git(tree, 'commit', '-qam', 'fix');
+  git(dir, 'worktree', 'remove', tree);
+  assert.match(gate.stop(false, dir).json.systemMessage, /^greenwashing: tests passed - .*the last commit of the removed worktree/);
+  assert.deepEqual(leftovers(gate, dir), []);
+});

@@ -831,4 +831,9 @@ test('python_checks.py lists a test only under the name Python keeps, and withou
   const [other] = list('def test_empty(capsys):\n    assert total([]) == 0\n');
   assert.equal(fn.body, method.body);
   assert.notEqual(fn.body, other.body);
+  // An async test is a test; a test's body is all its statements.
+  assert.deepEqual(list('import unittest\n\n\nclass TestFetch(unittest.IsolatedAsyncioTestCase):\n    async def test_fetch(self):\n        self.assertTrue(await f())\n')
+    .map((one) => one.name), ['TestFetch.test_fetch']);
+  const [first, second] = list('def test_total():\n    cart = make()\n    assert cart.total() == 3\n\n\ndef test_sum():\n    cart = make()\n    assert cart.total() == 4\n');
+  assert.notEqual(first.body, second.body);
 });
