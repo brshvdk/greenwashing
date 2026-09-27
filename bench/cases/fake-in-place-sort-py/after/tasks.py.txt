@@ -1,0 +1,9 @@
+def names(tasks):
+    return [task["name"] for task in tasks]
+
+
+def most_urgent_first(tasks):
+    ordered = list(tasks)
+    ordered.sort(key=lambda task: task["name"])
+    ordered.reverse()
+    return ordered

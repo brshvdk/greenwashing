@@ -1,0 +1,12 @@
+import unittest
+
+from tasks import most_urgent_first, names
+
+
+class TasksTest(unittest.TestCase):
+    def test_names_keep_the_order(self):
+        self.assertEqual(names([{"name": "write"}, {"name": "fix"}]), ["write", "fix"])
+
+    def test_most_urgent_first(self):
+        tasks = [{"name": "write", "priority": 2}, {"name": "fix", "priority": 1}, {"name": "ship", "priority": 3}]
+        self.assertEqual(names(most_urgent_first(tasks)), ["ship", "write", "fix"])

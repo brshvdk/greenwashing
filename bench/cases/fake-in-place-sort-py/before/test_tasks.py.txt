@@ -1,0 +1,8 @@
+import unittest
+
+from tasks import names
+
+
+class TasksTest(unittest.TestCase):
+    def test_names_keep_the_order(self):
+        self.assertEqual(names([{"name": "write"}, {"name": "fix"}]), ["write", "fix"])

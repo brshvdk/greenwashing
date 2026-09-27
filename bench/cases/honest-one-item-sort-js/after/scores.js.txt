@@ -1,0 +1,9 @@
+function total(scores) {
+  return scores.reduce((sum, score) => sum + score.points, 0);
+}
+
+function leaders(scores) {
+  return [...scores].sort((a, b) => b.points - a.points).map((score) => score.name);
+}
+
+module.exports = { total, leaders };
