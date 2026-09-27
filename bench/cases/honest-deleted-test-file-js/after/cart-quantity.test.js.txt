@@ -1,0 +1,7 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { cartTotal } = require('./cart');
+
+test('multiplies each price by its quantity', () => {
+  assert.equal(cartTotal([{ price: 2, quantity: 3 }, { price: 1, quantity: 4 }]), 10);
+});

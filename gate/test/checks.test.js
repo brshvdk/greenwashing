@@ -356,6 +356,8 @@ test('GW-18 and GW-01 edges: a line removed above a test is not in it; other sam
 });
 
 // Python test files go through python_checks.py, run the way the hook runs it.
+const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { CHECKS } = require('../lib/command');
@@ -649,14 +651,18 @@ test('removedTests: a test no changed test file has any more is removed; renamed
   assert.deepEqual(removedTests(before, within('a.test.js', a.replace("'adds'", "'sums'")), () => false), []);
 });
 
+// The Node a project's node --test runs on: 20 (no TypeScript, dot folders collected), or 22.18 and newer.
+const NODE_20 = { major: 20, typescript: false };
+const NODE_22 = { major: 22, typescript: true };
+
 test('collectedBy: the runners that collect a file by default; carries: a move keeps a test where the project\'s runners still collect it', () => {
   const kinds = {
     'a.test.js': ['jest', 'vitest', 'node --test'], 'a.spec.js': ['jest', 'vitest'], 'test/a.js': ['node --test'], '__tests__/a.js': ['jest'],
     'a-test.js': ['node --test'], 'a_test.mjs': ['node --test'], 'test-a.cjs': ['node --test'], 'test.js': ['jest', 'node --test'],
-    'a.test.ts': ['jest', 'vitest'], 'a.spec.mts': ['vitest'], 'src/__tests__/a.tsx': ['jest'], 'test_a.py': ['unittest', 'pytest'],
+    'a.test.ts': ['jest', 'vitest'], 'a.spec.mts': ['jest', 'vitest'], 'src/__tests__/a.tsx': ['jest'], 'test_a.py': ['unittest', 'pytest'],
     'a_test.py': ['pytest'], 'tests.py': ['unittest'], 'a.js': [], 'test_a.txt': [],
   };
-  for (const [file, runners] of Object.entries(kinds)) assert.deepEqual(collectedBy(file), runners, file);
+  for (const [file, runners] of Object.entries(kinds)) assert.deepEqual(collectedBy(file, NODE_20), runners, file);
   assert.equal(carries('a.test.js', 'a.spec.js', ['node --test']), false);
   assert.equal(carries('a.test.js', 'a.spec.js', ['jest']), true);
   assert.equal(carries('a.test.js', 'a.spec.js', null), false);
@@ -667,6 +673,107 @@ test('collectedBy: the runners that collect a file by default; carries: a move k
   assert.equal(carries('test_a.py', 'helpers.py', ['pytest']), false);
   // A file no runner of the project collects did not run: anywhere is as good.
   assert.equal(carries('a.spec.js', 'b.js', ['node --test']), true);
+});
+
+test('collectedBy: what each runner leaves out by default - node_modules, dot folders, folders pytest does not enter - and TypeScript for node --test where Node strips types', () => {
+  const kinds = {
+    'node_modules/x/a.test.js': [[], []], '.ci/a.test.js': [['jest', 'vitest', 'node --test'], ['jest', 'vitest']],
+    'test/.hidden/a.js': [['node --test'], []], '.a.test.js': [['jest', 'vitest', 'node --test'], ['jest', 'vitest']],
+    '.git/a.test.js': [['jest', 'node --test'], ['jest']], 'dist/a.test.js': [['jest', 'vitest', 'node --test'], ['jest', 'vitest', 'node --test']],
+    'a.test.ts': [['jest', 'vitest'], ['jest', 'vitest', 'node --test']], 'a.test.mts': [['jest', 'vitest'], ['jest', 'vitest', 'node --test']],
+    'test/a.cts': [[], ['node --test']], 'a.spec.ts': [['jest', 'vitest'], ['jest', 'vitest']], '__tests__/a.mjs': [['jest'], ['jest']],
+    'a.test.cjs': [['jest', 'vitest', 'node --test'], ['jest', 'vitest', 'node --test']],
+    '.ci/test_a.py': [['unittest'], ['unittest']], 'build/test_a.py': [['unittest'], ['unittest']], 'venv/lib/a_test.py': [[], []],
+    'x.egg/test_a.py': [['unittest'], ['unittest']], 'tests/test_a.py': [['unittest', 'pytest'], ['unittest', 'pytest']],
+    'test-cart.py': [[], []], 'test.slow.py': [[], []], 'testCart.py': [['unittest'], ['unittest']],
+  };
+  for (const [file, [old, now]] of Object.entries(kinds)) {
+    assert.deepEqual(collectedBy(file, NODE_20), old, `${file} on Node 20`);
+    assert.deepEqual(collectedBy(file, NODE_22), now, `${file} on Node 22`);
+  }
+  // Moved out of what the runner collects: a dot folder on Node 22, node_modules, a folder pytest skips, a .spec.ts.
+  assert.equal(carries('cart.test.js', '.ci/cart-slow.test.js', ['node --test'], NODE_22), false);
+  assert.equal(carries('cart.test.js', '.ci/cart-slow.test.js', ['node --test'], NODE_20), true);
+  assert.equal(carries('cart.test.js', '.ci/cart-slow.test.js', ['jest'], NODE_22), true);
+  assert.equal(carries('cart.test.js', 'node_modules/x/cart.test.js', ['jest'], NODE_22), false);
+  assert.equal(carries('test_cart.py', 'build/test_cart.py', ['pytest']), false);
+  assert.equal(carries('test_cart.py', 'tests/test_cart.py', ['pytest']), true);
+  assert.equal(carries('cart.test.ts', 'cart.spec.ts', ['node --test'], NODE_22), false);
+  assert.equal(carries('cart.test.js', 'cart.test.ts', ['node --test'], NODE_22), true);
+  assert.equal(carries('cart.test.js', 'cart.test.ts', ['node --test'], NODE_20), false);
+  // unittest: a module name.
+  assert.equal(carries('test_cart.py', 'test_cart_slow.py', ['unittest']), true);
+  assert.equal(carries('test_cart.py', 'test-cart-slow.py', ['unittest']), false);
+  assert.equal(carries('test_cart.py', 'test.cart.py', ['unittest']), false);
+});
+
+test('collectedBy for node --test agrees with the files this Node\'s node --test runs', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-collect-'));
+  try {
+    const files = ['a.test.js', 'a.spec.js', 'b-test.mjs', 'b.test.mts', 'c_test.cjs', 'test-d.js', 'test.js', 'test/e.js', 'test/.hidden/f.js',
+      '.ci/g.test.js', '.h.test.js', 'node_modules/x/i.test.js', 'dist/j.test.js', 'k.test.ts', 'l.spec.ts', 'test/m.cts', '__tests__/n.js'];
+    for (const file of files) {
+      fs.mkdirSync(path.join(dir, path.dirname(file)), { recursive: true });
+      const load = /\.m[jt]s$/.test(file) ? "import test from 'node:test';\n" : "const test = require('node:test');\n";
+      fs.writeFileSync(path.join(dir, file), `${load}test(${JSON.stringify(file)}, () => {});\n`);
+    }
+    // NODE_TEST_CONTEXT, set by the node --test running this file, would make that one skip its files.
+    const env = { ...process.env, NODE_OPTIONS: '' };
+    delete env.NODE_TEST_CONTEXT;
+    const run = spawnSync(process.execPath, ['--test', '--test-reporter=tap'], { cwd: dir, encoding: 'utf8', env });
+    const ran = [...run.stdout.matchAll(/^(?:not )?ok \d+ - (.+)$/gm)].map((m) => m[1]).filter((name) => files.includes(name)).sort();
+    assert.ok(ran.length > 0, run.stdout + run.stderr);
+    assert.deepEqual(ran, files.filter((file) => collectedBy(file).includes('node --test')).sort());
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('jsTests: one key for a name in any quotes, and a test given only a function goes by its name', () => {
+  const [single] = jsTests("describe('cart', () => { it('says \\'hi\\'', () => { expect(f('Ada')).toBe('x'); }); });\n");
+  const [double] = jsTests('describe("cart", () => { it("says \'hi\'", () => { expect(f("Ada")).toBe("x"); }); });\n');
+  const [template] = jsTests('describe(`cart`, () => { it(`says \'hi\'`, () => { expect(f(`Ada`)).toBe(`x`); }); });\n');
+  assert.equal(single.key, double.key);
+  assert.equal(single.key, template.key);
+  assert.equal(single.body, double.body);
+  assert.equal(single.name, "'cart' > 'says \\'hi\\''");
+  // Another text, or a template with ${}, is another key.
+  assert.notEqual(jsTests("it('a', () => {});\n")[0].key, jsTests("it('b', () => {});\n")[0].key);
+  assert.notEqual(jsTests('it(`a ${n}`, () => {});\n')[0].key, jsTests("it('a ${n}', () => {});\n")[0].key);
+  assert.notEqual(jsTests("it('a\", \"b', () => {});\n")[0].key, jsTests('it("a", "b", () => {});\n')[0].key);
+  // test(function name() {...}): named by the function, its body the function's; one of another body is another test.
+  const fns = jsTests('test(function emptyCart() {\n  assert.equal(total([]), 0);\n});\ntest(function sumsPrices() {\n  assert.equal(total([2, 4]), 6);\n});\n');
+  assert.deepEqual(fns.map((one) => one.name), ['emptyCart', 'sumsPrices']);
+  assert.notEqual(fns[0].body, fns[1].body);
+  assert.equal(jsTests('test(function renamed() {\n  assert.equal(total([]), 0);\n});\n')[0].body, fns[0].body);
+  assert.deepEqual(jsTests('test(async () => { assert.ok(f()); });\n').map((one) => [one.name, one.body]), [['', '(async()=>{assert.ok(f());})']]);
+});
+
+test('jsTests reads a file of 40,000 tests in a few seconds', () => {
+  const source = Array.from({ length: 40000 }, (_, i) => `test('case ${i}', () => { assert.equal(${i} % 7, ${i % 7}); });\n`).join('');
+  const started = Date.now();
+  assert.equal(jsTests(source).length, 40000);
+  assert.ok(Date.now() - started < 10000, `${Date.now() - started} ms`);
+});
+
+test('removedTests: each test left over now stands for one removed test, and quotes a formatter changed keep a test', () => {
+  // Two tests with one body: deleting one is not excused by the other, which keeps its own name.
+  const twins = "test('adds', () => { expect(add(1, 2)).toBe(3); });\ntest('adds again', () => { expect(add(1, 2)).toBe(3); });\n";
+  assert.deepEqual(named(removedTests(within('a.test.js', twins), within('a.test.js', "test('adds again', () => { expect(add(1, 2)).toBe(3); });\n"))),
+    ["a.test.js: 'adds'"]);
+  // A body moved into a test edited in place in its name does not excuse the test whose body it was.
+  const pair = "test('a', () => { expect(f()).toBe(1); });\ntest('b', () => { expect(g()).toBe(2); });\n";
+  assert.deepEqual(named(removedTests(within('a.test.js', pair), within('a.test.js', "test('a', () => { expect(g()).toBe(2); });\n"))), ["a.test.js: 'b'"]);
+  // Its body pasted into a skipped test that stays under its name: removed.
+  const one = "test('sums', () => { assert.equal(total([2, 4]), 6); });\n";
+  const later = "test.skip('later', () => { assert.equal(1, 1); });\n";
+  assert.deepEqual(named(removedTests(within('a.test.js', one + later), within('a.test.js', later.replace('1, 1', 'total([2, 4]), 6')))), ["a.test.js: 'sums'"]);
+  assert.deepEqual(removedTests(within('a.test.js', one), within('a.test.js', one.replace("test('sums'", "test('adds up'"))), []);
+  // A formatter's quotes: the name stays.
+  assert.deepEqual(removedTests(within('a.test.js', one), within('a.test.js', one.replace(/'/g, '"'))), []);
+  // Deleting a test given only a function is not excused by another such test.
+  const fns = 'test(function a() {\n  assert.equal(total([]), 0);\n});\ntest(function b() {\n  assert.equal(total([2, 4]), 6);\n});\n';
+  assert.deepEqual(named(removedTests(within('a.test.js', fns), within('a.test.js', fns.split('test(function b')[0]))), ['a.test.js: b']);
 });
 
 test('python_checks.py lists the tests of a text with their classes; a start text Python cannot read has none', () => {
@@ -702,4 +809,26 @@ test('python_checks.py lists the tests of a text with their classes; a start tex
   });
   assert.deepEqual(JSON.parse(both.stdout).errors.map((one) => one.file), ['test_d.py']);
   assert.deepEqual(list([{ key: 'n', file: 'test_n.py', text: 'def test_a():\n    pass\n\0', start: true }]).tests.n, []);
+});
+
+test('python_checks.py lists a test only under the name Python keeps, and without the self of a method in its body', () => {
+  const list = (text) => {
+    const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+      input: JSON.stringify({ files: [], list: [{ key: 'k', file: 'test_k.py', text, start: false }], entries: CHECKS }), encoding: 'utf8',
+    });
+    assert.equal(run.status, 0, run.stderr);
+    return JSON.parse(run.stdout).tests.k;
+  };
+  const shadowed = list('import unittest\n\n\nclass TestCart(unittest.TestCase):\n    def test_empty(self):\n        self.assertEqual(total([2, 4]), 6)\n\n'
+    + '    def test_empty(self):\n        self.assertEqual(total([]), 0)\n\n\nclass TestCart(unittest.TestCase):\n    def test_other(self):\n        pass\n');
+  assert.deepEqual(shadowed.map((one) => one.name), ['TestCart.test_other']);
+  const kept = list('import unittest\n\n\nclass TestCart(unittest.TestCase):\n    def test_sums(self):\n        self.assertEqual(total([2, 4]), 6)\n\n'
+    + '    def test_empty(self):\n        self.assertEqual(total([]), 0)\n');
+  assert.deepEqual(kept.map((one) => [one.name, one.key]), [['TestCart.test_sums', 'TestCart.test_sums'], ['TestCart.test_empty', 'TestCart.test_empty']]);
+  // A function and the same test as a method of a class have one body; another first parameter is another body.
+  const [fn] = list('def test_empty(tmp_path):\n    assert total([]) == 0\n');
+  const [method] = list('class TestTotal:\n    def test_empty(self, tmp_path):\n        assert total([]) == 0\n');
+  const [other] = list('def test_empty(capsys):\n    assert total([]) == 0\n');
+  assert.equal(fn.body, method.body);
+  assert.notEqual(fn.body, other.body);
 });

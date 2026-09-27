@@ -25,30 +25,42 @@ function testFileKind(file) {
   return test ? 'js' : null;
 }
 
-// Which runners collect a file as tests by default (a narrower view of testFileKind(), per runner):
-// jest 30 (__tests__, *.test.*, *.spec.*; js, jsx, ts, tsx), vitest 5 (*.test.*, *.spec.*), node --test
-// (*.test.*, *-test.*, *_test.*, test-*, test.*, files under test/; js, cjs, mjs), unittest discover
-// (test*.py), pytest (test_*.py, *_test.py).
+// Which runners collect a file as tests by default, seen in live runs (jest 30.5.2, vitest 5.0.2, node --test
+// on Node 20.20.2, 21.7.3, 22.22.2, 22.23.3 and 24.21.0, pytest 9.1.1, unittest discover of Python 3.11): jest (*.test.*,
+// *.spec.* and files in __tests__; js, jsx, ts, tsx, also with c or m), vitest (*.test.*, *.spec.*), node --test
+// (*.test.*, *-test.*, *_test.*, test-*, test.*, files under test/; js, cjs, mjs, and ts, mts, cts where Node strips
+// types by default), unittest discover (test*.py with a module name: not test-cart.py), pytest (test_*.py,
+// *_test.py). None of them looks in node_modules; vitest skips .git, node --test from Node 21 on every folder and file
+// whose name starts with a dot, and pytest the folders its norecursedirs names (.*, build, dist, venv, *.egg, CVS,
+// _darcs, {arch}). node: the Node the gate runs on ({major, typescript}), the one the project's node --test runs on.
+const NODE = { major: Number(process.versions.node.split('.')[0]), typescript: Boolean(process.features.typescript) };
+const hidden = (dirs, name) => [...dirs, name].some((part) => part.startsWith('.'));
 const RUNNER_FILES = {
-  jest: (dirs, name) => /\.[jt]sx?$/.test(name) && (dirs.includes('__tests__') || /(?:^|\.)(?:test|spec)\.[jt]sx?$/.test(name)),
-  vitest: (dirs, name) => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(name),
-  'node --test': (dirs, name) => /\.[cm]?js$/.test(name) && (/[._-]test\.[cm]?js$/.test(name) || /^test(?:-.*)?\.[cm]?js$/.test(name) || dirs.includes('test')),
-  unittest: (dirs, name) => /^test.*\.py$/.test(name),
-  pytest: (dirs, name) => /^test_.*\.py$|_test\.py$/.test(name),
+  jest: (dirs, name) => !dirs.includes('node_modules') && /\.[cm]?[jt]sx?$/.test(name)
+    && (dirs.includes('__tests__') || /(?:^|\.)(?:test|spec)\.[cm]?[jt]sx?$/.test(name)),
+  vitest: (dirs, name) => !dirs.includes('node_modules') && !dirs.includes('.git') && /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(name),
+  'node --test': (dirs, name, node) => {
+    const ext = node.typescript ? '\\.[cm]?[jt]s$' : '\\.[cm]?js$';
+    return !dirs.includes('node_modules') && !(node.major >= 21 && hidden(dirs, name)) && new RegExp(ext).test(name)
+      && (new RegExp(`[._-]test${ext}`).test(name) || new RegExp(`^test(?:-.*)?${ext}`).test(name) || dirs.includes('test'));
+  },
+  unittest: (dirs, name) => /^test\w*\.py$/.test(name),
+  pytest: (dirs, name) => !dirs.some((dir) => /^(?:\..*|build|dist|venv|node_modules|CVS|_darcs|\{arch\}|.*\.egg)$/.test(dir))
+    && /^test_.*\.py$|_test\.py$/.test(name),
 };
 
-function collectedBy(file) {
+function collectedBy(file, node = NODE) {
   const dirs = file.split('/');
   const name = dirs.pop();
-  return Object.keys(RUNNER_FILES).filter((runner) => RUNNER_FILES[runner](dirs, name));
+  return Object.keys(RUNNER_FILES).filter((runner) => RUNNER_FILES[runner](dirs, name, node));
 }
 
 // A test that moves from one test file to another keeps running when every runner of the project
 // (runners: the kinds support() found; null when not known, so every runner) that collects its old
 // file collects the new one too: moved to a file the project's runner does not collect, it is removed.
-function carries(from, to, runners) {
-  const now = collectedBy(to);
-  return collectedBy(from).filter((runner) => !runners || runners.includes(runner)).every((runner) => now.includes(runner));
+function carries(from, to, runners, node = NODE) {
+  const now = collectedBy(to, node);
+  return collectedBy(from, node).filter((runner) => !runners || runners.includes(runner)).every((runner) => now.includes(runner));
 }
 
 const CODE = 0;
@@ -495,58 +507,118 @@ function normalText(source, kinds, from, to) {
   return text;
 }
 
-// The tests of a JavaScript or TypeScript file, as the checks see them: [{name, body}]. name: the
-// names of the suites and tests around the test and its own, as written, joined by ' > '; body: the
-// rest of the call without its name (a skip condition, a table, options, the function), with no
-// spaces or comments, or null for a call with no function (a todo).
+// Code between from and to as normalText() reads it, with each string, and each template with no ${}, in
+// one form: 'x', "x" and `x` are the same (a formatter changes the quotes), a quote escaped in them read as the quote.
+function testText(source, kinds, templates, from, to) {
+  let text = '';
+  for (let i = from; i < to; i += 1) {
+    const c = source[i];
+    if (kinds[i] === CODE && (c === '\'' || c === '"' || (c === '`' && templates.has(i)))) {
+      let end = c === '`' ? templates.get(i) : i + 1;
+      if (c !== '`') while (end < to && kinds[end] === TEXT) end += 1;
+      if (end < to && source[end] === c && kinds.subarray(i + 1, end).every((kind) => kind === TEXT)) {
+        const inside = source.slice(i + 1, end).replace(/\\([\s\S])|"/g, (m, escaped) => (escaped === undefined || escaped === '"' ? '\\"'
+          : escaped === '\'' || escaped === '`' ? escaped : m));
+        text += `"${inside}"`;
+        i = end;
+        continue;
+      }
+    }
+    if (kinds[i] === TEXT || (kinds[i] === CODE && !/\s/.test(c))) text += c;
+  }
+  return text;
+}
+
+// The tests of a JavaScript or TypeScript file, as the checks see them: [{name, key, body}]. name: the
+// names of the suites and tests around the test and its own, as written, joined by ' > ' (a test given
+// only a function, test(function name() {...}), goes by the function's name); key: the same in testText()
+// form; body: the rest of the call without its name (a skip condition, a table, options, the function), in
+// testText() form, or null for a call with no function (a todo).
 function jsTests(source) {
   const { code, kinds, templates } = mask(source);
   const calls = testCalls(code, templates);
-  const named = (call) => (call.list.length ? normalText(source, kinds, call.list[0][0], call.list[0][1]) : '');
-  return calls.filter(isTest).map((test) => {
-    const around = calls.filter((call) => (SUITES.has(call.name) || isTest(call)) && call.start < test.start && test.end < call.end)
-      .sort((a, b) => a.start - b.start);
-    const [from, to] = test.list[0] || [test.end, test.end];
-    return {
-      name: [...around, test].map(named).join(' > '),
-      body: test.fn ? normalText(source, kinds, test.chainEnd, from) + normalText(source, kinds, to, test.end + 1) : null,
-    };
-  });
+  // Each test's name ([from, to] of the source, or null) and the suites and tests around it, in one pass
+  // over the calls in the order of the file.
+  const names = new Map();
+  const title = (call) => {
+    if (!names.has(call)) {
+      const first = call.list[0];
+      let at = first && first !== call.fn ? first : null;
+      if (first && first === call.fn) {
+        const fn = /^(\s*(?:async\s+)?function\s*\*?\s*)([A-Za-z_$][\w$]*)/.exec(code.slice(first[0], first[1]));
+        if (fn) at = [first[0] + fn[1].length, first[0] + fn[0].length];
+      }
+      names.set(call, at);
+    }
+    return names.get(call);
+  };
+  const open = [];
+  const tests = [];
+  for (const call of calls.filter((one) => SUITES.has(one.name) || isTest(one)).sort((a, b) => a.start - b.start)) {
+    while (open.length && open[open.length - 1].end < call.start) open.pop();
+    const around = open.filter((one) => call.end < one.end);
+    open.push(call);
+    if (!isTest(call)) continue;
+    const at = title(call);
+    const path = [...around, call];
+    const [from, to] = at || [call.end, call.end];
+    tests.push({
+      name: path.map((one) => (title(one) ? normalText(source, kinds, ...title(one)) : '')).join(' > '),
+      key: path.map((one) => (title(one) ? testText(source, kinds, templates, ...title(one)) : '')).join(' > '),
+      body: call.fn ? testText(source, kinds, templates, call.chainEnd, from) + testText(source, kinds, templates, to, call.end + 1) : null,
+    });
+  }
+  return tests;
 }
 
 // The tests a turn removed: before and after are the tests of the changed test files at the start
-// and now, [{file, name, body}] (jsTests(), or python_checks.py's list). A test stays when a test of
-// its name is still in its file (edited in place; of several with one name, those with the same body
-// pair first), or when a test now has its body in its file or in one that keeps it running
-// (keeps(from, to), carries(): renamed, or moved to another test file). Returns the tests of before
-// that stay neither way.
+// and now, [{file, name, key, body}] (jsTests(), or python_checks.py's list). A test stays when a test of
+// its key is still in its file (edited in place; of several with one key, those with the same body pair
+// first), or when a test left over now has its body and is in its file or in one that keeps it running
+// (keeps(from, to), carries(): renamed, or moved to another test file); each test left over now stands for
+// one test of before, so a body pasted into a test that stays under its own key excuses nothing. A test
+// left over now that does not run is new, and the skip check reports it. Returns the tests of before that
+// stay neither way.
 function removedTests(before, after, keeps = () => true) {
-  const byName = (tests) => {
+  const byKey = (tests) => {
     const groups = new Map();
     for (const test of tests) {
-      const key = `${test.file}\0${test.name}`;
-      groups.set(key, [...(groups.get(key) || []), test]);
+      const key = `${test.file}\0${test.key}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(test);
     }
     return groups;
   };
-  const now = byName(after);
-  // Each body now, with the files it is in.
-  const bodies = new Map();
-  for (const test of after) if (test.body !== null) bodies.set(test.body, [...(bodies.get(test.body) || []), test.file]);
+  const now = byKey(after);
   const unmatched = [];
-  for (const [key, old] of byName(before)) {
-    const left = [...(now.get(key) || [])];
+  const spare = [];
+  for (const [key, old] of byKey(before)) {
+    const left = now.get(key) || [];
+    now.delete(key);
     const rest = [];
     for (const test of old) {
       const same = left.findIndex((one) => one.body === test.body);
       if (same === -1) rest.push(test);
       else left.splice(same, 1);
     }
-    // The others of the name are edited in place, one for one.
+    // The others of the key are edited in place, one for one.
     unmatched.push(...rest.slice(left.length));
+    spare.push(...left.slice(rest.length));
   }
-  return unmatched.filter((test) => test.body === null
-    || !(bodies.get(test.body) || []).some((file) => file === test.file || keeps(test.file, file)));
+  for (const left of now.values()) spare.push(...left);
+  const bodies = new Map();
+  for (const test of spare) {
+    if (test.body === null) continue;
+    if (!bodies.has(test.body)) bodies.set(test.body, []);
+    bodies.get(test.body).push(test);
+  }
+  return unmatched.filter((test) => {
+    const same = bodies.get(test.body) || [];
+    const at = same.findIndex((one) => one.file === test.file || keeps(test.file, one.file));
+    if (at === -1) return true;
+    same.splice(at, 1);
+    return false;
+  });
 }
 
 // Checks one JavaScript or TypeScript test file. changes: {added, gaps} from lineChanges();

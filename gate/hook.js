@@ -58,10 +58,12 @@ function onSignal(signal) {
 // in stopped hold the test files too; ended: those of the Stop that let the agent stop as WORK NOT
 // ACCEPTED, until the next prompt; adopted, per tree: the test files the user changed after such a
 // Stop, as they were at the prompt after it (text, or null: gone) - the tests they no longer have were
-// removed by the user, not the agent. allowRemoval: the user's prompt for this turn lets it remove
-// tests (PERMISSION). support: whether the gate can check the project, and its runners (support()),
-// decided when the session's first prompt or a human's settings change calls for it (missing: no
-// prompt recorded).
+// removed by the user, not the agent - and, after a turn whose prompt let it remove tests, every test
+// file changed since the start. allowRemoval: the latest prompt from the user lets its turn remove tests
+// (PERMISSION): cleared by a Stop that accepts the turn, and not read by a Stop after ended. seenSettings,
+// outside git: the project's .greenwashing.json text as the gate last saw it, at the latest prompt or
+// Stop. support: whether the gate can check the project, and its runners (support()), decided when the
+// session's first prompt or a human's settings change calls for it (missing: no prompt recorded).
 const NO_STATE = { starts: {}, turn: {}, stopped: {}, adopted: {}, seen: {}, known: [], blocks: 0, accepted: false, allowRemoval: false };
 
 function stateFile(input, dir) {
@@ -88,6 +90,7 @@ function loadState(file) {
       accepted: state.accepted === true,
       allowRemoval: state.allowRemoval === true,
       ...(isObject(state.support) ? { support: state.support } : {}),
+      ...(typeof state.seenSettings === 'string' || state.seenSettings === null ? { seenSettings: state.seenSettings } : {}),
     };
   } catch {
     return NO_STATE;
@@ -393,7 +396,7 @@ async function runIn(dir, where, deadline, settings) {
   if (choice.error) return notRun(where, choice.error, note);
   const timeoutSeconds = Math.min(choice.timeoutSeconds, Math.ceil((deadline - Date.now()) / 1000));
   if (timeoutSeconds < 1) {
-    return notRun(where, 'no time was left for these tests: the runs before them used the whole timeout', { command: choice.command, source: choice.source, ...note });
+    return notRun(where, 'no time was left for these tests: the gate\'s checks and the runs before them used the whole timeout', { command: choice.command, source: choice.source, ...note });
   }
   return { ...(await runTests(dir, { ...choice, timeoutSeconds })), where, ...note };
 }
@@ -453,21 +456,28 @@ async function onStop(input) {
   // every tree; with no prompt recorded, as it is now.
   const settings = 'settings' in state ? state.settings : readRootFiles(project)[CONFIG_FILE];
   if (!home) {
+    // Outside git the project's .greenwashing.json is read as a whole, and kept as this Stop saw it.
+    const seenSettings = readRootFiles(project)[CONFIG_FILE];
+    const next = { ...state, seenSettings };
     // A checkout git cannot read is not outside git: what the prompt found there is not to be trusted.
     const unreadable = inCheckout(project);
-    if (unsupported && !unreadable) return allow(file, state, notChecked(state.support.why));
+    if (unsupported && !unreadable) {
+      // With no tests to run with the settings the turn started with, a change during the turn blocks (GW-114).
+      if (seenSettings === settings) return allow(file, next, notChecked(state.support.why));
+      return settle(file, next, [{ kind: 'config', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', files: [CONFIG_FILE] }], active);
+    }
     // Outside git nothing tells what changed, so the tests run whenever there are any, and also when a
     // command the work started with is gone (did not run).
     const choice = chooseCommand(rootFiles(project, settings), hasPythonTests(project));
     if (!choice.none || (state.support && state.support.supported)) {
       // Nothing tells which test lines changed either, so the quick checks cannot run: the user sees it.
-      const outcome = settle(file, state, await runAll([{ dir: project }], project, null, Date.now() + choice.timeoutSeconds * 1000, settings), active);
+      const outcome = settle(file, next, await runAll([{ dir: project }], project, null, Date.now() + choice.timeoutSeconds * 1000, settings), active);
       if (outcome.systemMessage) outcome.systemMessage += '; quick checks of changed tests not run (not a git repository)';
       return outcome;
     }
-    if (!unreadable) return allow(file, state, 'greenwashing: not a git repository and no test command - tests not run');
+    if (!unreadable) return allow(file, next, 'greenwashing: not a git repository and no test command - tests not run');
     const configError = 'git cannot read the repository this folder is in, so the gate cannot tell what changed (run git status here to see why)';
-    return settle(file, state, [{ command: '(none)', source: 'git', timeoutSeconds: 0, configError, output: '' }], active);
+    return settle(file, next, [{ command: '(none)', source: 'git', timeoutSeconds: 0, configError, output: '' }], active);
   }
   // With no start recorded (the prompt hook did not run, or failed), nothing tells which lines the
   // turn changed: the tests run, as for any change that cannot be told, but the checks cannot. Only
@@ -547,7 +557,7 @@ async function onStop(input) {
   const config = readConfig(settings);
   const deadline = Date.now() + (config.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS) * 1000;
   const runners = state.support ? state.support.runners : null;
-  const checks = recorded ? quickChecks(checked, config, project, deadline, state.allowRemoval, runners) : { problem: null, permitted: [] };
+  const checks = recorded ? quickChecks(checked, config, project, deadline, state.allowRemoval && !state.ended, runners) : { problem: null, permitted: [] };
   if (checks.problem) return settle(file, next, [checks.problem], active);
   const targets = [...pending.map((tree) => ({ dir: path.join(tree, path.relative(home, project)) })), ...removed];
   const outcome = settle(file, next, await runAll(targets, project, home, deadline, settings), active, removedNote(checks.permitted));
@@ -602,7 +612,9 @@ function quickChecks(checked, config, project, deadline, allowRemoval, runners) 
   // The tests of the changed test files at the start (a file the user changed between turns as it was
   // then) and now, per target; Python files are listed by python_checks.py.
   const lists = checked.map(() => ({ before: [], after: [] }));
+  // Python texts to list, keyed by target, side and path; labels: the file name each list goes under.
   const listed = [];
+  const labels = new Map();
   for (const [i, target] of checked.entries()) {
     const tests = target.diff.files.filter(testFileKind)
       .map((f) => ({ f, kind: testFileKind(f), before: target.diff.before(f), text: target.diff.after(f) }));
@@ -617,7 +629,11 @@ function quickChecks(checked, config, project, deadline, allowRemoval, runners) 
         for (const [side, content, file] of [['before', base, f], ['after', text, now]]) {
           if (content === null) continue;
           if (kind === 'js') lists[i][side].push(...jsTests(content).map((test) => ({ file, ...test })));
-          else listed.push({ key: JSON.stringify([i, side, file]), file: target.show(f), text: content, start: side === 'before' });
+          else {
+            const key = JSON.stringify([i, side, f]);
+            labels.set(key, file);
+            listed.push({ key, file: target.show(f), text: content, start: side === 'before' });
+          }
         }
       }
       if (text === null) continue;
@@ -642,8 +658,8 @@ function quickChecks(checked, config, project, deadline, allowRemoval, runners) 
     }
     findings.push(...result.findings);
     for (const { key } of listed) {
-      const [i, side, f] = JSON.parse(key);
-      lists[i][side].push(...result.tests[key].map((test) => ({ file: f, ...test })));
+      const [i, side] = JSON.parse(key);
+      lists[i][side].push(...result.tests[key].map((test) => ({ file: labels.get(key), ...test })));
     }
   }
   const keeps = (from, to) => carries(from, to, runners);
@@ -703,12 +719,13 @@ function pythonChecks(request, deadline, python) {
   return { error: `${python} printed no findings list` };
 }
 
-// note: added to the line of a turn the gate accepts. A turn that ends - accepted, or let go as WORK
-// NOT ACCEPTED - ends the user's permission to remove tests; let go, it leaves what this Stop saw of the
-// test files (ended), so that the next prompt can tell the user's changes after it.
+// note: added to the line of a turn the gate accepts. A turn that ends ends the user's permission to
+// remove tests: accepted, the permission is cleared; let go as WORK NOT ACCEPTED, it leaves what this Stop
+// saw of the test files (ended), so that the next prompt can tell the user's changes after it, and a Stop
+// before that prompt reads no permission, while that prompt still tells by it that the removals were allowed.
 function settle(file, state, runs, stopHookActive, note = '') {
   const decision = decide(runs, runs.map(verdict), state, stopHookActive);
-  const ends = decision.action === 'block' ? {} : { allowRemoval: false, ...(decision.action === 'release' ? { ended: state.stopped } : {}) };
+  const ends = { block: {}, release: { ended: state.stopped }, allow: { allowRemoval: false } }[decision.action];
   saveState(file, { ...state, blocks: decision.state.blocks, accepted: decision.action === 'allow', ...ends });
   if (decision.action === 'block') return { decision: 'block', reason: decision.reason };
   return { systemMessage: decision.action === 'allow' ? `${decision.message}${note}` : decision.message };
@@ -751,9 +768,12 @@ function onPrompt(input) {
   // Test files are stricter: only after a Stop that let the agent stop (WORK NOT ACCEPTED) is a test
   // file changed since that Stop the user's as it is now, so the tests it no longer has were removed by
   // the user (adopted, kept until a turn is accepted). After a turn cut off, or blocked and then
-  // interrupted, the agent may have changed it after the gate last saw it.
+  // interrupted, the agent may have changed it after the gate last saw it. After a turn whose prompt let
+  // it remove tests, every test file changed since the start is taken as it is now: what the turn removed
+  // was allowed, whatever ended it.
   const lastSeen = unaccepted ? state.stopped : {};
   const ended = unaccepted && state.ended ? state.ended : {};
+  const allowed = unaccepted && state.allowRemoval;
   const turn = {};
   const stopped = {};
   const adopted = unaccepted ? { ...state.adopted } : {};
@@ -763,8 +783,9 @@ function onPrompt(input) {
       if (!fs.existsSync(tree) || repoRoot(tree) !== tree) continue;
       const seenNow = snapshot(tree, own(tree), isWatched);
       stopped[tree] = { ...seenNow, texts: {} };
-      if (ended[tree]) {
-        for (const f of turnDiff(tree, ended[tree], { tree }, testFileKind).files) {
+      const since = allowed && next.starts[tree] ? next.starts[tree] : ended[tree];
+      if (since) {
+        for (const f of turnDiff(tree, since, { tree }, testFileKind).files) {
           adopted[tree] = { ...adopted[tree], [f]: worktreeText(tree, f, TEXT_LIMIT) };
         }
       }
@@ -783,7 +804,12 @@ function onPrompt(input) {
       // No record for this tree: its settings files are measured from its start instead.
     }
   }
-  const text = carried && 'settings' in state ? state.settings : readRootFiles(project)[CONFIG_FILE];
+  const current = readRootFiles(project)[CONFIG_FILE];
+  // Outside git (no starts), the same for the project's .greenwashing.json as a whole after a turn no Stop
+  // accepted: still as a Stop (or the prompt of a turn cut off before its Stop) last saw it, a text that
+  // differs from the turn before's is the agent's.
+  if (!home && !state.accepted && 'settings' in state && current !== state.settings && current === state.seenSettings) carried = true;
+  const text = carried && 'settings' in state ? state.settings : current;
   // Only the user's prompt can let the turn remove tests, and only this turn.
   const allowRemoval = typeof input.prompt === 'string' && PERMISSION.test(input.prompt);
   // Whether the gate can check the project is decided from the project's files when the session's
@@ -797,7 +823,9 @@ function onPrompt(input) {
   let decided = state.support;
   if (!decided || humanSettings || (!decided.supported && state.accepted)) decided = fresh();
   // The Stop that let the agent stop is used up by this prompt (undefined is left out of the file).
-  saveState(file, { ...next, ended: undefined, turn, stopped, adopted, settings: text, allowRemoval, support: decided });
+  saveState(file, {
+    ...next, ended: undefined, turn, stopped, adopted, settings: text, allowRemoval, support: decided, seenSettings: home ? undefined : current,
+  });
 }
 
 function readStdin() {

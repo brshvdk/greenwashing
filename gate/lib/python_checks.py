@@ -10,11 +10,12 @@ the lines a turn added or changed. The hook runs it as
 and reads JSON from stdout:
     {"findings": [{"file", "line", "gw", "what"}], "errors": [{"file", "error"}]}
 The request can also ask for the tests of texts, for the tests a turn removed:
-    "list": [{"key", "file", "text", "start"}]  ->  "tests": {key: [{"name", "body"}]}
+    "list": [{"key", "file", "text", "start"}]  ->  "tests": {key: [{"name", "key", "body"}]}
 A text from the start of the turn that Python cannot read ran no tests: its list is empty.
 """
 
 import ast
+import copy
 import io
 import json
 import re
@@ -322,21 +323,37 @@ def test_functions(tree, names, marker):
 
 
 def list_tests(file, source):
-    """The tests of a file, as the checks see them: [{"name", "body"}]. name: its classes and its own
-    name (TestCart.test_total); body: its parameters and statements (ast.dump, without line numbers),
-    the same wherever the test is indented."""
+    """The tests of a file, as the checks see them: [{"name", "key", "body"}]. name and key: its classes
+    and its own name (TestCart.test_total); body: its parameters, without the self or cls of a method, and
+    its statements (ast.dump, without line numbers), the same wherever the test is indented and whether or
+    not it is in a class. A definition that a later one of the same name in its module or class replaces
+    is not a test: Python keeps only the later one."""
     tree, names, _, marker = read(source, file)
-    qualified = {}
-    bodies = [(tree.body, "")]
+    qualified, methods = {}, set()
+    bodies = [(tree.body, "", False)]
     while bodies:
-        body, prefix = bodies.pop()
+        body, prefix, in_class = bodies.pop()
+        last = {node.name: node for node in body if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))}
         for node in body:
+            if last.get(getattr(node, "name", None)) is not node:
+                continue
             if isinstance(node, ast.ClassDef):
-                bodies.append((node.body, f"{prefix}{node.name}."))
-            elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                bodies.append((node.body, f"{prefix}{node.name}.", True))
+            else:
                 qualified[id(node)] = prefix + node.name
-    return [{"name": qualified[id(function)], "body": ast.dump(function.args) + "".join(ast.dump(s) for s in function.body)}
-            for function, _, _ in test_functions(tree, names, marker)]
+                if in_class:
+                    methods.add(id(node))
+    tests = []
+    for function, _, _ in test_functions(tree, names, marker):
+        if id(function) not in qualified:
+            continue
+        args = function.args
+        if id(function) in methods and (args.posonlyargs or args.args):
+            args = copy.copy(args)
+            args.posonlyargs, args.args = (args.posonlyargs[1:], args.args) if args.posonlyargs else ([], args.args[1:])
+        tests.append({"name": qualified[id(function)], "key": qualified[id(function)],
+                      "body": ast.dump(args) + "".join(ast.dump(s) for s in function.body)})
+    return tests
 
 
 def runs(function, names, marker):
