@@ -2397,3 +2397,48 @@ test('outside git, after WORK NOT ACCEPTED the tests keep the settings the work 
   gate.prompt();
   assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - printf/);
 });
+
+test('hooks added in the middle of a session: a .greenwashing.json the agent writes before a start is recorded still blocks (GW-114)', (t) => {
+  // A project the gate cannot check: the first Stop has no prompt and blocks; the next prompt keeps its null start.
+  const unchecked = project(t, { 'main.go': 'package main\n', 'a.test.js': NODE_FAIL }, null);
+  const one = session(t, unchecked);
+  write(unchecked, { 'main.go': 'package main\n\nfunc main() {}\n' });
+  assert.equal(one.stop().json.decision, 'block');
+  one.prompt();
+  write(unchecked, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  assert.match(one.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+  // A project the gate checks: the agent fixes the tests and swaps the command in the same turn.
+  const checked = project(t, { 't.test.js': NODE_PASS, 'app.js': '1;\n' });
+  const two = session(t, checked);
+  write(checked, { 't.test.js': NODE_FAIL });
+  assert.match(two.stop().json.reason, /the tests failed/);
+  two.prompt();
+  write(checked, { 't.test.js': NODE_PASS, '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  assert.match(two.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+  // Control: the same turn without the settings change passes, with the note that the checks did not run.
+  write(checked, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  assert.match(two.stop(true).json.systemMessage, /^greenwashing: tests passed - .*; quick checks of changed tests not run \(no start of the turn was recorded\)$/);
+});
+
+test('outside git, the line of a project the gate cannot check says why: a test script of another kind', (t) => {
+  const dir = tempDir(t);
+  write(dir, { 'package.json': MOCHA_PKG, 'cart.js': '1;\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'cart.js': '2;\n' });
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('the test command npm test runs "mocha"') });
+});
+
+test('a project the gate cannot check is decided again only after a turn the gate let end, not after one cut off', (t) => {
+  const dir = project(t, { 'main.go': 'package main\n' }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  // Cut off before its Stop: tests and a test script added; the next turn is still not checked.
+  write(dir, { 'package.json': '{"scripts": {"test": "node --test --test-reporter=tap"}}', 't.test.js': NODE_FAIL });
+  gate.prompt();
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+  // Let end: the next turn is checked.
+  gate.prompt();
+  write(dir, { 'main.go': 'package main\n\nfunc main() {}\n' });
+  assert.match(gate.stop().json.reason, /the tests failed/);
+});

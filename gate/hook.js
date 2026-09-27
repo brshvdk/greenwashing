@@ -544,8 +544,11 @@ async function onStop(input) {
     } else docs += split.docs.length;
   }
   const next = { ...state, starts, seen, stopped };
+  // GW-114 needs only the settings snapshot of the latest prompt, also when no start of the work is
+  // recorded (the hooks added in the middle of a session keep the Stop's null starts until a turn is accepted).
+  const prompted = 'settings' in state;
   if (unsupported) {
-    const problem = recorded ? settingsProblem(checked) : null;
+    const problem = settingsProblem(checked);
     return problem ? settle(file, next, [problem], active) : allow(file, next, notChecked(state.support.why));
   }
   if (pending.length === 0 && removed.length === 0) {
@@ -557,7 +560,8 @@ async function onStop(input) {
   const config = readConfig(settings);
   const deadline = Date.now() + (config.timeoutSeconds || DEFAULT_TIMEOUT_SECONDS) * 1000;
   const runners = state.support ? state.support.runners : null;
-  const checks = recorded ? quickChecks(checked, config, project, deadline, state.allowRemoval && !state.ended, runners) : { problem: null, permitted: [] };
+  const checks = recorded ? quickChecks(checked, config, project, deadline, state.allowRemoval && !state.ended, runners)
+    : { problem: prompted ? settingsProblem(checked) : null, permitted: [] };
   if (checks.problem) return settle(file, next, [checks.problem], active);
   const targets = [...pending.map((tree) => ({ dir: path.join(tree, path.relative(home, project)) })), ...removed];
   const outcome = settle(file, next, await runAll(targets, project, home, deadline, settings), active, removedNote(checks.permitted));

@@ -231,3 +231,18 @@ test('the gate checks a project whose test command is one of the five kinds, or 
   assert.deepEqual(support(files({ 'package.json': '{"scripts": {"test": "mocha"}}' }), true), { supported: true, runners: null });
 });
 
+test('support() reads a runner only as a word of its own and follows every form of a script call; a BOM or scripts: null in package.json', () => {
+  const scripts = (all) => support(files({ 'package.json': JSON.stringify({ scripts: all }) }), false);
+  for (const test of ['sh run-unittest.sh', 'node vitest.config.js', 'node build.js && echo --test', 'node build.js | tee --test']) {
+    assert.equal(scripts({ test }).supported, false, test);
+  }
+  for (const [all, runners] of [[{ test: 'npm run test:unit', 'test:unit': 'jest' }, ['jest']], [{ test: 'yarn run unit', unit: 'vitest' }, ['vitest']],
+    [{ test: 'npm run unit.fast', 'unit.fast': 'node --test' }, ['node --test']]]) {
+    assert.deepEqual(scripts(all), { supported: true, runners }, JSON.stringify(all));
+  }
+  const human = (command, pkg) => support(files({ '.greenwashing.json': JSON.stringify({ testCommand: command }), 'package.json': pkg }), false);
+  assert.deepEqual(human('npm t', '{"scripts": {"test": "jest"}}'), { supported: true, runners: ['jest'] });
+  assert.deepEqual(human('npm run unit', '{"scripts": null}'), { supported: true, runners: null });
+  assert.deepEqual(support(files({ 'package.json': '\ufeff{"scripts": {"test": "jest"}}' }), false), { supported: true, runners: ['jest'] });
+});
+
