@@ -10,9 +10,9 @@ const { CATALOG } = require('./verdict');
 const { splitLines } = require('./diff');
 const { MUTANT_MAX } = require('./command');
 
-// The kinds of break, in the order they are tried at one place and in the order each file's first
-// breaks are chosen: first what decides a path, a bound or an order, then a returned value (which
-// nearly any test of the result sees), then true and false and numbers (the most often equivalent).
+// The kinds of break, in the order each file's breaks are chosen and tried (and shown at one place):
+// first what decides a path, a bound or an order, then a returned value (which nearly any test of the
+// result sees), then true and false and numbers (the most often equivalent).
 const OPERATORS = ['guard', 'condition', 'comparison', 'order', 'return', 'boolean', 'number'];
 // What a surviving break of each kind means, and what to do: the catalog entry and a hint.
 const HINTS = {
@@ -316,29 +316,53 @@ function choose(mutants, limit) {
   return interleave(queues).slice(0, limit);
 }
 
-// Seconds as the report writes them: tenths below 10.
-const seconds = (value) => `${value < 10 ? value.toFixed(1) : Math.round(value)} s`;
-// The --timeout the estimate proposes lets the runs take half again as long as estimated.
+// Seconds as the report writes them: tenths below 10 s.
+const seconds = (value) => (Math.round(value * 10) < 100 ? `${value.toFixed(1)} s` : `${Math.round(value)} s`);
+// Without a --run-timeout a human set, a run with a break gets the control run's time half again and
+// 10 s more; the --timeout the estimate proposes lets every run take half again as long too.
 const SLACK = 1.5;
+const MARGIN = 10;
 
-// What the runs after the control run will take, known once it has run: {line, total}. run: the
-// seconds the control run took; controls and mutants: the runs to go (the control breaks run first);
-// spent: the seconds taken so far; timeoutSeconds: the time for everything; rerun(seconds): this
-// command again with --timeout seconds.
-function estimate({ run, controls, mutants, spent, timeoutSeconds, rerun }) {
+// What the runs after the control run will take, from its length: {line, perRun, total}, printed as
+// soon as it is known and again in the report. run: the seconds the control run took; finished: false
+// when it was stopped at the end of the time for everything; controls and mutants: the runs to go (the
+// control breaks run first); spent: the seconds taken so far; timeoutSeconds: the time for everything;
+// runTimeoutSeconds: the time for one run a human set (--run-timeout or .greenwashing.json), or null.
+// perRun: the time each run with a break gets; total: the seconds everything is expected to take;
+// both null when no break can run. When not every run fits, the line says what to run the command
+// again with: only the options that have to change.
+function estimate({ run, finished, controls, mutants, spent, timeoutSeconds, runTimeoutSeconds }) {
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const runs = controls + mutants;
   const total = spent + runs * run;
-  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
-  const head = `Estimate: one test run takes ${seconds(run)} (the control run); ${plural(runs, 'run')} to go (${plural(controls, 'control break')}, `
-    + `${plural(mutants, 'mutant')}): about ${seconds(total)} in all`;
-  if (total <= timeoutSeconds) return { total, line: `${head}, within the ${timeoutSeconds} s for everything (--timeout): all of them fit` };
-  const fit = Math.max(0, Math.floor((timeoutSeconds - spent) / run));
-  const tried = Math.min(mutants, Math.max(0, fit - controls));
   const needed = Math.ceil(spent + runs * run * SLACK);
+  const again = (options) => {
+    if (total > timeoutSeconds && needed > MUTANT_MAX) return `For all of them it needs about ${needed} s, past the ${MUTANT_MAX} s --timeout takes at most; lower --limit`;
+    return `For all of them, run it again with ${[...options, ...(total > timeoutSeconds ? [`--timeout ${needed}`] : [])].join(' ')}`;
+  };
+  if (!finished) {
+    return {
+      perRun: null, total: null,
+      line: `Estimate: one test run takes more than ${seconds(run)}: the control run did not finish in the ${timeoutSeconds} s for everything (--timeout), so no break runs.`
+        + ' For all of them, run it again with a longer --timeout',
+    };
+  }
+  const head = `Estimate: one test run takes ${seconds(run)} (the control run)`;
+  if (runTimeoutSeconds !== null && run > runTimeoutSeconds) {
+    return {
+      perRun: null, total: null,
+      line: `${head}, more than the ${runTimeoutSeconds} s --run-timeout gives a run with a break, so no break runs. ${again([`--run-timeout ${Math.ceil(run * SLACK + MARGIN)}`])}`,
+    };
+  }
+  const perRun = runTimeoutSeconds === null ? Math.ceil(run * SLACK + MARGIN) : runTimeoutSeconds;
+  const each = runTimeoutSeconds === null ? `the control run x ${SLACK} + ${MARGIN} s, as --run-timeout is not set` : '--run-timeout';
+  const plan = `${head}; ${plural(runs, 'run')} to go (${plural(controls, 'control break')}, ${plural(mutants, 'mutant')}), up to ${perRun} s each (${each}): about ${seconds(total)} in all`;
+  if (total <= timeoutSeconds) return { perRun, total, line: `${plan}, within the ${timeoutSeconds} s for everything (--timeout): all of them fit` };
+  // A run starts while any time is left, so the last one to start may not finish.
+  const start = Math.max(0, Math.ceil((timeoutSeconds - spent) / run));
   return {
-    total,
-    line: `${head}, past the ${timeoutSeconds} s for everything (--timeout): ${fit} of the runs fit, so about ${tried} of the ${plural(mutants, 'mutant')} will be tried. `
-      + `For all of them: ${needed <= MUTANT_MAX ? rerun(needed) : `about ${needed} s, past the ${MUTANT_MAX} s --timeout takes at most; lower --limit`}`,
+    perRun, total,
+    line: `${plan}, past the ${timeoutSeconds} s for everything (--timeout): the time left starts ${start} of them, so about ${Math.max(0, start - controls)} of the ${plural(mutants, 'mutant')} will be tried. ${again([])}`,
   };
 }
 
@@ -377,7 +401,7 @@ function report({ header, control, estimated = null, controls = null, results, u
   for (const problem of problems) lines.push(`Did not run: ${problem}`);
   const didNotRun = count('did not run') + notTried + problems.length;
   if (didNotRun) lines.push(`"Did not run" is never counted as caught (GW-61 in ${CATALOG}).`);
-  if (took !== null) lines.push(`Time: ${seconds(took)} in all${estimated ? ` (estimated: about ${seconds(estimated.total)})` : ''}`);
+  if (took !== null) lines.push(`Time: ${seconds(took)} in all${estimated && estimated.total !== null ? ` (estimated: about ${seconds(estimated.total)})` : ''}`);
   const code = survived.length ? 1 : didNotRun || results.length === 0 ? 2 : 0;
   lines.push(`Result: ${code === 0 ? 'every mutant was killed' : code === 1 ? `${survived.length} mutant${survived.length === 1 ? '' : 's'} survived` : 'did not run'}`);
   return { text: lines.join('\n'), code };

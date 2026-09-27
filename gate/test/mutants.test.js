@@ -214,25 +214,53 @@ test('the breaks tried: at most the limit, every file and every kind in turn, sp
   assert.equal(new Set(choose(all, 100)).size, 30);
 });
 
-test('the estimate: the runs to go at the length of the control run, what fits in the time for everything, and the --timeout for all', () => {
-  const rerun = (seconds) => `node mutate.js --timeout ${seconds}`;
-  const fits = estimate({ run: 2, controls: 3, mutants: 4, spent: 5, timeoutSeconds: 600, rerun });
-  assert.deepEqual(fits, { total: 19, line: 'Estimate: one test run takes 2.0 s (the control run); 7 runs to go (3 control breaks, 4 mutants): about 19 s in all,'
-    + ' within the 600 s for everything (--timeout): all of them fit' });
-  assert.equal(estimate({ run: 0.25, controls: 1, mutants: 1, spent: 0.5, timeoutSeconds: 1, rerun }).line,
-    'Estimate: one test run takes 0.3 s (the control run); 2 runs to go (1 control break, 1 mutant): about 1.0 s in all, within the 1 s for everything (--timeout): all of them fit');
-  // 50 s spent, 23 runs of 45 s to go: 12 fit in the 550 s left, the control breaks first, so 9 mutants;
-  // all of them with the runs half again as long as estimated: 50 + 23 * 45 * 1.5 = 1602.5.
-  const short = estimate({ run: 45, controls: 3, mutants: 20, spent: 50, timeoutSeconds: 600, rerun });
+test('the estimate: the runs to go at the control run\'s length, the time a run with a break gets, what fits, and what to change for all', () => {
+  const base = { run: 2, finished: true, controls: 3, mutants: 4, spent: 5, timeoutSeconds: 600, runTimeoutSeconds: null };
+  // No --run-timeout: a run with a break gets the control run's time x 1.5 + 10 s, rounded up.
+  assert.deepEqual(estimate(base), {
+    perRun: 13, total: 19,
+    line: 'Estimate: one test run takes 2.0 s (the control run); 7 runs to go (3 control breaks, 4 mutants), up to 13 s each'
+      + ' (the control run x 1.5 + 10 s, as --run-timeout is not set): about 19 s in all, within the 600 s for everything (--timeout): all of them fit',
+  });
+  assert.equal(estimate({ ...base, run: 2.1 }).perRun, 14);
+  // A --run-timeout a human set is kept as it is.
+  assert.deepEqual(estimate({ ...base, runTimeoutSeconds: 120 }), {
+    perRun: 120, total: 19,
+    line: 'Estimate: one test run takes 2.0 s (the control run); 7 runs to go (3 control breaks, 4 mutants), up to 120 s each (--run-timeout):'
+      + ' about 19 s in all, within the 600 s for everything (--timeout): all of them fit',
+  });
+  assert.match(estimate({ ...base, run: 0.25, controls: 1, mutants: 1, spent: 0.5, timeoutSeconds: 1 }).line,
+    /^Estimate: one test run takes 0\.3 s \(the control run\); 2 runs to go \(1 control break, 1 mutant\), up to 11 s each .*: about 1\.0 s in all, within the 1 s /);
+  // 50 s spent, 23 runs of 45 s to go: a run starts while time is left, 13 of them in the 550 s, the
+  // control breaks first, so 10 mutants; all of them with the runs half again as long: 50 + 23 * 45 * 1.5 = 1602.5.
+  const short = estimate({ ...base, run: 45, controls: 3, mutants: 20, spent: 50 });
   assert.equal(short.total, 1085);
-  assert.equal(short.line, 'Estimate: one test run takes 45 s (the control run); 23 runs to go (3 control breaks, 20 mutants): about 1085 s in all,'
-    + ' past the 600 s for everything (--timeout): 12 of the runs fit, so about 9 of the 20 mutants will be tried. For all of them: node mutate.js --timeout 1603');
-  // Fewer runs fit than there are control breaks: no mutant is tried.
-  assert.match(estimate({ run: 45, controls: 3, mutants: 20, spent: 50, timeoutSeconds: 100, rerun }).line, /: 1 of the runs fit, so about 0 of the 20 mutants will be tried\. /);
-  assert.match(estimate({ run: 10, controls: 1, mutants: 20, spent: 5, timeoutSeconds: 100, rerun }).line, /: 9 of the runs fit, so about 8 of the 20 mutants /);
-  // Past what --timeout takes, no command: fewer mutants.
-  assert.match(estimate({ run: 5000, controls: 1, mutants: 20, spent: 10, timeoutSeconds: 600, rerun }).line,
-    /For all of them: about 157510 s, past the 86400 s --timeout takes at most; lower --limit$/);
+  assert.equal(short.perRun, 78);
+  assert.match(short.line, /: about 1085 s in all, past the 600 s for everything \(--timeout\): the time left starts 13 of them, so about 10 of the 20 mutants will be tried\. For all of them, run it again with --timeout 1603$/);
+  // Rounded up: 10 + 21 * 10 * 1.5 = 325, and 10 + 21 * 10.01 * 1.5 = 325.3.
+  assert.match(estimate({ ...base, run: 10, controls: 1, mutants: 20, spent: 10, timeoutSeconds: 100 }).line, /: the time left starts 9 of them, so about 8 of the 20 mutants will be tried\. For all of them, run it again with --timeout 325$/);
+  assert.match(estimate({ ...base, run: 10.01, controls: 1, mutants: 20, spent: 10, timeoutSeconds: 100 }).line, /--timeout 326$/);
+  // Fewer runs start than there are control breaks, or none at all (the time went before the control run ended).
+  assert.match(estimate({ ...base, run: 45, controls: 3, mutants: 20, spent: 50, timeoutSeconds: 100 }).line, /: the time left starts 2 of them, so about 0 of the 20 mutants /);
+  assert.match(estimate({ ...base, run: 1.8, controls: 1, mutants: 2, spent: 2.5, timeoutSeconds: 2 }).line, /: the time left starts 0 of them, so about 0 of the 2 mutants /);
+  // Up to the most --timeout takes, and past it no option: fewer mutants.
+  assert.match(estimate({ ...base, run: 4114, controls: 1, mutants: 13, spent: 6 }).line, /For all of them, run it again with --timeout 86400$/);
+  assert.match(estimate({ ...base, run: 4114, controls: 1, mutants: 13, spent: 7 }).line, /For all of them it needs about 86401 s, past the 86400 s --timeout takes at most; lower --limit$/);
+  // A control run longer than the --run-timeout a human set: no break runs, and the options that let them.
+  const slow = estimate({ ...base, run: 150, controls: 1, mutants: 2, spent: 152, timeoutSeconds: 900, runTimeoutSeconds: 120 });
+  assert.deepEqual(slow, {
+    perRun: null, total: null,
+    line: 'Estimate: one test run takes 150 s (the control run), more than the 120 s --run-timeout gives a run with a break, so no break runs.'
+      + ' For all of them, run it again with --run-timeout 235',
+  });
+  assert.match(estimate({ ...base, run: 150, controls: 1, mutants: 20, spent: 152, runTimeoutSeconds: 120 }).line, /, so no break runs\. For all of them, run it again with --run-timeout 235 --timeout 4877$/);
+  assert.equal(estimate({ ...base, run: 120, runTimeoutSeconds: 120 }).perRun, 120);
+  // A control run the time for everything stopped: its length is not known.
+  assert.deepEqual(estimate({ ...base, run: 598.2, finished: false }), {
+    perRun: null, total: null,
+    line: 'Estimate: one test run takes more than 598 s: the control run did not finish in the 600 s for everything (--timeout), so no break runs.'
+      + ' For all of them, run it again with a longer --timeout',
+  });
 });
 
 test('three outcomes: failed tests kill a break, passing tests let it survive, did not run is never a kill (GW-61)', () => {
@@ -275,7 +303,13 @@ test('three outcomes: failed tests kill a break, passing tests let it survive, d
   const estimated = { total: 19, line: 'Estimate: about 19 s' };
   assert.match(report({ ...base, estimated, controls: 'Control breaks: 1 file', results: [r('killed')], took: 12.34 }).text,
     /\nControl: passed\nEstimate: about 19 s\nControl breaks: 1 file\n[^]*\nTime: 12 s in all \(estimated: about 19 s\)\nResult: every mutant was killed$/);
-  assert.match(report({ ...base, results: [], took: 0.04 }).text, /\nTime: 0\.0 s in all\nResult: did not run$/);
+  assert.match(report({ ...base, results: [r('did not run')], took: 0 }).text, /\n"Did not run" is never counted as caught \(GW-61 in \S+\)\.\nTime: 0\.0 s in all\nResult: did not run$/);
+  // Tenths below 10 s, whole seconds from there.
+  for (const [took, shown] of [[0.04, '0.0 s'], [9.94, '9.9 s'], [9.96, '10 s'], [10, '10 s'], [12.7, '13 s'], [599.4, '599 s']]) {
+    assert.match(report({ ...base, results: [r('killed')], took }).text, new RegExp(`\nTime: ${shown.replace('.', '\\.')} in all\n`), String(took));
+  }
+  // No time to compare with when no break could run.
+  assert.match(report({ ...base, estimated: { total: null, line: 'Estimate: none' }, results: [], took: 3 }).text, /\nTime: 3\.0 s in all\n/);
   assert.doesNotMatch(report({ ...base, results: [r('killed')] }).text, /Time|Estimate/);
   // Every hint names an entry of the catalog.
   const catalog = fs.readFileSync(path.join(__dirname, '..', '..', 'CATALOG.md'), 'utf8');

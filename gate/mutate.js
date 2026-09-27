@@ -271,14 +271,6 @@ function linkModules(home, from, to) {
   }
 }
 
-// This command again, with --timeout seconds in place of the one given: what the estimate proposes.
-function rerun(argv, seconds) {
-  const kept = [];
-  for (let i = 0; i < argv.length; i += 2) if (argv[i] !== '--timeout') kept.push(argv[i], argv[i + 1]);
-  const quote = (word) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`);
-  return ['node', process.argv[1], ...kept, '--timeout', String(seconds)].map(quote).join(' ');
-}
-
 // The last lines of a run's output, for a control run that was not green.
 function tail(output) {
   const all = outputLines(output || '');
@@ -350,28 +342,36 @@ async function run(argv) {
     const left = removeCopy();
     return finish({ header, results: [], notTried: 0, ...fields, problems: [...problems, ...(fields.problems || []), ...(left ? [left] : [])] });
   };
-  const left = () => Math.min(limits.runTimeoutSeconds, Math.ceil((deadline - Date.now()) / 1000));
-  if (left() < 1) {
+  const timeLeft = () => Math.ceil((deadline - Date.now()) / 1000);
+  if (timeLeft() < 1) {
     return done({ control: 'Control: not run', notTried: chosen.length, problems: [`no time was left for the control run: the time for everything is ${limits.timeoutSeconds} s (--timeout)`] });
   }
-  // The control: the tests on the unchanged copy must be green, or no break can be judged.
+  // The control: the tests on the unchanged copy must be green, or no break can be judged. It gets all
+  // the time left, and its length gives the estimate, said at once and again in the report.
+  const controlled = [...new Set(chosen.map((m) => m.file))];
   const controlStarted = Date.now();
-  const control = await runIn(left());
-  const controlSeconds = (Date.now() - controlStarted) / 1000;
+  const control = await runIn(timeLeft());
+  const estimated = estimate({
+    run: (Date.now() - controlStarted) / 1000, finished: !control.timedOut, controls: controlled.length, mutants: chosen.length,
+    spent: took(), timeoutSeconds: limits.timeoutSeconds, runTimeoutSeconds: limits.runTimeoutSeconds,
+  });
+  process.stdout.write(`${estimated.line}\n`);
   const green = verdict(control);
   const counts = green.counts ? `${green.counts.passed} passed, ${green.counts.failed} failed, ${green.counts.skipped} skipped` : 'no counts';
   const controlLine = `Control: ${choice.command} (${choice.source}) on the unchanged copy: ${green.outcome}${green.why ? ` - ${green.why}` : ''} (${counts})`;
   if (green.outcome !== 'passed') {
     const why = 'the tests are not green on an unchanged copy of the working tree, so no break can be judged'
       + ' (the copy holds the files git lists, with node_modules, .venv and venv linked)';
-    return done({ control: [controlLine, ...tail(control.output).map((line) => `  | ${line}`)].join('\n'), notTried: chosen.length, problems: [why] });
+    return done({ control: [controlLine, ...tail(control.output).map((line) => `  | ${line}`)].join('\n'), estimated, notTried: chosen.length, problems: [why] });
   }
-  // How long the rest will take, from the control run: said at once, and again in the report.
-  const controlled = [...new Set(chosen.map((m) => m.file))];
-  const estimated = estimate({
-    run: controlSeconds, controls: controlled.length, mutants: chosen.length, spent: took(), timeoutSeconds: limits.timeoutSeconds, rerun: (seconds) => rerun(argv, seconds),
-  });
-  process.stdout.write(`${estimated.line}\n`);
+  if (estimated.perRun === null) {
+    return done({
+      control: controlLine, estimated, notTried: chosen.length,
+      problems: [`one test run takes longer than the ${limits.runTimeoutSeconds} s --run-timeout gives a run with a break, so no break was run`],
+    });
+  }
+  // Each run with a break: the time the estimate gives it, within the time left.
+  const left = () => Math.min(estimated.perRun, timeLeft());
   // One file broken, the tests run, the file back as it was: the run.
   const runBroken = async (file, source, edit, seconds) => {
     const target = path.join(dir, file);

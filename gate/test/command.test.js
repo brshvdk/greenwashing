@@ -146,7 +146,7 @@ test('.greenwashing.json: "python" names the Python for the checks, and is absen
 });
 
 test('.greenwashing.json: "mutants" sets the mutation command\'s limits, and is absent unless set', () => {
-  assert.deepEqual(MUTANT_LIMITS, { limit: 20, timeoutSeconds: 600, runTimeoutSeconds: 120 });
+  assert.deepEqual(MUTANT_LIMITS, { limit: 20, timeoutSeconds: 600, runTimeoutSeconds: null });
   assert.deepEqual(readConfig('{"mutants": {"limit": 5, "timeoutSeconds": 900, "runTimeoutSeconds": 30}}').mutants, { limit: 5, timeoutSeconds: 900, runTimeoutSeconds: 30 });
   assert.deepEqual(readConfig('{"mutants": {}}').mutants, {});
   assert.equal('mutants' in readConfig('{"testCommand": "make test"}'), false);
