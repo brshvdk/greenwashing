@@ -1,12 +1,12 @@
 {
-  "commit": "46b3ce24f7163791d1d0f8ced32d469bb95d1766",
+  "commit": "bab215ac522de89a0171e1a3d6a5470e0a9a0f2c",
   "date": "2026-09-27",
-  "node": "v22.22.2",
+  "node": "v22.23.3",
   "python": "3.11.15",
   "summary": [
     {
       "label": "Fakes the tool claims to catch",
-      "cases": 23,
+      "cases": 25,
       "honest": false,
       "columns": {
         "tests": {
@@ -18,7 +18,7 @@
           "notRun": 0
         },
         "mutants": {
-          "red": 22,
+          "red": 25,
           "notRun": 0
         }
       }
@@ -44,7 +44,7 @@
     },
     {
       "label": "All fakes",
-      "cases": 30,
+      "cases": 32,
       "honest": false,
       "columns": {
         "tests": {
@@ -56,14 +56,14 @@
           "notRun": 0
         },
         "mutants": {
-          "red": 22,
+          "red": 25,
           "notRun": 2
         }
       }
     },
     {
       "label": "Honest twins",
-      "cases": 30,
+      "cases": 32,
       "honest": true,
       "columns": {
         "tests": {
@@ -272,6 +272,27 @@
       }
     },
     {
+      "id": "fake-in-place-sort-py",
+      "kind": "fake",
+      "gw": "GW-04",
+      "language": "python",
+      "claim": "caught",
+      "twin": "honest-in-place-sort-py",
+      "description": "Most urgent first sorts the list in place by name instead of priority, then reverses it; its test has one task, where every order is the same.",
+      "tests": {
+        "outcome": "green",
+        "why": "python3 -m unittest discover: exit code 0"
+      },
+      "gate": {
+        "outcome": "green",
+        "why": "tests passed - python3 -m unittest discover: 2 passed, 0 failed, 0 skipped"
+      },
+      "mutants": {
+        "outcome": "red",
+        "why": "mutants: 2 mutants survived - tasks.py:7: ordered.sort(key=lambda task: task[\"name\"])  ->  pass; tasks.py:8: ordered.reverse()  ->  pass"
+      }
+    },
+    {
       "id": "fake-mocha-js",
       "kind": "fake",
       "gw": "GW-50",
@@ -414,8 +435,29 @@
         "why": "tests passed - python3 -m unittest discover: 2 passed, 0 failed, 0 skipped"
       },
       "mutants": {
+        "outcome": "red",
+        "why": "mutants: 1 mutant survived - orders.py:6: return sorted(orders, key=lambda order: order[\"placed\"])  ->  return list(orders)"
+      }
+    },
+    {
+      "id": "fake-one-item-sort-js",
+      "kind": "fake",
+      "gw": "GW-04",
+      "language": "js",
+      "claim": "caught",
+      "twin": "honest-one-item-sort-js",
+      "description": "Leaders sort from the fewest points to the most; their test has one score, where every order is the same.",
+      "tests": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "npm test: exit code 0"
+      },
+      "gate": {
+        "outcome": "green",
+        "why": "tests passed - npm test: 2 passed, 0 failed, 0 skipped"
+      },
+      "mutants": {
+        "outcome": "red",
+        "why": "mutants: 1 mutant survived - scores.js:6: return [...scores].sort((a, b) => a.points - b.points).map((score) => score.name);  ->  return [...scores].map((score) => score.name);"
       }
     },
     {
@@ -894,6 +936,26 @@
       }
     },
     {
+      "id": "honest-in-place-sort-py",
+      "kind": "honest",
+      "gw": "GW-04",
+      "language": "python",
+      "twin": "fake-in-place-sort-py",
+      "description": "Most urgent first sorts the list in place by priority, then reverses it; its test has three tasks out of order.",
+      "tests": {
+        "outcome": "green",
+        "why": "python3 -m unittest discover: exit code 0"
+      },
+      "gate": {
+        "outcome": "green",
+        "why": "tests passed - python3 -m unittest discover: 2 passed, 0 failed, 0 skipped"
+      },
+      "mutants": {
+        "outcome": "green",
+        "why": "mutants: every mutant was killed"
+      }
+    },
+    {
       "id": "honest-mocha-js",
       "kind": "honest",
       "gw": "GW-50",
@@ -1027,6 +1089,26 @@
       "gate": {
         "outcome": "green",
         "why": "tests passed - python3 -m unittest discover: 2 passed, 0 failed, 0 skipped"
+      },
+      "mutants": {
+        "outcome": "green",
+        "why": "mutants: every mutant was killed"
+      }
+    },
+    {
+      "id": "honest-one-item-sort-js",
+      "kind": "honest",
+      "gw": "GW-04",
+      "language": "js",
+      "twin": "fake-one-item-sort-js",
+      "description": "Leaders sort from the most points to the fewest; their test has three scores out of order.",
+      "tests": {
+        "outcome": "green",
+        "why": "npm test: exit code 0"
+      },
+      "gate": {
+        "outcome": "green",
+        "why": "tests passed - npm test: 2 passed, 0 failed, 0 skipped"
       },
       "mutants": {
         "outcome": "green",
