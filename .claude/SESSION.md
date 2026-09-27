@@ -19,7 +19,8 @@ Step 1, PR 9 - the mutation command: a new kind of break (an order removed, GW-0
 - [x] bench results on a clean tree at 07ed3e4 (only the header changed); every ci.yml step on ba6872b on the three Nodes: green, 460 gate tests each, bench identical
 - [x] self-run with defaults on ba6872b: "one test run takes 219 s; 28 runs to go (8 control breaks, 20 mutants), up to 339 s each: about 6343 s in all, past the 600 s; the time left starts 2 of them, so about 0 of the 20 mutants; run it again with --timeout 9417"; took 600 s (estimated 600); 4 runs started, not 2 (the control breaks fail test files at load: about 111 s each against 219 s)
 - [x] full self-run with --timeout 9417 on ba6872b: all 28 runs fit ("about 6231 s in all"), took 5677 s (0.91 of the estimate); 8 control breaks run by the tests; 20 mutants: 17 killed, 3 survived. The survivor in this PR's code (no time left for the control run) is pinned by a test now; two are in older code (below)
-- [ ] every ci.yml step on the last commit; push; the owner opens the PR
+- [x] every ci.yml step on acdbb56 (the last code and test commit) on the three Nodes: green, 461 gate tests each, 7 bench tests, 141 unit tests, bench identical; leak check: repository references passed (gitleaks and patterns are CI's)
+- [ ] the owner opens the PR with the title and body from the report
 
 ## Decisions made (and why)
 - PR 9, chosen here: `order` goes after `comparison` and before `return` in `OPERATORS` (each file's first breaks and, under a short `--timeout`, what is tried first): guard, condition, comparison and order change what the code decides (a path, a bound, an order); a returned value is seen by nearly any test of the result; true/false and numbers are most often equivalent.
