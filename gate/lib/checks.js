@@ -25,6 +25,32 @@ function testFileKind(file) {
   return test ? 'js' : null;
 }
 
+// Which runners collect a file as tests by default (a narrower view of testFileKind(), per runner):
+// jest 30 (__tests__, *.test.*, *.spec.*; js, jsx, ts, tsx), vitest 5 (*.test.*, *.spec.*), node --test
+// (*.test.*, *-test.*, *_test.*, test-*, test.*, files under test/; js, cjs, mjs), unittest discover
+// (test*.py), pytest (test_*.py, *_test.py).
+const RUNNER_FILES = {
+  jest: (dirs, name) => /\.[jt]sx?$/.test(name) && (dirs.includes('__tests__') || /(?:^|\.)(?:test|spec)\.[jt]sx?$/.test(name)),
+  vitest: (dirs, name) => /\.(?:test|spec)\.[cm]?[jt]sx?$/.test(name),
+  'node --test': (dirs, name) => /\.[cm]?js$/.test(name) && (/[._-]test\.[cm]?js$/.test(name) || /^test(?:-.*)?\.[cm]?js$/.test(name) || dirs.includes('test')),
+  unittest: (dirs, name) => /^test.*\.py$/.test(name),
+  pytest: (dirs, name) => /^test_.*\.py$|_test\.py$/.test(name),
+};
+
+function collectedBy(file) {
+  const dirs = file.split('/');
+  const name = dirs.pop();
+  return Object.keys(RUNNER_FILES).filter((runner) => RUNNER_FILES[runner](dirs, name));
+}
+
+// A test that moves from one test file to another keeps running when every runner of the project
+// (runners: the kinds support() found; null when not known, so every runner) that collects its old
+// file collects the new one too: moved to a file the project's runner does not collect, it is removed.
+function carries(from, to, runners) {
+  const now = collectedBy(to);
+  return collectedBy(from).filter((runner) => !runners || runners.includes(runner)).every((runner) => now.includes(runner));
+}
+
 const CODE = 0;
 const TEXT = 1;
 const COMMENT = 2;
@@ -491,9 +517,10 @@ function jsTests(source) {
 // The tests a turn removed: before and after are the tests of the changed test files at the start
 // and now, [{file, name, body}] (jsTests(), or python_checks.py's list). A test stays when a test of
 // its name is still in its file (edited in place; of several with one name, those with the same body
-// pair first), or when any test now has its body (renamed, or moved to another test file). Returns
-// the tests of before that stay neither way.
-function removedTests(before, after) {
+// pair first), or when a test now has its body in its file or in one that keeps it running
+// (keeps(from, to), carries(): renamed, or moved to another test file). Returns the tests of before
+// that stay neither way.
+function removedTests(before, after, keeps = () => true) {
   const byName = (tests) => {
     const groups = new Map();
     for (const test of tests) {
@@ -503,7 +530,9 @@ function removedTests(before, after) {
     return groups;
   };
   const now = byName(after);
-  const bodies = new Set(after.map((test) => test.body).filter((body) => body !== null));
+  // Each body now, with the files it is in.
+  const bodies = new Map();
+  for (const test of after) if (test.body !== null) bodies.set(test.body, [...(bodies.get(test.body) || []), test.file]);
   const unmatched = [];
   for (const [key, old] of byName(before)) {
     const left = [...(now.get(key) || [])];
@@ -516,7 +545,8 @@ function removedTests(before, after) {
     // The others of the name are edited in place, one for one.
     unmatched.push(...rest.slice(left.length));
   }
-  return unmatched.filter((test) => test.body === null || !bodies.has(test.body));
+  return unmatched.filter((test) => test.body === null
+    || !(bodies.get(test.body) || []).some((file) => file === test.file || keeps(test.file, file)));
 }
 
 // Checks one JavaScript or TypeScript test file. changes: {added, gaps} from lineChanges();
@@ -748,5 +778,5 @@ function checkJs(source, changes, checks, before = null) {
 }
 
 module.exports = {
-  checkJs, jsTests, removedTests, testFileKind, mask, closing, initializerEnd, JS_EXTENSION, INITIALIZER,
+  checkJs, jsTests, removedTests, carries, collectedBy, testFileKind, mask, closing, initializerEnd, JS_EXTENSION, INITIALIZER,
 };

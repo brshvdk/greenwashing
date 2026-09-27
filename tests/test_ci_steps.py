@@ -404,6 +404,8 @@ class InstallNodeStepTest(StepCase):
         code, out, github_path = self.run_install(tarball, hashlib.sha256(tarball).hexdigest())
         self.assertEqual(code, 0, out)
         self.assertIn(f"https://nodejs.org/dist/v{FAKE_NODE_VERSION}/node-v{FAKE_NODE_VERSION}-linux-x64.tar.xz", self.args)
+        # -f: an HTTP error fails the download instead of saving the error page.
+        self.assertIn("-sSfL", self.args)
         bin_dir = os.path.join(self.runner_temp, "node", "bin")
         self.assertEqual(github_path, bin_dir + "\n")
         node = subprocess.run([os.path.join(bin_dir, "node")], capture_output=True, text=True)

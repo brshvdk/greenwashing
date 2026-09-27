@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"$CLAUDE_PROJECT_DIR/gate/hook.js\" session || echo '{\"systemMessage\":\"greenwashing: the gate is OFF - it needs Node.js 20 or newer, and node could not start it. No turn is checked until a human installs Node.js 20 or newer and restarts Claude Code.\"}'"
+            "command": "node \"$CLAUDE_PROJECT_DIR/gate/hook.js\" session || echo '{\"systemMessage\":\"greenwashing: the gate is OFF - node could not start it (node is not on PATH or too old to load it, or the files of the gate are missing). It needs Node.js 20 or newer on PATH; no turn is checked until a human sets that up and restarts Claude Code.\"}'"
           }
         ]
       }

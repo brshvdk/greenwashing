@@ -148,6 +148,7 @@ test('a broken case set does not run: no suffix, an empty part, no cases, a twin
   assert.match(broken(meta('fake-undo', { speed: 'fast' })).join('\n'), /unknown fields in case\.json: speed/);
   assert.match(broken(meta('fake-undo', { description: 'two\nlines' })).join('\n'), /the description must be one line/);
   assert.match(broken(meta('fake-undo', { prompt: ' ' })).join('\n'), /the prompt must be text/);
+  assert.match(broken(meta('fake-undo', { prompt: 5 })).join('\n'), /the prompt must be text/);
 });
 
 test('the gate\'s column: a block for the project is red, an allow green; a hook or the gate that failed did not run', () => {

@@ -195,14 +195,16 @@ test('.greenwashing.json: a config that cannot be trusted is an error, not a def
 
 test('the gate checks a project whose test command is one of the five kinds, or one a human set; not one with none or another kind', () => {
   const scripts = (all) => support(files({ 'package.json': JSON.stringify({ scripts: all }) }), false);
-  for (const test of ['node --test', 'node --import tsx --test src', 'jest --coverage', 'npx vitest run', 'node node_modules/.bin/jest',
-    'python3 -m pytest -q', 'py.test', 'python3 -m unittest discover', 'tsc && vitest']) {
-    assert.deepEqual(scripts({ test }), { supported: true }, test);
+  for (const [test, runners] of [['node --test', ['node --test']], ['node --import tsx --test src', ['node --test']], ['jest --coverage', ['jest']],
+    ['npx vitest run', ['vitest']], ['node node_modules/.bin/jest', ['jest']], ['python3 -m pytest -q', ['pytest']], ['py.test', ['pytest']],
+    ['python3 -m unittest discover', ['unittest']], ['tsc && vitest', ['vitest']], ['jest && node --test', ['jest', 'node --test']]]) {
+    assert.deepEqual(scripts({ test }), { supported: true, runners }, test);
   }
   // Through the scripts it runs: npm, yarn, pnpm; a loop of scripts ends.
-  for (const all of [{ test: 'npm run unit', unit: 'node --test' }, { test: 'npm run-script unit', unit: 'jest' }, { test: 'yarn unit', unit: 'vitest' },
-    { test: 'yarn run lint && pnpm run unit', lint: 'eslint .', unit: 'pytest' }, { test: 'pnpm unit', unit: 'npm run deep', deep: 'node --test' }]) {
-    assert.deepEqual(scripts(all), { supported: true }, JSON.stringify(all));
+  for (const [all, runners] of [[{ test: 'npm run unit', unit: 'node --test' }, ['node --test']], [{ test: 'npm run-script unit', unit: 'jest' }, ['jest']],
+    [{ test: 'yarn unit', unit: 'vitest' }, ['vitest']], [{ test: 'yarn run lint && pnpm run unit', lint: 'eslint .', unit: 'pytest' }, ['pytest']],
+    [{ test: 'pnpm unit', unit: 'npm run deep', deep: 'node --test' }, ['node --test']]]) {
+    assert.deepEqual(scripts(all), { supported: true, runners }, JSON.stringify(all));
   }
   // Another kind, a name inside a longer word or a file name, or a script that runs no runner.
   for (const all of [{ test: 'mocha' }, { test: 'go test ./...' }, { test: 'make test' }, { test: 'nodemon --test' }, { test: 'node --test-reporter=tap' },
@@ -215,10 +217,17 @@ test('the gate checks a project whose test command is one of the five kinds, or 
   assert.deepEqual(support(files(), false), { supported: false, why: 'no test command was found' });
   assert.deepEqual(support(files({ 'package.json': '{"scripts": {"test": "echo \\"Error: no test specified\\" && exit 1"}}' }), false),
     { supported: false, why: 'no test command was found' });
-  // Found without a script: pytest settings, Python tests; set by a human: whatever it is; a broken setup: checked, and did not run.
-  assert.deepEqual(support(files({ 'pytest.ini': '' }), false), { supported: true });
-  assert.deepEqual(support(files(), true), { supported: true });
-  assert.deepEqual(support(files({ '.greenwashing.json': '{"testCommand": "go test ./..."}', 'package.json': '{"scripts": {"test": "mocha"}}' }), false), { supported: true });
-  assert.deepEqual(support(files({ 'package.json': '{' }), false), { supported: true });
-  assert.deepEqual(support(files({ 'package.json': '{"scripts": {"test": "mocha"}}' }), true), { supported: true });
+  // Found without a script: pytest settings, Python tests.
+  assert.deepEqual(support(files({ 'pytest.ini': '' }), false), { supported: true, runners: ['pytest'] });
+  assert.deepEqual(support(files(), true), { supported: true, runners: ['unittest'] });
+  // Set by a human: whatever it is, with the runners it names, also through npm test and the scripts after it.
+  const human = (command, pkg = null) => support(files({ '.greenwashing.json': JSON.stringify({ testCommand: command }), 'package.json': pkg }), false);
+  assert.deepEqual(human('go test ./...', '{"scripts": {"test": "mocha"}}'), { supported: true, runners: null });
+  assert.deepEqual(human('python3 -I -m unittest discover -s tests && node --test gate/test/*.test.js'), { supported: true, runners: ['unittest', 'node --test'] });
+  assert.deepEqual(human('npm test', '{"scripts": {"test": "npm run unit", "unit": "vitest"}}'), { supported: true, runners: ['vitest'] });
+  assert.deepEqual(human('npm t', '{'), { supported: true, runners: null });
+  // A broken setup: checked, and did not run.
+  assert.deepEqual(support(files({ 'package.json': '{' }), false), { supported: true, runners: null });
+  assert.deepEqual(support(files({ 'package.json': '{"scripts": {"test": "mocha"}}' }), true), { supported: true, runners: null });
 });
+

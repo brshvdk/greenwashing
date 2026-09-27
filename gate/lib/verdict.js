@@ -112,8 +112,8 @@ function blockReason(run, result) {
     parts.push(`See each entry in ${CATALOG}`);
     if (run.findings.length) {
       parts.push('Fix the tests. What is meant stays red until a human accepts it: between turns, a human can turn a check off in '
-        + 'the project\'s .greenwashing.json, for example {"checks": {"skips": false}} (skips - it turns off the check of removed tests too -, '
-        + 'assertions, selfComparisons).');
+        + 'the project\'s .greenwashing.json, for example {"checks": {"skips": false}} (skips, assertions, selfComparisons; skips also turns '
+        + 'off the check of removed tests).');
     }
     if (removed.length) {
       parts.push(`Put the tests back, or leave the removal to the user: a turn whose prompt from the user says "${PERMISSION_WORDS}" may remove `
@@ -168,7 +168,8 @@ function decide(runs, results, state, stopHookActive) {
       message: `greenwashing: ${run.kind ? 'CHECKS' : 'TESTS'} DID NOT PASS - WORK NOT ACCEPTED. The gate sent the agent back ${blocks} times in a row `
         + `and now lets it stop so it does not loop. Last result: ${result.outcome}`
         + `${result.why ? ` - ${result.why}` : ''} (${run.command}${place(run)}).`
-        + `${run.kind === 'config' ? ' The changed settings still block after the next prompt: undo the change, or edit the file between turns to make it yours.' : ''}`,
+        + `${run.kind === 'config' ? ' The changed settings still block after the next prompt: undo the change, or edit the file between turns to make it yours.' : ''}`
+        + `${run.removed && run.removed.length ? ` The removed tests still block after the next prompt: put them back, or write "${PERMISSION_WORDS}" in the prompt to let that turn remove them.` : ''}`,
       state: { blocks: 0 },
     };
   }

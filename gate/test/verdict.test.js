@@ -230,13 +230,18 @@ test('removed tests block with each name and GW-17, at most twenty listed, and s
   const reason = blockReason(checks, result);
   assert.match(reason, /^greenwashing gate: this turn removed tests - you cannot finish yet\.\nRemoved tests /);
   assert.match(reason, /\n- a\.test\.js: 'test 20' \(GW-17\)\n- and 2 more\nSee each entry in /);
-  assert.doesNotMatch(reason, /test 21|Found in the test lines/);
+  assert.doesNotMatch(reason, /test 21|Found in the test lines|Fix the tests/);
   assert.match(reason, /the user says "allow test removal" may remove tests/);
   // With findings too: both lists, both how-tos, and the why counts both.
   const both = { ...checks, removed: removed.slice(0, 1), findings: [{ file: 'a.test.js', line: 3, gw: 'GW-18', what: 'the test has no assertion' }] };
   assert.equal(verdict(both).why, '1 problem in the test lines this turn added or changed; 1 test removed');
   assert.match(blockReason(both, verdict(both)),
-    /^greenwashing gate: the changed tests can pass without testing anything, and this turn removed tests - you cannot finish yet\.\nFound [^\n]*\n- a\.test\.js:3: [^\n]*\nRemoved tests [^\n]*\n- a\.test\.js: 'test 1' \(GW-17\)\nSee each entry in \S+\nFix the tests\.[^\n]*it turns off the check of removed tests too[^\n]*\nPut the tests back/);
+    /^greenwashing gate: the changed tests can pass without testing anything, and this turn removed tests - you cannot finish yet\.\nFound [^\n]*\n- a\.test\.js:3: [^\n]*\nRemoved tests [^\n]*\n- a\.test\.js: 'test 1' \(GW-17\)\nSee each entry in \S+\nFix the tests\.[^\n]*skips also turns off the check of removed tests[^\n]*\nPut the tests back/);
+  // The release, which the user reads, says how the user allows the removal; one for other findings does not.
+  assert.match(decide([checks], [result], { blocks: 3 }, true).message,
+    /WORK NOT ACCEPTED\. .*Last result: failed - 22 tests removed \(greenwashing checks\)\. The removed tests still block after the next prompt: put them back, or write "allow test removal" in the prompt to let that turn remove them\.$/);
+  const skipOnly = { ...both, removed: [] };
+  assert.doesNotMatch(decide([skipOnly], [verdict(skipOnly)], { blocks: 3 }, true).message, /allow test removal/);
 });
 
 test('the line of an accepted turn names the tests removed with the user\'s permission, at most ten', () => {

@@ -13,9 +13,9 @@ const MAX_TIMEOUT_SECONDS = 3600;
 const MIN_NODE = 20;
 // Why the gate is not running (found: what was found instead), for the user; hooks/hooks.json and
 // .claude/settings.json print it with NO_NODE when node cannot start the gate at all.
-const NO_NODE = 'node could not start it';
-const gateOff = (found) => `greenwashing: the gate is OFF - it needs Node.js ${MIN_NODE} or newer, and ${found}. `
-  + `No turn is checked until a human installs Node.js ${MIN_NODE} or newer and restarts Claude Code.`;
+const NO_NODE = 'node could not start it (node is not on PATH or too old to load it, or the files of the gate are missing)';
+const gateOff = (found) => `greenwashing: the gate is OFF - ${found}. It needs Node.js ${MIN_NODE} or newer on PATH; `
+  + 'no turn is checked until a human sets that up and restarts Claude Code.';
 const CONFIG_KEYS = ['testCommand', 'timeoutSeconds', 'checks', 'python', 'mutants'];
 // The mutation command's limits (gate/mutate.js): how many breaks, the time for everything, and the
 // time for one test run; "mutants" in the settings and the command's options change them.
@@ -147,13 +147,27 @@ const RUNNER_NAMES = 'pytest, unittest, jest, vitest and node --test';
 // yarn X, yarn run X, pnpm X, pnpm run X.
 const SCRIPT_CALL = /(?<![\w.-])(?:npm\s+t(?:est)?(?![\w:.-])|(?:npm\s+run(?:-script)?|yarn(?:\s+run)?|pnpm(?:\s+run)?)\s+([\w:.-]+))/g;
 
-// The runners a script of package.json names, itself or through the scripts it runs.
-function runnersIn(scripts, name, seen = new Set()) {
-  if (seen.has(name) || typeof scripts[name] !== 'string') return [];
-  seen.add(name);
-  const found = RUNNERS.filter(([, pattern]) => pattern.test(scripts[name])).map(([kind]) => kind);
-  for (const call of scripts[name].matchAll(SCRIPT_CALL)) found.push(...runnersIn(scripts, call[1] || 'test', seen));
-  return found;
+// The runners a command names, itself or through the scripts of package.json it runs (scripts);
+// seen: the scripts already read.
+function runnersIn(text, scripts, seen = new Set()) {
+  const found = RUNNERS.filter(([, pattern]) => pattern.test(text)).map(([kind]) => kind);
+  for (const call of text.matchAll(SCRIPT_CALL)) {
+    const name = call[1] || 'test';
+    if (seen.has(name) || typeof scripts[name] !== 'string') continue;
+    seen.add(name);
+    found.push(...runnersIn(scripts[name], scripts, seen));
+  }
+  return [...new Set(found)];
+}
+
+// The scripts of package.json, or none when it is missing or broken.
+function packageScripts(text) {
+  try {
+    const { scripts } = JSON.parse(withoutBom(text));
+    return scripts !== null && typeof scripts === 'object' ? scripts : {};
+  } catch {
+    return {};
+  }
 }
 
 // Whether the gate can check a project, from its files at the start of the turn (as chooseCommand()
@@ -161,15 +175,19 @@ function runnersIn(scripts, name, seen = new Set()) {
 // usual, and no counts is did not run); a command found by itself counts when it runs one of RUNNERS:
 // pytest settings, Python tests (unittest), or a test script of package.json that names one, itself
 // or through the scripts it runs. No test command, or a script of another kind (mocha, go test), does
-// not. A broken setup counts: the gate says how to fix it. Returns {supported: true} or {supported:
-// false, why}.
+// not. A broken setup counts: the gate says how to fix it. Returns {supported: true, runners} (the
+// kinds the command runs, null when it names none) or {supported: false, why}.
 function support(files, hasPythonTests) {
   const choice = chooseCommand(files, hasPythonTests);
   if (choice.none) return { supported: false, why: 'no test command was found' };
-  if (choice.source !== 'package.json scripts.test') return { supported: true };
-  const { scripts } = JSON.parse(withoutBom(files['package.json']));
-  if (runnersIn(scripts, 'test').length) return { supported: true };
-  return { supported: false, why: `the test command npm test runs ${JSON.stringify(scripts.test)}` };
+  const scripts = files['package.json'] === null ? {} : packageScripts(files['package.json']);
+  const named = (found) => ({ supported: true, runners: found.length ? found : null });
+  if (choice.error) return named([]);
+  if (choice.source === CONFIG_FILE) return named(runnersIn(choice.command, scripts));
+  if (choice.source === 'pytest configured') return named(['pytest']);
+  if (choice.source === 'Python project') return named(['unittest']);
+  const found = runnersIn(scripts.test, scripts, new Set(['test']));
+  return found.length ? named(found) : { supported: false, why: `the test command npm test runs ${JSON.stringify(scripts.test)}` };
 }
 
 // The line of a turn in a project the gate cannot check.

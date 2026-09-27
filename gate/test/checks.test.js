@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  checkJs, jsTests, removedTests, testFileKind, mask,
+  checkJs, jsTests, removedTests, carries, collectedBy, testFileKind, mask,
 } = require('../lib/checks');
 const { lineChanges } = require('../lib/diff');
 
@@ -640,6 +640,33 @@ test('removedTests: a test no changed test file has any more is removed; renamed
   assert.equal(removedTests(within('t.test.js', f + g), within('t.test.js', "test('x', () => { expect(h()).toBe(3); });\n")).length, 1);
   // A todo has no body: only its name keeps it.
   assert.deepEqual(named(removedTests(within('t.test.js', "it.todo('later');\n"), within('t.test.js', "it.todo('soon');\n"))), ["t.test.js: 'later'"]);
+  // A name keeps a test only in its own file: one of that name in another file with another body does not.
+  assert.deepEqual(named(removedTests(within('a.test.js', f), within('b.test.js', g))), ["a.test.js: 'x'"]);
+  // A body keeps a test only in a file that keeps it running (keeps), or in its own file.
+  const toSpec = [...within('a.test.js', adds), ...within('a.spec.js', "test('subtracts', () => { expect(sub(3, 2)).toBe(1); });\n")];
+  assert.deepEqual(named(removedTests(before, toSpec, () => false)), ["a.test.js: 'subtracts'"]);
+  assert.deepEqual(removedTests(before, toSpec, (from, to) => from === 'a.test.js' && to === 'a.spec.js'), []);
+  assert.deepEqual(removedTests(before, within('a.test.js', a.replace("'adds'", "'sums'")), () => false), []);
+});
+
+test('collectedBy: the runners that collect a file by default; carries: a move keeps a test where the project\'s runners still collect it', () => {
+  const kinds = {
+    'a.test.js': ['jest', 'vitest', 'node --test'], 'a.spec.js': ['jest', 'vitest'], 'test/a.js': ['node --test'], '__tests__/a.js': ['jest'],
+    'a-test.js': ['node --test'], 'a_test.mjs': ['node --test'], 'test-a.cjs': ['node --test'], 'test.js': ['jest', 'node --test'],
+    'a.test.ts': ['jest', 'vitest'], 'a.spec.mts': ['vitest'], 'src/__tests__/a.tsx': ['jest'], 'test_a.py': ['unittest', 'pytest'],
+    'a_test.py': ['pytest'], 'tests.py': ['unittest'], 'a.js': [], 'test_a.txt': [],
+  };
+  for (const [file, runners] of Object.entries(kinds)) assert.deepEqual(collectedBy(file), runners, file);
+  assert.equal(carries('a.test.js', 'a.spec.js', ['node --test']), false);
+  assert.equal(carries('a.test.js', 'a.spec.js', ['jest']), true);
+  assert.equal(carries('a.test.js', 'a.spec.js', null), false);
+  assert.equal(carries('a.test.js', '__tests__/a.js', ['jest']), true);
+  assert.equal(carries('test/a.js', 'b.test.js', null), true);
+  assert.equal(carries('test_a.py', 'a_test.py', ['unittest']), false);
+  assert.equal(carries('test_a.py', 'a_test.py', ['pytest']), true);
+  assert.equal(carries('test_a.py', 'helpers.py', ['pytest']), false);
+  // A file no runner of the project collects did not run: anywhere is as good.
+  assert.equal(carries('a.spec.js', 'b.js', ['node --test']), true);
 });
 
 test('python_checks.py lists the tests of a text with their classes; a start text Python cannot read has none', () => {
@@ -664,4 +691,15 @@ test('python_checks.py lists the tests of a text with their classes; a start tex
   assert.deepEqual(out.errors.map((one) => one.file), ['test_d.py']);
   assert.notEqual(list([{ key: 'e', file: 'test_e.py', text: method.replace('3)', '4)').replace(/^ {4}/gm, ''), start: false }]).tests.e[0].body,
     list([{ key: 'f', file: 'test_f.py', text: method.replace(/^ {4}/gm, ''), start: false }]).tests.f[0].body);
+  // The parameters are part of the body: two tests that differ only by their fixtures are two tests.
+  const fixtures = list([{ key: 'g', file: 'test_g.py', text: 'def test_a(tmp_path):\n    assert f()\n\n\ndef test_b(capsys):\n    assert f()\n', start: false }]).tests.g;
+  assert.notEqual(fixtures[0].body, fixtures[1].body);
+  // A file both checked and listed that Python cannot read is named once; a start text Python
+  // refuses (a NUL byte) has no tests.
+  const both = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+    input: JSON.stringify({ files: [{ file: 'test_d.py', text: 'def test_(:\n', added: [1], gaps: [], checks: ALL }], list: [{ key: 'd', file: 'test_d.py', text: 'def test_(:\n', start: false }], entries: CHECKS }),
+    encoding: 'utf8',
+  });
+  assert.deepEqual(JSON.parse(both.stdout).errors.map((one) => one.file), ['test_d.py']);
+  assert.deepEqual(list([{ key: 'n', file: 'test_n.py', text: 'def test_a():\n    pass\n\0', start: true }]).tests.n, []);
 });
