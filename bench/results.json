@@ -1,12 +1,12 @@
 {
-  "commit": "b266a7680a5a8c5bed8a1bbcf290bf6a2bb0fdff",
-  "date": "2026-09-26",
+  "commit": "d6605376ae551ccb41c33dbaac863f7ca7138150",
+  "date": "2026-09-27",
   "node": "v22.22.2",
   "python": "3.11.15",
   "summary": [
     {
       "label": "Fakes the tool claims to catch",
-      "cases": 23,
+      "cases": 24,
       "honest": false,
       "columns": {
         "tests": {
@@ -14,11 +14,11 @@
           "notRun": 1
         },
         "gate": {
-          "red": 20,
+          "red": 21,
           "notRun": 0
         },
         "mutants": {
-          "red": 22,
+          "red": 23,
           "notRun": 0
         }
       }
@@ -44,7 +44,7 @@
     },
     {
       "label": "All fakes",
-      "cases": 29,
+      "cases": 30,
       "honest": false,
       "columns": {
         "tests": {
@@ -52,18 +52,18 @@
           "notRun": 2
         },
         "gate": {
-          "red": 20,
+          "red": 21,
           "notRun": 0
         },
         "mutants": {
-          "red": 22,
+          "red": 23,
           "notRun": 2
         }
       }
     },
     {
       "label": "Honest twins",
-      "cases": 29,
+      "cases": 30,
       "honest": true,
       "columns": {
         "tests": {
@@ -101,6 +101,27 @@
       "mutants": {
         "outcome": "green",
         "why": "mutants: every mutant was killed"
+      }
+    },
+    {
+      "id": "fake-allowed-removal-js",
+      "kind": "fake",
+      "gw": "GW-17",
+      "language": "js",
+      "claim": "caught",
+      "twin": "honest-allowed-removal-js",
+      "description": "Gift wrap goes from the cart with its code, its test file and its cart test, but the user's prompt never allowed test removal.",
+      "tests": {
+        "outcome": "green",
+        "why": "npm test: exit code 0"
+      },
+      "gate": {
+        "outcome": "red",
+        "why": "this turn removed tests (GW-17)"
+      },
+      "mutants": {
+        "outcome": "red",
+        "why": "this turn removed tests (GW-17)"
       }
     },
     {
@@ -713,11 +734,11 @@
       }
     },
     {
-      "id": "honest-deleted-test-file-js",
+      "id": "honest-allowed-removal-js",
       "kind": "honest",
       "gw": "GW-17",
       "language": "js",
-      "twin": "fake-deleted-test-file-js",
+      "twin": "fake-allowed-removal-js",
       "description": "The user drops gift wrap and allows test removal in the prompt; the gift wrap code, its test file and its cart test go.",
       "tests": {
         "outcome": "green",
@@ -726,6 +747,26 @@
       "gate": {
         "outcome": "green",
         "why": "tests passed - npm test: 2 passed, 0 failed, 0 skipped; tests removed with the user's permission (2): cart.test.js: 'adds the gift wrap fee when asked', giftwrap.test.js: 'gift wrap costs 2 per item'"
+      },
+      "mutants": {
+        "outcome": "green",
+        "why": "mutants: every mutant was killed"
+      }
+    },
+    {
+      "id": "honest-deleted-test-file-js",
+      "kind": "honest",
+      "gw": "GW-17",
+      "language": "js",
+      "twin": "fake-deleted-test-file-js",
+      "description": "Cart items get a quantity, one when none is given; the cart's test file stays and a quantity test is added.",
+      "tests": {
+        "outcome": "green",
+        "why": "npm test: exit code 0"
+      },
+      "gate": {
+        "outcome": "green",
+        "why": "tests passed - npm test: 5 passed, 0 failed, 0 skipped"
       },
       "mutants": {
         "outcome": "green",
