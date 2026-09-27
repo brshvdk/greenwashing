@@ -8,14 +8,18 @@ const vm = require('node:vm');
 const { mask, closing, initializerEnd, testFileKind, JS_EXTENSION, INITIALIZER } = require('./checks');
 const { CATALOG } = require('./verdict');
 const { splitLines } = require('./diff');
+const { MUTANT_MAX } = require('./command');
 
-// The kinds of break, in the order they are tried at one place.
-const OPERATORS = ['guard', 'condition', 'comparison', 'return', 'boolean', 'number'];
+// The kinds of break, in the order they are tried at one place and in the order each file's first
+// breaks are chosen: first what decides a path, a bound or an order, then a returned value (which
+// nearly any test of the result sees), then true and false and numbers (the most often equivalent).
+const OPERATORS = ['guard', 'condition', 'comparison', 'order', 'return', 'boolean', 'number'];
 // What a surviving break of each kind means, and what to do: the catalog entry and a hint.
 const HINTS = {
   guard: ['GW-02', 'the tests pass without this guard: add a test whose input the guard must stop, and check that it is stopped'],
   condition: ['GW-04', 'the tests pass with this condition turned around: no case makes it decide the result; add one on each side'],
   comparison: ['GW-04', 'the tests pass with this comparison turned around: add cases on both sides of it, and at the edge'],
+  order: ['GW-04', 'the tests pass with this sort or reverse removed: in no case does the result depend on the order; add a case with two or more items out of order'],
   return: ['GW-04', 'the tests pass when this returns nothing: check the value it returns'],
   boolean: ['GW-04', 'the tests pass with this true and false swapped: add a case where the value decides the result'],
   number: ['GW-11', 'the tests pass with this number one higher: the cases do not tell the two values apart; add one at the value'],
@@ -139,6 +143,12 @@ function jsMutants(source, changed) {
   // (a < b): TypeScript generics, JSX tags (also a tag's > on a line of its own) and attributes before
   // a > are left alone.
   for (const m of code.matchAll(/(?<=[\w$)\]][ \t]+)(===|!==|==|!=|<=|>=|<|>)(?=[ \t]+[\w$(![\-+.'"`])/g)) add('comparison', m.index, m.index + m[1].length, FLIP[m[1]]);
+  // A sort or a reverse removed with its call (.sort(...), .toSorted(...), .reverse(), .toReversed()):
+  // the items stay in the order they came in. Not the last dot of a spread, not a method of super.
+  for (const m of code.matchAll(/(?<!\.|\bsuper\s*)\??\.(?:sort|toSorted|reverse|toReversed)\s*\(/g)) {
+    const close = closing(code, m.index + m[0].length - 1);
+    if (close !== -1) add('order', m.index, close + 1, '');
+  }
   // A returned value replaced with null.
   for (const m of code.matchAll(/(?<![\w$.])return\b[ \t]*/g)) {
     const from = m.index + m[0].length;
@@ -295,14 +305,41 @@ function spread(list) {
   return out;
 }
 
-// At most limit of the breaks, the same ones for the same code, shown in the order of file and
-// place. Every file gets a break before any gets a second, and in each file every kind before any
-// gets a second: many numbers in one file do not crowd out a guard in another. The breaks of one kind
-// in one file are spread over the file.
+// At most limit of the breaks, the same ones for the same code, in the order they are tried (the
+// report shows them in the order of file and place, byPlace). Every file gets a break before any gets
+// a second, and in each file every kind before any gets a second: many numbers in one file do not
+// crowd out a guard in another, and when the time runs out, the breaks not tried are the later turns.
+// The breaks of one kind in one file are spread over the file.
 function choose(mutants, limit) {
   const files = [...new Set(mutants.map((m) => m.file))].sort();
   const queues = files.map((file) => interleave(OPERATORS.map((op) => spread(mutants.filter((m) => m.file === file && m.op === op).sort(byPlace)))));
-  return interleave(queues).slice(0, limit).sort(byPlace);
+  return interleave(queues).slice(0, limit);
+}
+
+// Seconds as the report writes them: tenths below 10.
+const seconds = (value) => `${value < 10 ? value.toFixed(1) : Math.round(value)} s`;
+// The --timeout the estimate proposes lets the runs take half again as long as estimated.
+const SLACK = 1.5;
+
+// What the runs after the control run will take, known once it has run: {line, total}. run: the
+// seconds the control run took; controls and mutants: the runs to go (the control breaks run first);
+// spent: the seconds taken so far; timeoutSeconds: the time for everything; rerun(seconds): this
+// command again with --timeout seconds.
+function estimate({ run, controls, mutants, spent, timeoutSeconds, rerun }) {
+  const runs = controls + mutants;
+  const total = spent + runs * run;
+  const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+  const head = `Estimate: one test run takes ${seconds(run)} (the control run); ${plural(runs, 'run')} to go (${plural(controls, 'control break')}, `
+    + `${plural(mutants, 'mutant')}): about ${seconds(total)} in all`;
+  if (total <= timeoutSeconds) return { total, line: `${head}, within the ${timeoutSeconds} s for everything (--timeout): all of them fit` };
+  const fit = Math.max(0, Math.floor((timeoutSeconds - spent) / run));
+  const tried = Math.min(mutants, Math.max(0, fit - controls));
+  const needed = Math.ceil(spent + runs * run * SLACK);
+  return {
+    total,
+    line: `${head}, past the ${timeoutSeconds} s for everything (--timeout): ${fit} of the runs fit, so about ${tried} of the ${plural(mutants, 'mutant')} will be tried. `
+      + `For all of them: ${needed <= MUTANT_MAX ? rerun(needed) : `about ${needed} s, past the ${MUTANT_MAX} s --timeout takes at most; lower --limit`}`,
+  };
 }
 
 // The outcome of one break from the verdict of its test run: the tests failed - killed; they passed -
@@ -315,16 +352,17 @@ const NOT_EXERCISED = 'the tests passed with this file failing as soon as it run
 
 // The report and the exit code of a finished command: 0 every break killed, 1 a break survived, 2
 // nothing survived but something did not run (or nothing was tried). results: [{file, line, op,
-// change, outcome, why}]; controls: the line on the control breaks (none when they did not run);
-// unrun: [{file, count, outcome, why}], the breaks of a file not run after its control break -
-// outcome 'not exercised' (the tests passed with it) or 'did not run' (it did not finish) - each
-// counted as did not run.
-function report({ header, control, controls = null, results, unrun = [], notTried, problems }) {
+// change, outcome, why}]; the estimate after the control run (none when there was none); controls:
+// the line on the control breaks (none when they did not run); unrun: [{file, count, outcome, why}],
+// the breaks of a file not run after its control break - outcome 'not exercised' (the tests passed
+// with it) or 'did not run' (it did not finish) - each counted as did not run; took: the seconds the
+// command took (none: not said).
+function report({ header, control, estimated = null, controls = null, results, unrun = [], notTried, problems, took = null }) {
   const unrunCount = (outcome) => unrun.filter((u) => !outcome || u.outcome === outcome).reduce((sum, u) => sum + u.count, 0);
   const count = (outcome) => results.filter((r) => r.outcome === outcome).length + (outcome === 'did not run' ? unrunCount() : 0);
   const survived = results.filter((r) => r.outcome === 'survived');
   const unexercised = unrunCount('not exercised');
-  const lines = [...header, control, ...(controls ? [controls] : []),
+  const lines = [...header, control, ...(estimated ? [estimated.line] : []), ...(controls ? [controls] : []),
     `Mutants: ${results.length + unrunCount()} tried - ${count('killed')} killed, ${survived.length} survived, ${count('did not run')} did not run`
     + `${unexercised ? ` (${unexercised} not exercised)` : ''}${notTried ? `; ${notTried} not tried` : ''}`];
   for (const r of results) lines.push(`- ${r.outcome}: ${r.file}:${r.line}: ${r.change}${r.why ? ` (${r.why})` : ''}`);
@@ -339,12 +377,13 @@ function report({ header, control, controls = null, results, unrun = [], notTrie
   for (const problem of problems) lines.push(`Did not run: ${problem}`);
   const didNotRun = count('did not run') + notTried + problems.length;
   if (didNotRun) lines.push(`"Did not run" is never counted as caught (GW-61 in ${CATALOG}).`);
+  if (took !== null) lines.push(`Time: ${seconds(took)} in all${estimated ? ` (estimated: about ${seconds(estimated.total)})` : ''}`);
   const code = survived.length ? 1 : didNotRun || results.length === 0 ? 2 : 0;
   lines.push(`Result: ${code === 0 ? 'every mutant was killed' : code === 1 ? `${survived.length} mutant${survived.length === 1 ? '' : 's'} survived` : 'did not run'}`);
   return { text: lines.join('\n'), code };
 }
 
 module.exports = {
-  codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, controlBreak, stillParses, describe, choose, report,
+  codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, controlBreak, stillParses, describe, choose, byPlace, estimate, report,
   OUTCOMES, OPERATORS, HINTS, FLIP, DEPENDENCY_FOLDERS, NOT_EXERCISED, CONTROL_MESSAGE,
 };

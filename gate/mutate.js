@@ -23,7 +23,7 @@ const {
 const { verdict } = require('./lib/verdict');
 const { lines: outputLines } = require('./lib/parse');
 const {
-  codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, controlBreak, stillParses, describe, choose, report,
+  codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, controlBreak, stillParses, describe, choose, byPlace, estimate, report,
   OUTCOMES, OPERATORS, DEPENDENCY_FOLDERS, NOT_EXERCISED,
 } = require('./lib/mutants');
 const { rootFiles, readRootFiles, hasPythonTests, runTests, stopTests, OUTPUT_LIMIT } = require('./runner');
@@ -271,6 +271,14 @@ function linkModules(home, from, to) {
   }
 }
 
+// This command again, with --timeout seconds in place of the one given: what the estimate proposes.
+function rerun(argv, seconds) {
+  const kept = [];
+  for (let i = 0; i < argv.length; i += 2) if (argv[i] !== '--timeout') kept.push(argv[i], argv[i + 1]);
+  const quote = (word) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replace(/'/g, "'\\''")}'`);
+  return ['node', process.argv[1], ...kept, '--timeout', String(seconds)].map(quote).join(' ');
+}
+
 // The last lines of a run's output, for a control run that was not green.
 function tail(output) {
   const all = outputLines(output || '');
@@ -279,9 +287,13 @@ function tail(output) {
 }
 
 async function run(argv) {
+  const started = Date.now();
+  const took = () => (Date.now() - started) / 1000;
+  // Every report says how long the command took.
+  const finish = (fields) => report({ ...fields, took: took() });
   const options = parseArgs(argv);
   if (options.error) return { text: `${options.error}\n${USAGE}`, code: 2 };
-  const stop = (why) => report({ header: ['greenwashing mutants'], control: 'Control: not run', results: [], notTried: 0, problems: [why] });
+  const stop = (why) => finish({ header: ['greenwashing mutants'], control: 'Control: not run', results: [], notTried: 0, problems: [why] });
   const project = fs.realpathSync(path.resolve(options.project || '.'));
   let home;
   try {
@@ -324,11 +336,11 @@ async function run(argv) {
       + `${all.length} place${all.length === 1 ? '' : 's'} to break; ${Math.min(all.length, limits.limit)} tried at most (limit ${limits.limit})`,
   ];
   if (all.length === 0) {
-    return report({ header, control: 'Control: not run', results: [], notTried: 0, problems: [...problems, 'no place to break in the changed code lines of JavaScript, TypeScript or Python'] });
+    return finish({ header, control: 'Control: not run', results: [], notTried: 0, problems: [...problems, 'no place to break in the changed code lines of JavaScript, TypeScript or Python'] });
   }
   const chosen = choose(all, limits.limit);
   const choice = chooseCommand(rootFiles(project, settings), hasPythonTests(project));
-  if (choice.error) return report({ header, control: 'Control: not run', results: [], notTried: 0, problems: [...problems, choice.error] });
+  if (choice.error) return finish({ header, control: 'Control: not run', results: [], notTried: 0, problems: [...problems, choice.error] });
 
   const dir = makeCopy(home);
   const at = path.join(dir, rel);
@@ -336,14 +348,16 @@ async function run(argv) {
   // The report once the copy is gone: a copy that cannot be removed is said, and is did not run.
   const done = (fields) => {
     const left = removeCopy();
-    return report({ header, results: [], notTried: 0, ...fields, problems: [...problems, ...(fields.problems || []), ...(left ? [left] : [])] });
+    return finish({ header, results: [], notTried: 0, ...fields, problems: [...problems, ...(fields.problems || []), ...(left ? [left] : [])] });
   };
   const left = () => Math.min(limits.runTimeoutSeconds, Math.ceil((deadline - Date.now()) / 1000));
   if (left() < 1) {
     return done({ control: 'Control: not run', notTried: chosen.length, problems: [`no time was left for the control run: the time for everything is ${limits.timeoutSeconds} s (--timeout)`] });
   }
   // The control: the tests on the unchanged copy must be green, or no break can be judged.
+  const controlStarted = Date.now();
   const control = await runIn(left());
+  const controlSeconds = (Date.now() - controlStarted) / 1000;
   const green = verdict(control);
   const counts = green.counts ? `${green.counts.passed} passed, ${green.counts.failed} failed, ${green.counts.skipped} skipped` : 'no counts';
   const controlLine = `Control: ${choice.command} (${choice.source}) on the unchanged copy: ${green.outcome}${green.why ? ` - ${green.why}` : ''} (${counts})`;
@@ -352,6 +366,12 @@ async function run(argv) {
       + ' (the copy holds the files git lists, with node_modules, .venv and venv linked)';
     return done({ control: [controlLine, ...tail(control.output).map((line) => `  | ${line}`)].join('\n'), notTried: chosen.length, problems: [why] });
   }
+  // How long the rest will take, from the control run: said at once, and again in the report.
+  const controlled = [...new Set(chosen.map((m) => m.file))];
+  const estimated = estimate({
+    run: controlSeconds, controls: controlled.length, mutants: chosen.length, spent: took(), timeoutSeconds: limits.timeoutSeconds, rerun: (seconds) => rerun(argv, seconds),
+  });
+  process.stdout.write(`${estimated.line}\n`);
   // One file broken, the tests run, the file back as it was: the run.
   const runBroken = async (file, source, edit, seconds) => {
     const target = path.join(dir, file);
@@ -369,7 +389,6 @@ async function run(argv) {
   // nothing, so the file's breaks did not run either. Any other outcome: the tests run the file.
   const exercised = new Set();
   const unrun = new Map();
-  const controlled = [...new Set(chosen.map((m) => m.file))];
   let controlsTried = 0;
   for (const file of controlled) {
     const seconds = left();
@@ -387,7 +406,9 @@ async function run(argv) {
   const controls = `Control breaks: ${controlsTried} file${controlsTried === 1 ? '' : 's'}, each made to fail as soon as it runs - ${exercised.size} run by the tests, `
     + `${unexercised} not exercised${unrun.size > unexercised ? `, ${unrun.size - unexercised} did not finish` : ''}`
     + `${controlled.length > controlsTried ? `; ${controlled.length - controlsTried} not tried` : ''}`;
-  const results = [];
+  // The breaks in the order chosen, so that the time left goes to every file and every kind first;
+  // the report shows them in the order of file and place.
+  const outcomes = new Map();
   let notTried = 0;
   for (const mutant of chosen) {
     if (unrun.has(mutant.file)) continue;
@@ -399,13 +420,14 @@ async function run(argv) {
     }
     const source = files.find((f) => f.file === mutant.file).text;
     const result = verdict(await runBroken(mutant.file, source, mutant, seconds));
-    results.push({
+    outcomes.set(mutant, {
       file: named(mutant.file), op: mutant.op, ...describe(source, mutant),
       outcome: OUTCOMES[result.outcome], why: result.outcome === 'did not run' ? result.why : '',
     });
   }
+  const results = [...outcomes].sort(([a], [b]) => byPlace(a, b)).map(([, result]) => result);
   if (notTried) problems.push(`no time was left for ${notTried} of the breaks: the time for everything is ${limits.timeoutSeconds} s (--timeout)`);
-  return done({ control: controlLine, controls, results, unrun: [...unrun.values()], notTried });
+  return done({ control: controlLine, estimated, controls, results, unrun: [...unrun.values()], notTried });
 }
 
 async function main() {

@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const {
-  codeKind, addedLines, ownLines, jsMutants, fromLines, apply, controlBreak, stillParses, describe, choose, report, OUTCOMES, HINTS, NOT_EXERCISED, CONTROL_MESSAGE,
+  codeKind, addedLines, ownLines, jsMutants, fromLines, apply, controlBreak, stillParses, describe, choose, byPlace, estimate, report, OUTCOMES, HINTS, NOT_EXERCISED, CONTROL_MESSAGE,
 } = require('../lib/mutants');
 const { CATALOG } = require('../lib/verdict');
 
@@ -124,6 +124,29 @@ test('JavaScript returns and numbers that are left alone', () => {
   assert.deepEqual(ops('y = 1.5 + 0;'), ['number', 'number']);
 });
 
+test('JavaScript order: a sort or a reverse is removed with its call, and the items stay in the order they came in', () => {
+  const orders = (source, lines = everyLine(source)) => jsMutants(source, lines).filter((m) => m.op === 'order').map((m) => apply(source, m));
+  assert.deepEqual(orders('const out = items.sort((a, b) => a.placed - b.placed);'), ['const out = items;']);
+  assert.deepEqual(orders('return [...items].toSorted((a, b) => b - a).map(f);'), ['return [...items].map(f);']);
+  assert.deepEqual(orders('const r = xs.slice().reverse();'), ['const r = xs.slice();']);
+  assert.deepEqual(orders('const r = xs?.toReversed ();'), ['const r = xs;']);
+  // In place, as a statement of its own: nothing is left to do.
+  assert.deepEqual(orders('xs.sort();\nxs.reverse();\n'), ['xs;\nxs.reverse();\n', 'xs.sort();\nxs;\n']);
+  // A call over lines goes whole, and counts when any of its lines changed.
+  const chain = 'const r = items\n  .filter(Boolean)\n  .sort((a, b) => {\n    return a - b;\n  });\n';
+  assert.deepEqual(orders(chain, new Set([4])), ['const r = items\n  .filter(Boolean)\n  ;\n']);
+  assert.deepEqual(orders(chain, new Set([1, 2])), []);
+  assert.deepEqual(breaks('const out = items.sort(byDate);').filter(([op]) => op === 'order'), [['order', 'const out = items.sort(byDate);  ->  const out = items;']]);
+  // Not an order: a spread of a function named sort, a method of super, other names, strings and comments.
+  for (const source of ['const all = [...sort(xs)];', 'class A extends B { f() { return super.sort(); } }', 'obj.sorted(x); obj.reverseAll(); sortBy(x); sort(x);',
+    'const s = "x.sort()"; // y.reverse()', 'xs.sort = byName;']) {
+    assert.deepEqual(orders(source), [], source);
+  }
+  for (const source of ['const out = items.sort((a, b) => a - b);', 'xs.reverse();', 'return [...a].toSorted().map(f);']) {
+    for (const broken of orders(source)) assert.equal(stillParses('a.js', source, broken), true, broken);
+  }
+});
+
 test('every JavaScript break of this repository\'s own code still parses', () => {
   const files = ['gate/hook.js', 'gate/mutate.js', 'gate/runner.js', ...fs.readdirSync(path.join(__dirname, '..', 'lib')).filter((f) => f.endsWith('.js')).map((f) => `gate/lib/${f}`)];
   let count = 0;
@@ -168,10 +191,12 @@ test('the breaks tried: at most the limit, every file and every kind in turn, sp
   for (const file of ['b.js', 'a.js', 'c.py']) for (let i = 0; i < 10; i += 1) all.push({ file, start: i * 10, end: i * 10 + 1, op: 'number', text: '1' });
   const chosen = choose(all, 6);
   assert.equal(chosen.length, 6);
-  // Two of each file, the middle first, then the middle of the first half; shown in the order of file and place.
-  assert.deepEqual(chosen.map((m) => `${m.file}:${m.start}`), ['a.js:20', 'a.js:50', 'b.js:20', 'b.js:50', 'c.py:20', 'c.py:50']);
+  // Two of each file, in the order they are tried: each file's middle, then the middle of each file's first half.
+  assert.deepEqual(chosen.map((m) => `${m.file}:${m.start}`), ['a.js:50', 'b.js:50', 'c.py:50', 'a.js:20', 'b.js:20', 'c.py:20']);
+  // The report shows them in the order of file and place.
+  assert.deepEqual([...chosen].sort(byPlace).map((m) => `${m.file}:${m.start}`), ['a.js:20', 'a.js:50', 'b.js:20', 'b.js:50', 'c.py:20', 'c.py:50']);
   assert.deepEqual(choose([...all].reverse(), 6), chosen);
-  assert.deepEqual(choose(all.slice(0, 3), 20).map((m) => m.start), [0, 10, 20]);
+  assert.deepEqual(choose(all.slice(0, 3), 20).map((m) => m.start), [10, 0, 20]);
   // Many numbers in one file do not crowd out the breaks of another, nor a guard in the same file.
   const table = Array.from({ length: 200 }, (_, i) => ({ file: 'a.js', start: i * 3, end: i * 3 + 1, op: 'number', text: '1' }));
   const guard = { file: 'a.js', start: 900, end: 950, op: 'guard', text: '' };
@@ -182,11 +207,32 @@ test('the breaks tried: at most the limit, every file and every kind in turn, sp
   // A kind late in the order still gets a turn before a frequent early one gets a second.
   const comparisons = Array.from({ length: 50 }, (_, i) => ({ file: 'b.js', start: i * 5, end: i * 5 + 1, op: 'comparison', text: '<' }));
   assert.deepEqual(choose([...comparisons, { file: 'b.js', start: 999, end: 1003, op: 'boolean', text: 'false' }], 3).map((m) => m.op).sort(), ['boolean', 'comparison', 'comparison']);
-  // At one place, the kinds go in their order.
-  const one = ['number', 'guard', 'comparison', 'condition'].map((op) => ({ file: 'a.js', start: 0, end: 5, op, text: '' }));
-  assert.deepEqual(choose(one, 4).map((m) => m.op), ['guard', 'condition', 'comparison', 'number']);
+  // At one place, the kinds go in the order of the kinds.
+  const one = ['number', 'boolean', 'return', 'order', 'guard', 'comparison', 'condition'].map((op) => ({ file: 'a.js', start: 0, end: 5, op, text: '' }));
+  assert.deepEqual(choose(one, 7).map((m) => m.op), ['guard', 'condition', 'comparison', 'order', 'return', 'boolean', 'number']);
   // Every break of the list, each once, when the limit allows.
   assert.equal(new Set(choose(all, 100)).size, 30);
+});
+
+test('the estimate: the runs to go at the length of the control run, what fits in the time for everything, and the --timeout for all', () => {
+  const rerun = (seconds) => `node mutate.js --timeout ${seconds}`;
+  const fits = estimate({ run: 2, controls: 3, mutants: 4, spent: 5, timeoutSeconds: 600, rerun });
+  assert.deepEqual(fits, { total: 19, line: 'Estimate: one test run takes 2.0 s (the control run); 7 runs to go (3 control breaks, 4 mutants): about 19 s in all,'
+    + ' within the 600 s for everything (--timeout): all of them fit' });
+  assert.equal(estimate({ run: 0.25, controls: 1, mutants: 1, spent: 0.5, timeoutSeconds: 1, rerun }).line,
+    'Estimate: one test run takes 0.3 s (the control run); 2 runs to go (1 control break, 1 mutant): about 1.0 s in all, within the 1 s for everything (--timeout): all of them fit');
+  // 50 s spent, 23 runs of 45 s to go: 12 fit in the 550 s left, the control breaks first, so 9 mutants;
+  // all of them with the runs half again as long as estimated: 50 + 23 * 45 * 1.5 = 1602.5.
+  const short = estimate({ run: 45, controls: 3, mutants: 20, spent: 50, timeoutSeconds: 600, rerun });
+  assert.equal(short.total, 1085);
+  assert.equal(short.line, 'Estimate: one test run takes 45 s (the control run); 23 runs to go (3 control breaks, 20 mutants): about 1085 s in all,'
+    + ' past the 600 s for everything (--timeout): 12 of the runs fit, so about 9 of the 20 mutants will be tried. For all of them: node mutate.js --timeout 1603');
+  // Fewer runs fit than there are control breaks: no mutant is tried.
+  assert.match(estimate({ run: 45, controls: 3, mutants: 20, spent: 50, timeoutSeconds: 100, rerun }).line, /: 1 of the runs fit, so about 0 of the 20 mutants will be tried\. /);
+  assert.match(estimate({ run: 10, controls: 1, mutants: 20, spent: 5, timeoutSeconds: 100, rerun }).line, /: 9 of the runs fit, so about 8 of the 20 mutants /);
+  // Past what --timeout takes, no command: fewer mutants.
+  assert.match(estimate({ run: 5000, controls: 1, mutants: 20, spent: 10, timeoutSeconds: 600, rerun }).line,
+    /For all of them: about 157510 s, past the 86400 s --timeout takes at most; lower --limit$/);
 });
 
 test('three outcomes: failed tests kill a break, passing tests let it survive, did not run is never a kill (GW-61)', () => {
@@ -200,6 +246,8 @@ test('three outcomes: failed tests kill a break, passing tests let it survive, d
   assert.match(survived.text, /Mutants: 3 tried - 1 killed, 2 survived, 0 did not run\n/);
   assert.match(survived.text, /\nSurvived - the tests passed with the code broken:\n- a\.js:3: removed: if \(x\) return;\n {2}the tests pass without this guard: .*\. See GW-02 in /);
   assert.match(survived.text, /\n {2}the tests pass with this number one higher: .*\. See GW-11 in /);
+  const unordered = report({ ...base, results: [{ ...r('survived', 'order'), change: 'return sorted(xs)  ->  return list(xs)' }] });
+  assert.match(unordered.text, /\n- a\.js:3: return sorted\(xs\) {2}-> {2}return list\(xs\)\n {2}the tests pass with this sort or reverse removed: in no case does the result depend on the order; add a case with two or more items out of order\. See GW-04 in /);
   assert.match(survived.text, /Result: 2 mutants survived$/);
   const notRun = report({ ...base, results: [r('killed'), r('did not run')] });
   assert.equal(notRun.code, 2);
@@ -223,6 +271,12 @@ test('three outcomes: failed tests kill a break, passing tests let it survive, d
   const unknown = report({ ...base, results: [r('killed')], unrun: [{ file: 'c.js', count: 1, outcome: 'did not run', why: 'its control break did not run' }] });
   assert.match(unknown.text, /Mutants: 2 tried - 1 killed, 0 survived, 1 did not run\n[^]*\n- did not run: c\.js: 1 mutant not run - its control break did not run\n/);
   assert.equal(unknown.code, 2);
+  // The estimate after the control line, and the time taken before the result.
+  const estimated = { total: 19, line: 'Estimate: about 19 s' };
+  assert.match(report({ ...base, estimated, controls: 'Control breaks: 1 file', results: [r('killed')], took: 12.34 }).text,
+    /\nControl: passed\nEstimate: about 19 s\nControl breaks: 1 file\n[^]*\nTime: 12 s in all \(estimated: about 19 s\)\nResult: every mutant was killed$/);
+  assert.match(report({ ...base, results: [], took: 0.04 }).text, /\nTime: 0\.0 s in all\nResult: did not run$/);
+  assert.doesNotMatch(report({ ...base, results: [r('killed')] }).text, /Time|Estimate/);
   // Every hint names an entry of the catalog.
   const catalog = fs.readFileSync(path.join(__dirname, '..', '..', 'CATALOG.md'), 'utf8');
   for (const [gw] of Object.values(HINTS)) assert.match(catalog, new RegExp(`^### ${gw} `, 'm'));
@@ -256,6 +310,23 @@ test('each kind of break in Python, on changed lines only', () => {
   // A file that starts with a byte order mark.
   assert.deepEqual(python('\uFEFFx = 1\n').map(([op]) => op), ['number']);
   for (const [, text] of found) assert.equal(spawnSync('python3', ['-I', '-c', 'import ast, sys; ast.parse(sys.stdin.read())'], { input: text }).status, 0, text);
+});
+
+test('Python order: sorted(x, ...) becomes list(x), reversed(x) becomes x, and x.sort(...) or x.reverse() on its own becomes pass', () => {
+  const orders = (source, lines) => python(source, lines).filter(([op]) => op === 'order').map(([, text]) => text);
+  assert.deepEqual(orders('def f(orders):\n    return sorted(orders, key=lambda o: o["placed"], reverse=True)\n'), ['def f(orders):\n    return list(orders)\n']);
+  assert.deepEqual(orders('ids = list(reversed(ids))\n'), ['ids = list(ids)\n']);
+  // A reversed argument that is more than a name, a member, a call or an index keeps its brackets.
+  assert.deepEqual(orders('both = list(reversed(a + b))\n'), ['both = list((a + b))\n']);
+  assert.deepEqual(orders('first = sorted(x for x in xs)[0]\n'), ['first = list((x for x in xs))[0]\n']);
+  assert.deepEqual(orders('def f(xs):\n    xs.sort(key=len)\n    xs.reverse()\n    return xs\n'), [
+    'def f(xs):\n    pass\n    xs.reverse()\n    return xs\n', 'def f(xs):\n    xs.sort(key=len)\n    pass\n    return xs\n']);
+  // A statement over lines goes whole, and counts when any of its lines changed.
+  const long = 'def f(xs):\n    xs.sort(\n        key=len,\n    )\n    return xs\n';
+  assert.deepEqual(orders(long, [3]), ['def f(xs):\n    pass\n    return xs\n']);
+  assert.deepEqual(orders(long, [5]), []);
+  // Not an order: a sort whose value is used (it is None), no argument, a starred one reversed, inside an f-string.
+  for (const source of ['y = xs.sort()\n', 'y = sorted()\n', 'y = reversed(*a)\n', 'y = f"{sorted(a)}"\n', 'y = xs.sorted()\n']) assert.deepEqual(orders(source), [], source);
 });
 
 test('Python: an elif is no guard, a guard alone in its block becomes pass, f-strings and plain returns are left alone', () => {
