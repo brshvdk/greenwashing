@@ -144,6 +144,9 @@ test('JavaScript order: a sort or a reverse is removed with its call, and the it
     'const r = _.reverse(list);', 'const r = R.sort(byName, list);', 'const r = xs.toReversed(x);', 'const p = <p>Call xs.sort( first</p>;']) {
     assert.deepEqual(orders(source), [], source);
   }
+  // Arguments are counted in the code: a comment or a string in the brackets is none.
+  assert.deepEqual(orders('const r = xs.reverse(/* in place, once */);'), ['const r = xs;']);
+  assert.deepEqual(orders("items.sort(/* newest first, then by name */ (a, b) => by(a, b, 'x, y'));"), ['items;']);
   for (const source of ['const out = items.sort((a, b) => a - b);', 'xs.reverse();', 'return [...a].toSorted().map(f);']) {
     for (const broken of orders(source)) assert.equal(stillParses('a.js', source, broken), true, broken);
   }
@@ -247,6 +250,7 @@ test('the estimate: the runs to go at the control run\'s length, the time a run 
   // Fewer runs start than there are control breaks, or none at all (the time went before the control run ended).
   assert.match(estimate({ ...base, run: 45, controls: 3, mutants: 20, spent: 50, timeoutSeconds: 100 }).line, /: the time left starts 2 of them, so about 0 of the 20 mutants /);
   assert.match(estimate({ ...base, run: 1.8, controls: 1, mutants: 2, spent: 2.5, timeoutSeconds: 2 }).line, /: the time left starts 0 of them, so about 0 of the 2 mutants /);
+  assert.match(estimate({ ...base, run: 0.5, controls: 1, mutants: 2, spent: 3, timeoutSeconds: 2 }).line, /: the time left starts 0 of them, so about 0 of the 2 mutants /);
   // Up to the most --timeout takes (80 + 13 * 4110 * 1.5 + 6175 = 86400), and past it fewer mutants.
   assert.match(estimate({ ...base, run: 4110, controls: 1, mutants: 13, spent: 80 }).line, /For all of them, run it again with --timeout 86400$/);
   assert.match(estimate({ ...base, run: 4110, controls: 1, mutants: 13, spent: 81 }).line,
@@ -259,12 +263,17 @@ test('the estimate: the runs to go at the control run\'s length, the time a run 
       + ' For all of them, run it again with --run-timeout 235',
   });
   assert.match(estimate({ ...base, run: 150, controls: 1, mutants: 20, spent: 152, runTimeoutSeconds: 120 }).line, /, so no break runs\. For all of them, run it again with --run-timeout 235 --timeout 4887$/);
+  // Every run fits: only --run-timeout, however long all of them with a loop could take; at the edge too.
+  assert.match(estimate({ ...base, run: 3000, controls: 1, mutants: 20, spent: 3010, timeoutSeconds: 86400, runTimeoutSeconds: 120 }).line, /, so no break runs\. For all of them, run it again with --run-timeout 4510$/);
+  assert.match(estimate({ ...base, run: 150, controls: 1, mutants: 1, spent: 150, timeoutSeconds: 450, runTimeoutSeconds: 120 }).line, /, so no break runs\. For all of them, run it again with --run-timeout 235$/);
+  assert.match(estimate({ ...base, run: 28800, controls: 1, mutants: 1, spent: 28800, timeoutSeconds: 86400, runTimeoutSeconds: 120 }).line, /, so no break runs\. For all of them, run it again with --run-timeout 43210$/);
   assert.match(estimate({ ...base, run: 3000, controls: 5, mutants: 20, spent: 3010, timeoutSeconds: 3600, runTimeoutSeconds: 2000 }).line,
     /, so no break runs\. For all of them it needs about 115520 s, past the 86400 s --timeout takes at most: run it again with --run-timeout 4510 and a lower --limit$/);
   assert.equal(estimate({ ...base, run: 120, runTimeoutSeconds: 120 }).perRun, 120);
   // A control run that is not green: no break runs, and no option changes that.
   assert.deepEqual(estimate({ ...base, green: false }), { perRun: null, expected: null, line: 'Estimate: one test run takes 2.0 s (the control run), which is not green, so no break runs' });
-  // A control run the time for everything stopped: its length is not known.
+  // A control run the time for everything stopped: its length is not known, whatever --run-timeout says.
+  assert.match(estimate({ ...base, run: 200, finished: false, green: false, spent: 200.5, timeoutSeconds: 200, runTimeoutSeconds: 120 }).line, /^Estimate: one test run takes more than 200 s: the control run did not finish/);
   assert.deepEqual(estimate({ ...base, run: 598.2, finished: false, green: false }), {
     perRun: null, expected: null,
     line: 'Estimate: one test run takes more than 598 s: the control run did not finish in the 600 s for everything (--timeout), so no break runs.'

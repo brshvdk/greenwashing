@@ -632,8 +632,11 @@ test('a --run-timeout a human set is kept: shorter than the control run, no brea
   write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}` });
   const short = mutate(t, dir, ['--run-timeout', '1']);
   assert.equal(short.code, 2, short.out);
-  const [, control, needed] = /^Estimate: one test run takes ([\d.]+) s \(the control run\), more than the 1 s --run-timeout gives a run with a break, so no break runs\. For all of them, run it again with --run-timeout (\d+)$/m.exec(short.out) || [];
+  // Printed first, and again right after the control line.
+  const said = /^(Estimate: one test run takes ([\d.]+) s \(the control run\), more than the 1 s --run-timeout gives a run with a break, so no break runs\. For all of them, run it again with --run-timeout (\d+))\n/.exec(short.out) || [];
+  const [line, control, needed] = said.slice(1);
   assert.ok(control, short.out);
+  assert.ok(short.out.includes(`\nControl: sleep 1; ${NODE_CMD} (.greenwashing.json) on the unchanged copy: passed (2 passed, 0 failed, 0 skipped)\n${line}\nMutants: `), short.out);
   assert.ok([Math.ceil((Number(control) - 0.05) * 1.5 + 10), Math.ceil((Number(control) + 0.05) * 1.5 + 10)].includes(Number(needed)), `${needed} for ${control}`);
   assert.match(short.out, /\nMutants: 0 tried - 0 killed, 0 survived, 0 did not run; 4 not tried\n/);
   assert.match(short.out, /\nDid not run: one test run takes longer than the 1 s --run-timeout gives a run with a break, so no break was run\n/);
@@ -653,8 +656,9 @@ test('a control run the time for everything stops: its length is not known, and 
   write(dir, { 'cart.js': `${CART}${ADD}` });
   const run = mutate(t, dir, ['--timeout', '2']);
   assert.equal(run.code, 2, run.out);
-  assert.match(run.out, /^Estimate: one test run takes more than [\d.]+ s: the control run did not finish in the 2 s for everything \(--timeout\), so no break runs\. For all of them, run it again with a longer --timeout$/m);
+  assert.match(run.out, /^Estimate: one test run takes more than [\d.]+ s: the control run did not finish in the 2 s for everything \(--timeout\), so no break runs\. For all of them, run it again with a longer --timeout\n/);
   assert.match(run.out, /\nControl: .* on the unchanged copy: did not run - the command did not finish in \d s and was stopped \(no counts\)\n/);
+  assert.match(run.out, /\nDid not run: the tests are not green on an unchanged copy of the working tree, so no break can be judged/);
   assert.match(run.out, /\nTime: [\d.]+ s in all\nResult: did not run\n$/);
 });
 
