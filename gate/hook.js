@@ -524,7 +524,7 @@ async function onStop(input) {
           // Stays null: git cannot tell what the commit changed.
         }
         checked.push({
-          diff, settings: settingsIn(home, state.turn[tree], now, diff), adopted: state.adopted[tree] || {}, label: `the removed worktree ${name}`,
+          tree, diff, settings: settingsIn(home, state.turn[tree], now, diff), adopted: state.adopted[tree] || {}, label: `the removed worktree ${name}`,
           show: (f) => `${f} (last commit of the removed worktree ${name})`,
         });
       }
@@ -545,7 +545,7 @@ async function onStop(input) {
     if (split === null || split.code.length > 0 || edited === null || edited.length > 0) {
       pending.push(tree);
       checked.push({
-        diff, settings: edited, adopted: state.adopted[tree] || {}, label: path.relative(project, tree) || 'the project',
+        tree, diff, settings: edited, adopted: state.adopted[tree] || {}, label: path.relative(project, tree) || 'the project',
         show: (f) => path.relative(project, path.join(tree, f)),
       });
     } else docs += split.docs.length;
@@ -570,8 +570,15 @@ async function onStop(input) {
   const checks = recorded ? quickChecks(checked, config, project, deadline, state.allowRemoval, runners, path.relative(home, project))
     : { problem: prompted ? settingsProblem(checked) : null, permitted: [] };
   if (checks.problem) return settle(file, next, [checks.problem], active);
+  // A turn accepted with removals the user allowed: until a prompt takes a new start, the test files are
+  // measured as this Stop saw them, so a later Stop of this work (a continuation after another hook's
+  // block, a turn with no prompt) does not report those removals again.
+  const adopted = { ...next.adopted };
+  for (const [i, target] of checked.entries()) {
+    if (checks.adopt) adopted[target.tree] = { ...adopted[target.tree], ...checks.adopt[i] };
+  }
   const targets = [...pending.map((tree) => ({ dir: path.join(tree, path.relative(home, project)) })), ...removed];
-  const outcome = settle(file, next, await runAll(targets, project, home, deadline, settings), active, removedNote(checks.permitted));
+  const outcome = settle(file, next, await runAll(targets, project, home, deadline, settings), active, removedNote(checks.permitted), { adopted });
   if (!recorded && outcome.systemMessage) outcome.systemMessage += '; quick checks of changed tests not run (no start of the turn was recorded)';
   return outcome;
 }
@@ -612,7 +619,8 @@ function settingsProblem(checked) {
 // (config: the project's, read) turn them on. allowRemoval: the user's prompt lets this turn remove
 // tests; runners: the project's (support()), and place: the project's folder in its repository, for tests
 // moved to another file (carries(), from the project's folder, where the tests run). Returns
-// {problem: a red run or null, permitted: the tests removed with the user's permission}.
+// {problem: a red run or null, permitted: the tests removed with the user's permission, adopt: when there
+// are such tests, the changed test files of each target as they are now (null: gone or over TEXT_LIMIT)}.
 function quickChecks(checked, config, project, deadline, allowRemoval, runners, place) {
   const clear = { problem: null, permitted: [] };
   const settings = settingsProblem(checked);
@@ -631,6 +639,7 @@ function quickChecks(checked, config, project, deadline, allowRemoval, runners, 
   // The tests of the changed test files at the start (a file the user changed between turns as it was
   // then) and now, per target; Python files are listed by python_checks.py.
   const lists = checked.map(() => ({ before: [], after: [] }));
+  const current = checked.map(() => ({}));
   // Python texts to list, keyed by target, side and path; labels: the file name each list goes under.
   const listed = [];
   const labels = new Map();
@@ -639,6 +648,7 @@ function quickChecks(checked, config, project, deadline, allowRemoval, runners, 
       .map((f) => ({ f, kind: testFileKind(f), before: target.diff.before(f), text: target.diff.after(f) }));
     const deleted = tests.filter((t) => t.text === null && t.before !== null);
     for (const { f, kind, before, text } of tests) {
+      current[i][f] = text !== null && Buffer.byteLength(text) <= TEXT_LIMIT ? text : null;
       // A new test file that is a deleted one moved: read against it, and its tests keep that file's
       // names while the project's runners still collect them there.
       const moved = before === null && text !== null ? movedFrom(deleted.filter((t) => t.kind === kind), text) : null;
@@ -686,7 +696,7 @@ function quickChecks(checked, config, project, deadline, allowRemoval, runners, 
   const problem = findings.length || (removed.length && !allowRemoval)
     ? { kind: 'checks', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', findings, removed: allowRemoval ? [] : removed }
     : null;
-  return { problem, permitted };
+  return { problem, permitted, adopt: permitted.length ? current : null };
 }
 
 // A new test file that keeps, in order, at least half of its lines from a test file the turn
@@ -740,10 +750,11 @@ function pythonChecks(request, deadline, python) {
 // note: added to the line of a turn the gate accepts. A turn accepted ends the user's permission to remove
 // tests; one let go as WORK NOT ACCEPTED leaves what this Stop saw of the test files (ended), so that the
 // next prompt can tell the user's changes after it, and keeps the permission for that prompt to tell that
-// the turn's removals were allowed (a later Stop with no prompt uses both up, see onStop).
-function settle(file, state, runs, stopHookActive, note = '') {
+// the turn's removals were allowed (a later Stop with no prompt uses both up, see onStop). accepted: what
+// else a turn the gate accepts saves.
+function settle(file, state, runs, stopHookActive, note = '', accepted = {}) {
   const decision = decide(runs, runs.map(verdict), state, stopHookActive);
-  const ends = { block: {}, release: { ended: state.stopped }, allow: { allowRemoval: false } }[decision.action];
+  const ends = { block: {}, release: { ended: state.stopped }, allow: { allowRemoval: false, ...accepted } }[decision.action];
   saveState(file, { ...state, blocks: decision.state.blocks, accepted: decision.action === 'allow', turnStopped: true, ...ends });
   if (decision.action === 'block') return { decision: 'block', reason: decision.reason };
   return { systemMessage: decision.action === 'allow' ? `${decision.message}${note}` : decision.message };

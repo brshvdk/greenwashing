@@ -861,12 +861,37 @@ test('python_checks.py lists a test only under the name Python keeps, and withou
     .map((one) => one.name), ['TestFetch.test_fetch']);
   const [first, second] = list('def test_total():\n    cart = make()\n    assert cart.total() == 3\n\n\ndef test_sum():\n    cart = make()\n    assert cart.total() == 4\n');
   assert.notEqual(first.body, second.body);
-  // Tests a class inherits from classes of its file run under its name too; one it defines itself is its own.
+  // Tests a class a runner collects inherits from classes of its file run under its name too; one it defines
+  // itself is its own. Checks, which no runner collects, lists only what it defines.
   const mixin = list('import unittest\n\n\nclass Base:\n    def test_a(self):\n        assert f()\n\n\nclass Checks(Base):\n    def test_b(self):\n        assert g()\n\n\n'
     + 'class TestOne(Checks, unittest.TestCase):\n    def test_b(self):\n        assert h()\n\n\nclass TestTwo(Checks, unittest.TestCase):\n    pass\n');
   assert.deepEqual(mixin.map((one) => one.name).sort(),
-    ['Base.test_a', 'Checks.test_a', 'Checks.test_b', 'TestOne.test_a', 'TestOne.test_b', 'TestTwo.test_a', 'TestTwo.test_b']);
+    ['Base.test_a', 'Checks.test_b', 'TestOne.test_a', 'TestOne.test_b', 'TestTwo.test_a', 'TestTwo.test_b']);
   const bodyOf = (name) => mixin.find((one) => one.name === name).body;
   assert.equal(bodyOf('TestTwo.test_b'), bodyOf('Checks.test_b'));
   assert.notEqual(bodyOf('TestOne.test_b'), bodyOf('Checks.test_b'));
+  assert.ok(mixin.every((one) => one.key === one.name));
+  // Only tests are inherited; the first base wins, a class's own method over its base's; the last class of a
+  // name counts; async tests are tests; a class of its own name or a cycle of bases ends.
+  const names = (text) => list(text).map((one) => one.name).sort();
+  assert.deepEqual(names('import unittest\n\n\nclass Base:\n    def make(self):\n        return 1\n\n    def test_a(self):\n        assert self.make()\n\n\n'
+    + 'class TestOne(Base, unittest.TestCase):\n    pass\n'), ['Base.test_a', 'TestOne.test_a']);
+  // pytest collects a Test* class with no base from outside the file; a class of another name it does not.
+  assert.deepEqual(names('class Base:\n    def test_a(self):\n        assert f()\n\n\nclass TestPlain(Base):\n    pass\n\n\nclass Plain(Base):\n    pass\n'),
+    ['Base.test_a', 'TestPlain.test_a']);
+  const order = list('import unittest\n\n\nclass A:\n    def test_x(self):\n        assert f()\n\n\nclass B:\n    def test_x(self):\n        assert g()\n\n\n'
+    + 'class TestC(A, B, unittest.TestCase):\n    pass\n');
+  const inOrder = (name) => order.find((one) => one.name === name).body;
+  assert.equal(inOrder('TestC.test_x'), inOrder('A.test_x'));
+  assert.notEqual(inOrder('TestC.test_x'), inOrder('B.test_x'));
+  const override = list('import unittest\n\n\nclass Base:\n    def test_a(self):\n        assert f()\n\n\nclass Checks(Base):\n    def test_a(self):\n        assert g()\n\n\n'
+    + 'class TestTwo(Checks, unittest.TestCase):\n    pass\n');
+  assert.equal(override.find((one) => one.name === 'TestTwo.test_a').body, override.find((one) => one.name === 'Checks.test_a').body);
+  assert.deepEqual(names('import unittest\n\n\nclass Base:\n    def test_old(self):\n        assert f()\n\n\nclass Base:\n    def test_new(self):\n        assert g()\n\n\n'
+    + 'class TestX(Base, unittest.TestCase):\n    pass\n'), ['Base.test_new', 'TestX.test_new']);
+  assert.deepEqual(names('import unittest\n\n\nclass Cases:\n    async def test_fetch(self):\n        assert await f()\n\n\n'
+    + 'class TestFetch(Cases, unittest.IsolatedAsyncioTestCase):\n    pass\n'), ['Cases.test_fetch', 'TestFetch.test_fetch']);
+  assert.deepEqual(names('import unittest\n\n\nclass TestA(unittest.TestCase):\n    def test_a(self):\n        assert f()\n\n\nclass TestA(TestA):\n    def test_b(self):\n        assert g()\n'), ['TestA.test_b']);
+  assert.deepEqual(names('import unittest\n\n\nclass A:\n    def test_a(self):\n        assert f()\n\n\nclass B(A):\n    pass\n\n\nclass A(B):\n    pass\n\n\n'
+    + 'class TestX(A, unittest.TestCase):\n    pass\n'), []);
 });

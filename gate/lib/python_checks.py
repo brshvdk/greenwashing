@@ -353,14 +353,35 @@ def list_tests(file, source):
 
     listed = [function for function, _, _ in test_functions(tree, names, marker) if id(function) in qualified]
     tests = [{"name": qualified[id(f)], "key": qualified[id(f)], "body": body(f)} for f in listed]
-    # A class of the module also runs the tests it inherits from classes of the module (a set of tests run
-    # once per backend by TestCase subclasses): listed under its name too, with the body they have there.
+    # A class a runner collects also runs the tests it inherits from classes of the module (a set of tests
+    # run once per backend by TestCase subclasses): listed under its name too, with the body they have there.
     inherited = {id(f) for f in listed}
     # The classes of the module, each name as Python keeps it (the last definition).
     classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
 
     def own(node):
-        return {n.name: n for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+        """The names a class body binds: its methods, nested classes and assignments (test_x = None takes
+        an inherited test away)."""
+        bound = {}
+        for n in node.body:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                bound[n.name] = n
+            elif isinstance(n, (ast.Assign, ast.AnnAssign)):
+                for target in (n.targets if isinstance(n, ast.Assign) else [n.target]):
+                    if isinstance(target, ast.Name):
+                        bound[target.id] = n
+        return bound
+
+    def collected(node, seen):
+        """pytest collects a Test* class; unittest a class whose bases reach one from outside the module
+        (unittest.TestCase)."""
+        if node.name.startswith("Test"):
+            return True
+        for base in node.bases:
+            parent = classes.get(base.id) if isinstance(base, ast.Name) else None
+            if parent is None or (parent.name not in seen and collected(parent, seen | {parent.name})):
+                return True
+        return False
 
     def from_bases(node, seen):
         found = {}
@@ -373,6 +394,8 @@ def list_tests(file, source):
         return found
 
     for node in classes.values():
+        if not collected(node, {node.name}):
+            continue
         mine = own(node)
         for name, method in from_bases(node, {node.name}).items():
             if name not in mine and id(method) in inherited:

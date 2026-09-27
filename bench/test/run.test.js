@@ -264,3 +264,20 @@ test('a run on a tiny case set: built outside the repository, removed after, and
   assert.equal(fs.existsSync(brokenOut), false);
   assert.deepEqual(fs.readdirSync(path.join(__dirname, '..')).filter((name) => name.startsWith('greenwashing-bench-')), []);
 });
+
+test('the fake that hides behind the words is wrong: its code fails the test its honest twin keeps', (t) => {
+  const { cases } = readCases(CASES, ENTRIES);
+  const fake = cases.find((c) => c.id === 'fake-allowed-removal-js');
+  const honest = cases.find((c) => c.id === fake.twin);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-bench-twin-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  for (const [name, text] of Object.entries({ ...fake.before, ...fake.after, 'cart.test.js': honest.after['cart.test.js'] })) {
+    if (!(fake.delete || []).includes(name)) fs.writeFileSync(path.join(dir, name), text);
+  }
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  const run = require('node:child_process').spawnSync(process.execPath, ['--test', '--test-reporter=tap', 'cart.test.js'], { cwd: dir, env, encoding: 'utf8' });
+  assert.match(run.stdout, /^# fail 1$/m, run.stdout + run.stderr);
+  assert.match(run.stdout, /^not ok \d+ - an empty cart costs nothing$/m);
+});
+
