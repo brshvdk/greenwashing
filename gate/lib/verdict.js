@@ -169,7 +169,7 @@ function decide(runs, results, state, stopHookActive) {
         + `and now lets it stop so it does not loop. Last result: ${result.outcome}`
         + `${result.why ? ` - ${result.why}` : ''} (${run.command}${place(run)}).`
         + `${run.kind === 'config' ? ' The changed settings still block after the next prompt: undo the change, or edit the file between turns to make it yours.' : ''}`
-        + `${run.removed && run.removed.length ? ` The removed tests still block after the next prompt: put them back, edit the test files between turns to make them yours, or write "${PERMISSION_WORDS}" in the prompt to let that turn remove them.` : ''}`,
+        + `${run.removed && run.removed.length ? ` The removed tests still block after the next prompt: put them back, or write "${PERMISSION_WORDS}" in the prompt to let that turn remove them (a test file the user edits between turns is theirs as it is then).` : ''}`,
       state: { blocks: 0 },
     };
   }

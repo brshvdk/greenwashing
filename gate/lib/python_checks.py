@@ -343,16 +343,40 @@ def list_tests(file, source):
                 qualified[id(node)] = prefix + node.name
                 if in_class:
                     methods.add(id(node))
-    tests = []
-    for function, _, _ in test_functions(tree, names, marker):
-        if id(function) not in qualified:
-            continue
+
+    def body(function):
         args = function.args
         if id(function) in methods and (args.posonlyargs or args.args):
             args = copy.copy(args)
             args.posonlyargs, args.args = (args.posonlyargs[1:], args.args) if args.posonlyargs else ([], args.args[1:])
-        tests.append({"name": qualified[id(function)], "key": qualified[id(function)],
-                      "body": ast.dump(args) + "".join(ast.dump(s) for s in function.body)})
+        return ast.dump(args) + "".join(ast.dump(s) for s in function.body)
+
+    listed = [function for function, _, _ in test_functions(tree, names, marker) if id(function) in qualified]
+    tests = [{"name": qualified[id(f)], "key": qualified[id(f)], "body": body(f)} for f in listed]
+    # A class of the module also runs the tests it inherits from classes of the module (a set of tests run
+    # once per backend by TestCase subclasses): listed under its name too, with the body they have there.
+    inherited = {id(f) for f in listed}
+    # The classes of the module, each name as Python keeps it (the last definition).
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+
+    def own(node):
+        return {n.name: n for n in node.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
+
+    def from_bases(node, seen):
+        found = {}
+        for base in node.bases:
+            parent = classes.get(base.id) if isinstance(base, ast.Name) else None
+            if parent is None or parent.name in seen:
+                continue
+            for name, method in {**from_bases(parent, seen | {parent.name}), **own(parent)}.items():
+                found.setdefault(name, method)
+        return found
+
+    for node in classes.values():
+        mine = own(node)
+        for name, method in from_bases(node, {node.name}).items():
+            if name not in mine and id(method) in inherited:
+                tests.append({"name": f"{node.name}.{name}", "key": f"{node.name}.{name}", "body": body(method)})
     return tests
 
 

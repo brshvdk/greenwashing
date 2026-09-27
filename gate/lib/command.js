@@ -192,7 +192,8 @@ function support(files, hasPythonTests) {
 
 // The line of a turn in a project the gate cannot check.
 const notChecked = (why) => `greenwashing: this turn was NOT checked - ${why}, and the gate reads only the test output of ${RUNNER_NAMES}. `
-  + `To have turns checked, a human sets {"testCommand": "<the command that runs your tests>"} in ${CONFIG_FILE} in the project root, between turns.`;
+  + `To have turns checked, a human sets {"testCommand": "<a command that runs your tests with one of them, or prints their output>"} in ${CONFIG_FILE} `
+  + 'in the project root, between turns.';
 
 module.exports = {
   chooseCommand, readConfig, support, notChecked, pytestConfigured, pythonOf, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS,

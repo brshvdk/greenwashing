@@ -239,7 +239,7 @@ test('removed tests block with each name and GW-17, at most twenty listed, and s
     /^greenwashing gate: the changed tests can pass without testing anything, and this turn removed tests - you cannot finish yet\.\nFound [^\n]*\n- a\.test\.js:3: [^\n]*\nRemoved tests [^\n]*\n- a\.test\.js: 'test 1' \(GW-17\)\nSee each entry in \S+\nFix the tests\.[^\n]*skips also turns off the check of removed tests[^\n]*\nPut the tests back/);
   // The release, which the user reads, says how the user allows the removal; one for other findings does not.
   assert.match(decide([checks], [result], { blocks: 3 }, true).message,
-    /WORK NOT ACCEPTED\. .*Last result: failed - 22 tests removed \(greenwashing checks\)\. The removed tests still block after the next prompt: put them back, edit the test files between turns to make them yours, or write "allow test removal" in the prompt to let that turn remove them\.$/);
+    /WORK NOT ACCEPTED\. .*Last result: failed - 22 tests removed \(greenwashing checks\)\. The removed tests still block after the next prompt: put them back, or write "allow test removal" in the prompt to let that turn remove them \(a test file the user edits between turns is theirs as it is then\)\.$/);
   const skipOnly = { ...both, removed: [] };
   assert.doesNotMatch(decide([skipOnly], [verdict(skipOnly)], { blocks: 3 }, true).message, /allow test removal/);
 });

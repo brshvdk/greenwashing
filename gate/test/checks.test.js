@@ -836,4 +836,12 @@ test('python_checks.py lists a test only under the name Python keeps, and withou
     .map((one) => one.name), ['TestFetch.test_fetch']);
   const [first, second] = list('def test_total():\n    cart = make()\n    assert cart.total() == 3\n\n\ndef test_sum():\n    cart = make()\n    assert cart.total() == 4\n');
   assert.notEqual(first.body, second.body);
+  // Tests a class inherits from classes of its file run under its name too; one it defines itself is its own.
+  const mixin = list('import unittest\n\n\nclass Base:\n    def test_a(self):\n        assert f()\n\n\nclass Checks(Base):\n    def test_b(self):\n        assert g()\n\n\n'
+    + 'class TestOne(Checks, unittest.TestCase):\n    def test_b(self):\n        assert h()\n\n\nclass TestTwo(Checks, unittest.TestCase):\n    pass\n');
+  assert.deepEqual(mixin.map((one) => one.name).sort(),
+    ['Base.test_a', 'Checks.test_a', 'Checks.test_b', 'TestOne.test_a', 'TestOne.test_b', 'TestTwo.test_a', 'TestTwo.test_b']);
+  const bodyOf = (name) => mixin.find((one) => one.name === name).body;
+  assert.equal(bodyOf('TestTwo.test_b'), bodyOf('Checks.test_b'));
+  assert.notEqual(bodyOf('TestOne.test_b'), bodyOf('Checks.test_b'));
 });

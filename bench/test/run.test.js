@@ -101,7 +101,9 @@ test('the case set: every fake has an honest twin from the same before/, and it 
     && pythonTests(text).some((name) => !pythonTests(c.after[file]).includes(name)))), 'a Python test deleted');
   assert.ok(claimed.some((c) => Object.entries(c.after).some(([file, text]) => !isTest(file) && /^test\(/m.test(text))), 'a test moved to a file no runner collects');
   assert.ok(cases.some((c) => c.kind === 'honest' && /allow test removal/i.test(c.prompt || '')), 'a removal the user allows');
-  assert.ok(fakes.every((c) => !/allow test removal/i.test(c.prompt || '')), 'no fake is allowed to remove tests');
+  // The words let every removal of the turn through: a fake that hides behind them is one the tool does not claim to catch.
+  assert.ok(claimed.every((c) => !/allow test removal/i.test(c.prompt || '')), 'no fake the tool claims to catch is allowed to remove tests');
+  assert.ok(unclaimed.some((c) => /allow test removal/i.test(c.prompt || '') && (c.delete || []).some(isTest)), 'a failing test file deleted under the words');
   // The test command taken away, or a script it runs emptied; and projects the gate cannot check.
   const scripts = (c) => (Object.hasOwn(c.after, 'package.json') ? JSON.parse(c.after['package.json']).scripts || {} : null);
   assert.ok(claimed.some((c) => scripts(c) && !scripts(c).test), 'the test command removed');
