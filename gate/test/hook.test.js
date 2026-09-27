@@ -2615,3 +2615,27 @@ test('outside git, a settings change the agent makes in a turn the gate accepts 
   write(dir, { 't.test.js': NODE_FAIL });
   assert.match(gate.stop().json.reason, /Command: node --test --test-reporter=tap t\.test\.js/);
 });
+
+test('Node 19 is too old: the gate says it is off', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const preload = path.join(tempDir(t), 'node-19.js');
+  fs.writeFileSync(preload, "Object.defineProperty(process.versions, 'node', { value: '19.9.0' });\n");
+  const gate = session(t, dir, { env: { NODE_OPTIONS: `--require ${preload}` } });
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: the gate is OFF - the node on PATH is v19\.9\.0\./);
+});
+
+test('outside git, a .greenwashing.json the agent deletes stays the agent\'s change after WORK NOT ACCEPTED', (t) => {
+  const dir = tempDir(t);
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }), 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  fs.unlinkSync(path.join(dir, '.greenwashing.json'));
+  write(dir, { 't.test.js': NODE_FAIL });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /Command: node --test --test-reporter=tap t\.test\.js/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Command: node --test --test-reporter=tap t\.test\.js/);
+});
+

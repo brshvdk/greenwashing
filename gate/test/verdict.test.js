@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const {
-  verdict, decide, blockReason, removedNote,
+  verdict, decide, blockReason, removedNote, FINDINGS, FAILED_NAMES, TAIL_LINE_CHARS,
 } = require('../lib/verdict');
 const { CHECKS } = require('../lib/command');
 
@@ -304,3 +304,20 @@ test('the catalog entries the gate cites exist in CATALOG.md', () => {
   for (const id of cited) assert.match(catalog, new RegExp(`^### ${id} `, 'm'), id);
   assert.match(blockReason(config, verdict(config)), /See GW-114 in /);
 });
+
+test('the lists of removed tests: exactly the most shown has no "more" line, and a long name is cut', () => {
+  const block = (removed, findings = []) => blockReason({ kind: 'checks', command: 'greenwashing checks', findings, removed }, { outcome: 'failed' });
+  const twenty = Array.from({ length: FINDINGS }, (_, i) => `a.test.js: 't${i + 1}'`);
+  const reason = block(twenty);
+  assert.match(reason, /\n- a\.test\.js: 't20' \(GW-17\)\nSee each/);
+  assert.doesNotMatch(reason, /and \d+ more/);
+  const found = Array.from({ length: FINDINGS }, (_, i) => ({ file: 'a.test.js', line: i + 1, gw: 'GW-17', what: 'test.skip - the test does not run' }));
+  assert.doesNotMatch(block([], found), /and \d+ more/);
+  const ten = removedNote(Array.from({ length: FAILED_NAMES }, (_, i) => `t${i + 1}`));
+  assert.match(ten, /, t10$/);
+  assert.doesNotMatch(ten, /more/);
+  const long = `a.test.js: '${'x'.repeat(TAIL_LINE_CHARS + 50)}'`;
+  assert.match(block([long]), new RegExp(`\\n- a\\.test\\.js: 'x{${TAIL_LINE_CHARS - 12}}\\.\\.\\. \\(${long.length} characters\\) \\(GW-17\\)\\n`));
+  assert.match(removedNote([long]), new RegExp(`\\.\\.\\. \\(${long.length} characters\\)$`));
+});
+
