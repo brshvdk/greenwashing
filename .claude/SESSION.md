@@ -14,7 +14,8 @@ Step 1, PR 8 - the gate catches removed tests (GW-17) and passes projects it can
 - [x] verification round 2: fresh review (15 findings) and mutation wave on cac6581; fixed (runner folder rules and TypeScript, one new test for one removed, quotes, function-only tests, shadowed and grouped Python tests, split Python files, the permission after an unaccepted turn, GW-114 outside git in an unchecked project, the bench twin) or listed (other branches, unittest packages)
 - [x] second mutation wave's survivors pinned by tests; GW-114 before a start of the work is recorded (hooks added mid-session)
 - [x] verification round 3 on d660537: two reviews (15 findings) fixed or listed (moves judged from the project's folder, a turn with no prompt uses up the permission and the WORK NOT ACCEPTED record, inherited Python tests, re-decision after WORK NOT ACCEPTED, the allowed-removal fake reworked); support/verdict mutation wave (81 mutants, 12 real survivors pinned by tests)
-- [ ] round 3 removal mutation wave (running); final checks on Node 20/22/24, final push; report with PR title and body
+- [x] round 3 removal mutation wave (93 mutants, 19 real survivors pinned by tests; Node 21 takes no *-test.js, now modelled)
+- [ ] final checks on Node 20/22/24 (running), final push; report with PR title and body
 
 ## Decisions made (and why)
 - Owner (PR 8): setup-node is not used; each Node version is an exact nodejs.org release with its SHA-256 pinned in ci.yml (like gitleaks), not read from SHASUMS256.txt at run time. Reading actions/setup-node's repository for a SHA would break CLAUDE.md section 1.
@@ -84,7 +85,7 @@ Step 1, PR 8 - the gate catches removed tests (GW-17) and passes projects it can
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-PR 8 on `claude/inspiring-dijkstra-bnzflu`, from main at 8b40435. Numbers (`bench/RESULTS.md`): tests only 1 of 30 fakes caught, gate 20 of 30, gate + mutants 22 of 30 (23 claimed: 22 caught, GW-04 missed); honest twins 0, 0 and 1 false alarm in 30 (before: 1, 14, 16 of 22; 0, 0, 1 in 22). Next: the last round-3 mutation wave, final checks on Node 20/22/24, final push; the owner opens the PR with the title and body from the report.
+PR 8 on `claude/inspiring-dijkstra-bnzflu`, from main at 8b40435. Numbers (`bench/RESULTS.md`): tests only 1 of 30 fakes caught, gate 20 of 30, gate + mutants 22 of 30 (23 claimed: 22 caught, GW-04 missed); honest twins 0, 0 and 1 false alarm in 30 (before: 1, 14, 16 of 22; 0, 0, 1 in 22). Next: final checks on Node 20/22/24, final push; the owner opens the PR with the title and body from the report.
 
 ## Known issues / traps
 - This repository's `.greenwashing.json` runs the Python tests and `gate/test/*.test.js`, not `bench/test/*.test.js`: the gate on this repository does not run the benchmark's tests at a Stop (CI does). The file is guarded; the owner decides.
