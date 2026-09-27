@@ -1,24 +1,19 @@
 # SESSION
 
 ## Current step
-Step 1, PR 8 - the gate catches removed tests (GW-17) and passes projects it cannot check with a clear line; catalog GW-41 and GW-116; CI on Node 20, 22 and 24. PR 7 merged as 8b40435 (PR 14). Branch `claude/inspiring-dijkstra-bnzflu`. The PR is not opened yet: the owner opens it with the title and body from the report; push only at save points and at the end.
+Step 1, PR 9 - the mutation command: a new kind of break (an order removed, GW-04) and the time said up front (the breaks tried in the order chosen, an estimate after the control run, the time taken). Branch `claude/adoring-hopper-9pl1e5`, started from PR 8's last commit 8dc22d0 (branch `claude/inspiring-dijkstra-bnzflu`, not merged yet). After PR 8 is merged, this branch is moved onto main and only its own commits (after 8dc22d0) go with it. The PR is not opened yet: the owner opens it with the title and body from the report; push only at save points and at the end.
 
 ## Progress
-- [x] part 1.1-1.3, 1.5: CATALOG GW-41 (C) and GW-116 (H), H intro, GW-17 Catch it; `tests/test_skill.py` uses GW-199 as a missing number; bench labels GW-41 and GW-116; two skill lines (GW-17, GW-41); CLAUDE.md CI-minutes rule
-- [x] part 1.4: CI job `node` on Node 20.20.2, 22.23.3, 24.21.0 (tarballs from nodejs.org, SHA-256 pinned in ci.yml, taken from each release's SHASUMS256.txt and checked against the downloaded tarball on 2026-09-26); Gate tests and Bench numbers there; `concurrency` by PR number (manual runs by run id); timeouts 5/15/5 min; `tests/test_ci_steps.py` covers the install (curl stand-in), the version check, the matrix, timeouts and concurrency; `--test-name-pattern` trap seen on Node 24.21.0 too (limitations)
-- [x] part 2: removed tests (gate code, tests, bench cases); fake-deleted-test-js now caught
-- [x] part 3: projects the gate cannot check (gate code, tests, bench cases)
-- [x] part 4: live check (no node: "UserPromptSubmit/Stop hook error ... node: not found" every turn; Node 14/16: every turn blocked), then Node 20+ check in `main()` and a SessionStart hook (`|| echo` fallback), live-checked in the real CLI with a local API stand-in (no model)
-- [x] docs: limitations, map, bench/README
-- [x] verification round 1: every ci.yml step as GitHub runs it on Node 20.20.2/22.23.3/24.21.0 installed by the step (all green, bench tables identical); hooks live in the real CLI on jest 30.5.2, node --test, pytest 9.1.1 projects; fresh review (11 findings) and fresh mutation wave (85 mutants, 16 survivors): fixed or listed
-- [x] verification round 2: fresh review (15 findings) and mutation wave on cac6581; fixed (runner folder rules and TypeScript, one new test for one removed, quotes, function-only tests, shadowed and grouped Python tests, split Python files, the permission after an unaccepted turn, GW-114 outside git in an unchecked project, the bench twin) or listed (other branches, unittest packages)
-- [x] second mutation wave's survivors pinned by tests; GW-114 before a start of the work is recorded (hooks added mid-session)
-- [x] verification round 3 on d660537: two reviews (15 findings) fixed or listed (moves judged from the project's folder, a turn with no prompt uses up the permission and the WORK NOT ACCEPTED record, inherited Python tests, re-decision after WORK NOT ACCEPTED, the allowed-removal fake reworked); support/verdict mutation wave (81 mutants, 12 real survivors pinned by tests)
-- [x] round 3 removal mutation wave (93 mutants, 19 real survivors pinned by tests; Node 21 takes no *-test.js, now modelled)
-- [x] verification round 4 on the round-3 fixes (a fresh review, 5 findings, and a mutation wave, 47 mutants): fixed (an accepted turn's files are the measure until the next prompt; inherited tests only for collected classes; test_x = None in a subclass) or listed; every real survivor pinned
-- [x] final checks: every ci.yml step on Node 20.20.2/22.23.3/24.21.0 installed by the step; bench identical; the PR is ready for the owner to open
+- [x] part 1: the order break (`order` in `OPERATORS`, after `comparison`, before `return`): JS `.sort(...)`, `.toSorted(...)`, `.reverse()`, `.toReversed()` removed with the call (not the last dot of a spread, not `super.`); Python `sorted(x, ...)` -> `list(x)`, `reversed(x)` -> `x` (in brackets unless a name, member, call or index), `x.sort(...)`/`x.reverse()` as a statement -> `pass`; hint GW-04; unit and real-run tests both ways, JS and Python
+- [x] part 2: `choose()` returns the order the breaks run in (report by `byPlace`); `estimate()` after the control run, printed at once and repeated in the report; `Time: ... in all (estimated: ...)` before the result; `commands/mutants.md` asks for the estimate line
+- [x] bench: `fake/honest-one-item-sort-js`, `fake/honest-in-place-sort-py`; results on Node 20.20.2, 22.23.3, 24.21.0 identical; `fake-one-item-fixture-py` now caught
+- [x] docs: limitations (seven kinds, orders not removed, the equivalent order line, the estimate and the queue), map
+- [ ] self-run on this repository with defaults; fresh mutation wave and fresh review; every ci.yml step on the three Nodes; leak-check
 
 ## Decisions made (and why)
+- PR 9, chosen here: `order` goes after `comparison` and before `return` in `OPERATORS` (each file's first breaks and, under a short `--timeout`, what is tried first): guard, condition, comparison and order change what the code decides (a path, a bound, an order); a returned value is seen by nearly any test of the result; true/false and numbers are most often equivalent.
+- PR 9, chosen here: the control breaks still run before the breaks; the estimate counts both. The `--timeout` it proposes lets the runs take half again as long as estimated (the owner's own tolerance for the estimate, "more than one and a half times off"); past 86400 s it says to lower `--limit`. The command it proposes is `node <this mutate.js> <the options given> --timeout N`, shell-quoted.
+- PR 9, chosen here: the new cases are a JS leaderboard sorted the wrong way with a one-score test, and a Python in-place sort by the wrong key plus reverse with a one-task test; each honest twin has three items out of order.
 - Owner (PR 8): setup-node is not used; each Node version is an exact nodejs.org release with its SHA-256 pinned in ci.yml (like gitleaks), not read from SHASUMS256.txt at run time. Reading actions/setup-node's repository for a SHA would break CLAUDE.md section 1.
 - Owner (PR 8): `"skips": false` also turns off the check of removed tests; the gate's messages and the docs say so.
 - Owner (PR 8, after the review): a test file change counts as the user's only after a turn the gate let end as WORK NOT ACCEPTED (`ended`, used once); after a turn only blocked, cut off or with its hook killed it counts as the agent's, so a user's own removal then needs the words. Stricter than the settings rule, which stays as it was.
@@ -87,7 +82,7 @@ Step 1, PR 8 - the gate catches removed tests (GW-17) and passes projects it can
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
 ## Where we stopped
-PR 8 on `claude/inspiring-dijkstra-bnzflu`, from main at 8b40435. Numbers (`bench/RESULTS.md`): tests only 1 of 30 fakes caught, gate 20 of 30, gate + mutants 22 of 30 (23 claimed: 22 caught, GW-04 missed); honest twins 0, 0 and 1 false alarm in 30 (before: 1, 14, 16 of 22; 0, 0, 1 in 22). Next: the owner opens the PR with the title and body from the report.
+PR 9 on `claude/adoring-hopper-9pl1e5` over PR 8 (8dc22d0). Numbers (`bench/RESULTS.md`, 64 cases): tests only 1 of 32 fakes caught, gate 20 of 32, gate + mutants 25 of 32 (claimed: 25 of 25); honest twins 0, 0 and 1 false alarm in 32 (before, PR 8: 22 of 30, claimed 22 of 23; 1 false alarm in 30). Next: the checks in Progress, then the owner opens the PR; after PR 8 is merged, move this branch onto main (only its own commits).
 
 ## Known issues / traps
 - This repository's `.greenwashing.json` runs the Python tests and `gate/test/*.test.js`, not `bench/test/*.test.js`: the gate on this repository does not run the benchmark's tests at a Stop (CI does). The file is guarded; the owner decides.
