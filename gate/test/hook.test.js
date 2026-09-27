@@ -2639,3 +2639,46 @@ test('outside git, a .greenwashing.json the agent deletes stays the agent\'s cha
   assert.match(gate.stop().json.reason, /Command: node --test --test-reporter=tap t\.test\.js/);
 });
 
+test('a Python test file moved with a test edited in it keeps its tests', (t) => {
+  const dir = project(t, { 'test_m.py': TWO_PY }, `${GREEN_ECHO} # pytest`);
+  const gate = session(t, dir);
+  gate.prompt();
+  git(dir, 'mv', 'test_m.py', 'test_math.py');
+  write(dir, { 'test_math.py': TWO_PY.replace('self.assertEqual(add(1, 2), 3)', 'self.assertEqual(add(1, 2), 3)\n        self.assertEqual(add(0, 0), 0)') });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+});
+
+test('the Python checks must list every text asked for: a list without the asked keys is did not run', (t) => {
+  const fake = '#!/bin/sh\ncat > /dev/null\necho \'{"findings": [], "errors": [], "tests": {}}\'\n';
+  const dir = project(t, { 'test_m.py': TWO_PY, 'fakepy': fake, '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, python: './fakepy' }) }, null);
+  fs.chmodSync(path.join(dir, 'fakepy'), 0o755);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'test_m.py': ONE_PY });
+  assert.match(gate.stop().json.reason, /Result: did not run - the Python test checks could not run: .*fakepy printed no findings list/);
+});
+
+test('the words followed by a hyphen are not them; the permission of a turn that ended with no code change does not reach a later Stop with no prompt', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 'notes.md': 'x\n' }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'No allow test removal-style shortcuts here.');
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  write(dir, { 'a.test.js': TWO_JS });
+  assert.deepEqual(gate.stop(true).json, NO_CHANGES);
+  gate.prompt(dir, 'allow test removal');
+  assert.deepEqual(gate.stop().json, NO_CHANGES);
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+});
+
+test('an existing test file that takes in a deleted file\'s tests is not that file moved: its own tests keep its name', (t) => {
+  const six = `${MUL_JS}test('divides', () => {\n  expect(div(6, 3)).toBe(2);\n});\n`;
+  const dir = project(t, { 'a.test.js': "it.todo('later');\n", 'b.test.js': six }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  fs.unlinkSync(path.join(dir, 'b.test.js'));
+  write(dir, { 'a.test.js': `it.todo('later');\n${six}` });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+});
+

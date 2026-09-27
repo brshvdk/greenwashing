@@ -31,8 +31,9 @@ function testFileKind(file) {
 // (*.test.*, *-test.*, *_test.*, test-*, test.*, files under test/; js, cjs, mjs, and ts, mts, cts where Node strips
 // types by default), unittest discover (test*.py with a module name: not test-cart.py), pytest (test_*.py,
 // *_test.py). None of them looks in node_modules; vitest skips .git, node --test from Node 21 on every folder and file
-// whose name starts with a dot, and pytest the folders its norecursedirs names (.*, build, dist, venv, *.egg, CVS,
-// _darcs, {arch}). node: the Node the gate runs on ({major, typescript}), the one the project's node --test runs on.
+// whose name starts with a dot (and Node 21 takes no *-test.*), and pytest the folders its norecursedirs names (.*,
+// build, dist, venv, *.egg, CVS, _darcs, {arch}). node: the Node the gate runs on ({major, typescript}), the one the
+// project's node --test runs on.
 const NODE = { major: Number(process.versions.node.split('.')[0]), typescript: Boolean(process.features.typescript) };
 const hidden = (dirs, name) => [...dirs, name].some((part) => part.startsWith('.'));
 const RUNNER_FILES = {
@@ -42,7 +43,7 @@ const RUNNER_FILES = {
   'node --test': (dirs, name, node) => {
     const ext = node.typescript ? '\\.[cm]?[jt]s$' : '\\.[cm]?js$';
     return !dirs.includes('node_modules') && !(node.major >= 21 && hidden(dirs, name)) && new RegExp(ext).test(name)
-      && (new RegExp(`[._-]test${ext}`).test(name) || new RegExp(`^test(?:-.*)?${ext}`).test(name) || dirs.includes('test'));
+      && (new RegExp(`[._${node.major === 21 ? '' : '-'}]test${ext}`).test(name) || new RegExp(`^test(?:-.*)?${ext}`).test(name) || dirs.includes('test'));
   },
   unittest: (dirs, name) => /^test\w*\.py$/.test(name),
   pytest: (dirs, name) => !dirs.some((dir) => /^(?:\..*|build|dist|venv|node_modules|CVS|_darcs|\{arch\}|.*\.egg)$/.test(dir))

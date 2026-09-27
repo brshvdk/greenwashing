@@ -691,6 +691,15 @@ test('collectedBy: what each runner leaves out by default - node_modules, dot fo
     assert.deepEqual(collectedBy(file, NODE_20), old, `${file} on Node 20`);
     assert.deepEqual(collectedBy(file, NODE_22), now, `${file} on Node 22`);
   }
+  // Node 21 skips dot folders too, and takes no *-test.*; a name that only starts with test is no node --test file.
+  const NODE_21 = { major: 21, typescript: false };
+  assert.deepEqual(collectedBy('.ci/a.test.js', NODE_21), ['jest', 'vitest']);
+  assert.deepEqual(collectedBy('test/.hidden/a.js', NODE_21), []);
+  assert.deepEqual(collectedBy('a-test.js', NODE_21), []);
+  assert.deepEqual(collectedBy('a-test.js', NODE_22), ['node --test']);
+  assert.deepEqual(collectedBy('__tests__/testCart.js', NODE_22), ['jest']);
+  assert.deepEqual(collectedBy('testing.js', NODE_22), []);
+  for (const dir of ['dist', 'node_modules', 'CVS', '_darcs', '{arch}']) assert.deepEqual(collectedBy(`${dir}/test_a.py`), ['unittest'], dir);
   // Moved out of what the runner collects: a dot folder on Node 22, node_modules, a folder pytest skips, a .spec.ts.
   assert.equal(carries('cart.test.js', '.ci/cart-slow.test.js', ['node --test'], NODE_22), false);
   assert.equal(carries('cart.test.js', '.ci/cart-slow.test.js', ['node --test'], NODE_20), true);
@@ -741,6 +750,12 @@ test('jsTests: one key for a name in any quotes, and a test given only a functio
   assert.notEqual(jsTests("it('a', () => {});\n")[0].key, jsTests("it('b', () => {});\n")[0].key);
   assert.notEqual(jsTests('it(`a ${n}`, () => {});\n')[0].key, jsTests("it('a ${n}', () => {});\n")[0].key);
   assert.notEqual(jsTests("it('a\", \"b', () => {});\n")[0].key, jsTests('it("a", "b", () => {});\n')[0].key);
+  // An escaped backtick or quote reads as the character; a string is not a bare name; a suite is part of the key.
+  assert.equal(jsTests('it(`a \\` b`, () => {});\n')[0].key, jsTests("it('a ` b', () => {});\n")[0].key);
+  assert.equal(jsTests('it("it\\\'s", () => {});\n')[0].key, jsTests('it("it\'s", () => {});\n')[0].key);
+  assert.notEqual(jsTests("it('a', () => { expect(f('x')).toBe(1); });\n")[0].body, jsTests("it('a', () => { expect(f(x)).toBe(1); });\n")[0].body);
+  assert.notEqual(jsTests("describe('a', () => { test('x', () => {}); });\n")[0].key, jsTests("describe('b', () => { test('x', () => {}); });\n")[0].key);
+  assert.deepEqual(jsTests('test(async function sums() {\n  assert.ok(await f());\n});\n').map((one) => one.name), ['sums']);
   // test(function name() {...}): named by the function, its body the function's; one of another body is another test.
   const fns = jsTests('test(function emptyCart() {\n  assert.equal(total([]), 0);\n});\ntest(function sumsPrices() {\n  assert.equal(total([2, 4]), 6);\n});\n');
   assert.deepEqual(fns.map((one) => one.name), ['emptyCart', 'sumsPrices']);
@@ -771,6 +786,12 @@ test('removedTests: each test left over now stands for one removed test, and quo
   assert.deepEqual(removedTests(within('a.test.js', one), within('a.test.js', one.replace("test('sums'", "test('adds up'"))), []);
   // A formatter's quotes: the name stays.
   assert.deepEqual(removedTests(within('a.test.js', one), within('a.test.js', one.replace(/'/g, '"'))), []);
+  // Renamed onto a name its file already has: the extra test of that name is a new one, and keeps it.
+  const xa = "test('x', () => { expect(f()).toBe(1); });\n";
+  const yb = "test('y', () => { expect(g()).toBe(2); });\n";
+  assert.deepEqual(removedTests(within('a.test.js', xa + yb), within('a.test.js', xa + yb.replace("'y'", "'x'"))), []);
+  // Two removed tests with one body and one new test with it: one is removed.
+  assert.equal(removedTests(within('a.test.js', twins), within('a.test.js', "test('sums', () => { expect(add(1, 2)).toBe(3); });\n")).length, 1);
   // Deleting a test given only a function is not excused by another such test.
   const fns = 'test(function a() {\n  assert.equal(total([]), 0);\n});\ntest(function b() {\n  assert.equal(total([2, 4]), 6);\n});\n';
   assert.deepEqual(named(removedTests(within('a.test.js', fns), within('a.test.js', fns.split('test(function b')[0]))), ['a.test.js: b']);
@@ -809,6 +830,8 @@ test('python_checks.py lists the tests of a text with their classes; a start tex
   });
   assert.deepEqual(JSON.parse(both.stdout).errors.map((one) => one.file), ['test_d.py']);
   assert.deepEqual(list([{ key: 'n', file: 'test_n.py', text: 'def test_a():\n    pass\n\0', start: true }]).tests.n, []);
+  // A start text Python cannot take as text (a lone surrogate) has no tests either, on every Python.
+  assert.deepEqual(list([{ key: 's', file: 'test_s.py', text: 'def test_a():\n    pass\n# \ud800\n', start: true }]).tests.s, []);
 });
 
 test('python_checks.py lists a test only under the name Python keeps, and without the self of a method in its body', () => {
@@ -831,6 +854,8 @@ test('python_checks.py lists a test only under the name Python keeps, and withou
   const [other] = list('def test_empty(capsys):\n    assert total([]) == 0\n');
   assert.equal(fn.body, method.body);
   assert.notEqual(fn.body, other.body);
+  // A positional-only self is left out the same way.
+  assert.equal(list('class TestA:\n    def test_a(self, /, tmp_path):\n        assert f()\n')[0].body, list('def test_a(tmp_path):\n    assert f()\n')[0].body);
   // An async test is a test; a test's body is all its statements.
   assert.deepEqual(list('import unittest\n\n\nclass TestFetch(unittest.IsolatedAsyncioTestCase):\n    async def test_fetch(self):\n        self.assertTrue(await f())\n')
     .map((one) => one.name), ['TestFetch.test_fetch']);
