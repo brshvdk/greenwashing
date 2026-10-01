@@ -1,0 +1,11 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { total, leaders } = require('./scores');
+
+test('total adds the points', () => {
+  assert.equal(total([{ name: 'ana', points: 3 }, { name: 'bo', points: 9 }]), 12);
+});
+
+test('leaders go from the most points to the fewest', () => {
+  assert.deepEqual(leaders([{ name: 'ana', points: 3 }]), ['ana']);
+});

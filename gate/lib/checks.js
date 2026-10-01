@@ -851,5 +851,5 @@ function checkJs(source, changes, checks, before = null) {
 }
 
 module.exports = {
-  checkJs, jsTests, removedTests, carries, collectedBy, testFileKind, mask, closing, initializerEnd, JS_EXTENSION, INITIALIZER,
+  checkJs, jsTests, removedTests, carries, collectedBy, testFileKind, mask, closing, args, initializerEnd, JS_EXTENSION, INITIALIZER,
 };

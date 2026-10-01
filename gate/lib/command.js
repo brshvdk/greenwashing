@@ -18,8 +18,9 @@ const gateOff = (found) => `greenwashing: the gate is OFF - ${found}. It needs N
   + 'no turn is checked until a human sets that up and restarts Claude Code.';
 const CONFIG_KEYS = ['testCommand', 'timeoutSeconds', 'checks', 'python', 'mutants'];
 // The mutation command's limits (gate/mutate.js): how many breaks, the time for everything, and the
-// time for one test run; "mutants" in the settings and the command's options change them.
-const MUTANT_LIMITS = { limit: 20, timeoutSeconds: 600, runTimeoutSeconds: 120 };
+// time for one test run with a break (none: it comes from the control run's length, estimate() in
+// mutants.js); "mutants" in the settings and the command's options change them.
+const MUTANT_LIMITS = { limit: 20, timeoutSeconds: 600, runTimeoutSeconds: null };
 // The most any of them can be: a day (a timer past 24.8 days would fire at once).
 const MUTANT_MAX = 86400;
 // The gate's quick checks on changed test lines (gate/lib/checks.js) and the catalog entry each

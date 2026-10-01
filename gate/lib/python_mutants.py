@@ -1,8 +1,9 @@
 """Where to break the changed lines of Python code, for the mutation command (gate/mutate.js).
 
 The same kinds of break as for JavaScript: an if's condition turned around, a guard (an if with one
-raise or return and no else) replaced by pass, a comparison turned around, a returned value replaced
-by None, True and False swapped, a number one higher. The command runs it as
+raise or return and no else) replaced by pass, a comparison turned around, an order removed
+(sorted(x, ...) -> list(x), reversed(x) -> x, and x.sort(...) or x.reverse() on its own -> pass), a
+returned value replaced by None, True and False swapped, a number one higher. The command runs it as
 `<python> -I python_mutants.py` with JSON on stdin:
     {"files": [{"file", "text", "lines": [changed line]}]}
 and reads JSON from stdout:
@@ -72,6 +73,18 @@ def mutants(source, changed):
                 token = next((t for t in operators if t[2] == symbol and end(operands[i]) <= t[0] and t[1] <= start(operands[i + 1])), None)
                 if token:
                     found.append(("comparison", token[0], token[1], opposite))
+        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in ("sorted", "reversed") and node.args:
+            # The items in the order they came in: sorted's as a list, reversed's as they are (in brackets
+            # when the argument is more than a name, a member, a call or an index).
+            items = segment(start(node.args[0]), end(node.args[0]))
+            if node.func.id == "sorted":
+                items = f"list({items})"
+            elif not isinstance(node.args[0], (ast.Name, ast.Attribute, ast.Call, ast.Subscript)):
+                items = f"({items})"
+            found.append(("order", start(node), end(node), items))
+        elif isinstance(node, ast.Expr) and isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Attribute) \
+                and node.value.func.attr in ("sort", "reverse"):
+            found.append(("order", start(node), end(node), "pass"))
         elif isinstance(node, ast.Return) and node.value is not None and not (isinstance(node.value, ast.Constant) and node.value.value is None):
             found.append(("return", start(node.value), end(node.value), "None"))
         elif isinstance(node, ast.Constant) and isinstance(node.value, bool):

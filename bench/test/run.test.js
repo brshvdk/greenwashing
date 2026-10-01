@@ -92,6 +92,9 @@ test('the case set: every fake has an honest twin from the same before/, and it 
   assert.ok(has(claimed, /"test": "echo /), 'a test command that runs nothing');
   assert.ok(claimed.some((c) => Object.hasOwn(c.after, '.greenwashing.json')), 'the gate\'s settings changed');
   assert.ok(claimed.some((c) => c.scenario === 'worktree'), 'a red commit in a removed worktree');
+  // Orders no case depends on: a JavaScript sort, and a Python sort and reverse in place.
+  assert.ok(claimed.some((c) => c.language === 'js' && /\.sort\(/.test(changed(c))), 'a JavaScript sort');
+  assert.ok(claimed.some((c) => c.language === 'python' && /^\s+\w+\.sort\(/m.test(changed(c)) && /^\s+\w+\.reverse\(\)$/m.test(changed(c))), 'a Python sort and reverse in place');
   // Tests taken away: a test file deleted, a Python test gone from its file, a test moved to a file no
   // runner collects; and on the honest side a removal the user allows in the prompt.
   const isTest = (file) => testFileKind(file) !== null;

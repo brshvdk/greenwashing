@@ -82,8 +82,12 @@ test('a guard no test reaches survives (exit 1, GW-02); a test for it kills ever
   write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}` });
   const weak = mutate(t, dir);
   assert.equal(weak.code, 1, weak.out);
-  assert.match(weak.out, /^greenwashing mutants: the code lines changed since [0-9a-f]{12} \(the merge base with main\), committed or not\n1 code file, 5 changed lines, 4 places to break; 4 tried at most \(limit 20\)\n/);
-  assert.match(weak.out, /\nControl: node --test --test-reporter=tap \(\.greenwashing\.json\) on the unchanged copy: passed \(2 passed, 0 failed, 0 skipped\)\n/);
+  // The estimate is printed as soon as the control run has run, and again in the report.
+  const estimate = /^Estimate: one test run takes [\d.]+ s \(the control run\); 5 runs to go \(1 control break, 4 mutants\), up to \d+ s each \(the control run x 1\.5 \+ 10 s, as --run-timeout is not set\): about [\d.]+ s in all, within the 600 s for everything \(--timeout\): all of them fit$/m;
+  assert.match(weak.out, new RegExp(`^${estimate.source.slice(1, -1)}\ngreenwashing mutants: the code lines changed since [0-9a-f]{12} \\(the merge base with main\\), committed or not\n`
+    + '1 code file, 5 changed lines, 4 places to break; 4 tried at most \\(limit 20\\)\n'));
+  assert.match(weak.out, new RegExp(`\nControl: node --test --test-reporter=tap \\(\\.greenwashing\\.json\\) on the unchanged copy: passed \\(2 passed, 0 failed, 0 skipped\\)\n${estimate.source.slice(1, -1)}\nControl breaks: `));
+  assert.match(weak.out, /\nTime: [\d.]+ s in all \(estimated: about [\d.]+ s\)\nResult: 1 mutant survived\n$/);
   assert.match(weak.out, /\nMutants: 4 tried - 3 killed, 1 survived, 0 did not run\n/);
   assert.match(weak.out, /\nSurvived - the tests passed with the code broken:\n- cart\.js:6: removed: if \(items\.length >= max\) throw new RangeError\('full'\);\n {2}the tests pass without this guard: .* See GW-02 in https:\/\/\S+CATALOG\.md\n/);
   assert.match(weak.out, /\nResult: 1 mutant survived$/m);
@@ -93,6 +97,40 @@ test('a guard no test reaches survives (exit 1, GW-02); a test for it kills ever
   assert.equal(strong.code, 0, strong.out);
   assert.match(strong.out, /\nMutants: 4 tried - 4 killed, 0 survived, 0 did not run\n/);
   assert.match(strong.out, /\nResult: every mutant was killed$/m);
+});
+
+test('an order no test depends on survives (GW-04), and a case with items out of order kills it: JavaScript', (t) => {
+  const base = 'function ids(orders) {\n  return orders.map((o) => o.id);\n}\nmodule.exports = { ids };\n';
+  const newest = 'function newestFirst(orders) {\n  return [...orders].sort((a, b) => b.placed - a.placed);\n}\nmodule.exports.newestFirst = newestFirst;\n';
+  const head = "const test = require('node:test');\nconst assert = require('node:assert');\nconst { ids, newestFirst } = require('./orders');\n"
+    + "test('ids', () => assert.deepEqual(ids([{ id: 4 }]), [4]));\n";
+  const dir = project(t, { 'orders.js': base, 'orders.test.js': head });
+  write(dir, { 'orders.js': `${base}${newest}`, 'orders.test.js': `${head}test('newest first', () => assert.deepEqual(ids(newestFirst([{ id: 1, placed: 5 }])), [1]));\n` });
+  const weak = mutate(t, dir);
+  assert.equal(weak.code, 1, weak.out);
+  assert.match(weak.out, /\n- survived: orders\.js:6: return \[\.\.\.orders\]\.sort\(\(a, b\) => b\.placed - a\.placed\); {2}-> {2}return \[\.\.\.orders\];\n/);
+  assert.match(weak.out, /\nSurvived - the tests passed with the code broken:\n- orders\.js:6: .*\n {2}the tests pass with this sort or reverse removed: in no case does the result depend on the order; add a case with two or more items out of order\. See GW-04 in /);
+  write(dir, { 'orders.test.js': `${head}test('newest first', () => assert.deepEqual(ids(newestFirst([{ id: 1, placed: 5 }, { id: 2, placed: 9 }, { id: 3, placed: 7 }])), [2, 3, 1]));\n` });
+  const strong = mutate(t, dir);
+  assert.equal(strong.code, 0, strong.out);
+  assert.match(strong.out, /\n- killed: orders\.js:6: return \[\.\.\.orders\]\.sort\(.*\); {2}-> {2}return \[\.\.\.orders\];\n/);
+});
+
+test('an order no test depends on survives (GW-04), and a case with items out of order kills it: Python, sorted in place and reversed', (t) => {
+  const base = 'def order_ids(orders):\n    return [order["id"] for order in orders]\n';
+  const newest = '\n\ndef newest_first(orders):\n    orders = list(orders)\n    orders.sort(key=lambda order: order["placed"])\n    orders.reverse()\n    return orders\n';
+  const head = 'import unittest\n\nfrom orders import newest_first, order_ids\n\n\nclass T(unittest.TestCase):\n    def test_ids(self):\n        self.assertEqual(order_ids([{"id": 4}]), [4])\n';
+  const dir = project(t, { 'orders.py': base, 'test_orders.py': head.replace('newest_first, ', '') }, null);
+  const check = (orders, ids) => `\n    def test_newest_first(self):\n        self.assertEqual(order_ids(newest_first(${orders})), ${ids})\n`;
+  write(dir, { 'orders.py': `${base}${newest}`, 'test_orders.py': `${head}${check('[{"id": 1, "placed": 5}]', '[1]')}` });
+  const weak = mutate(t, dir);
+  assert.equal(weak.code, 1, weak.out);
+  assert.match(weak.out, /\n- survived: orders\.py:7: orders\.sort\(key=lambda order: order\["placed"\]\) {2}-> {2}pass\n- survived: orders\.py:8: orders\.reverse\(\) {2}-> {2}pass\n/);
+  assert.match(weak.out, /\n {2}the tests pass with this sort or reverse removed: .* See GW-04 in /);
+  write(dir, { 'test_orders.py': `${head}${check('[{"id": 1, "placed": 5}, {"id": 2, "placed": 9}, {"id": 3, "placed": 7}]', '[2, 3, 1]')}` });
+  const strong = mutate(t, dir);
+  assert.equal(strong.code, 0, strong.out);
+  assert.match(strong.out, /\n- killed: orders\.py:7: orders\.sort\(.*\) {2}-> {2}pass\n- killed: orders\.py:8: orders\.reverse\(\) {2}-> {2}pass\n/);
 });
 
 test('Python: breaks in the changed lines of a module, judged by unittest', (t) => {
@@ -131,6 +169,9 @@ test('did not run: a command with no counts, a red control, a break past the run
   assert.equal(redRun.code, 2, redRun.out);
   assert.match(redRun.out, /on the unchanged copy: failed - 1 failed/);
   assert.doesNotMatch(redRun.out, /killed: /);
+  // The estimate says no break runs, at once and in the report, and there is no time to compare with.
+  assert.equal(redRun.out.match(/^Estimate: one test run takes [\d.]+ s \(the control run\), which is not green, so no break runs$/gm).length, 2, redRun.out);
+  assert.match(redRun.out, /\nTime: [\d.]+ s in all\nResult: did not run\n$/);
 
   // Two steps at a time from an odd number never reach zero: that break runs until its timeout.
   const down = "function down(n) {\n  let i = n;\n  while (i !== 0) i -= 1;\n  return i;\n}\nmodule.exports = { down };\n";
@@ -238,6 +279,23 @@ test('a folder the tests leave read-only goes with the copy, and the report is s
   assert.deepEqual(fs.readdirSync(tmp).filter((name) => name.startsWith('greenwashing-mutants-')), []);
 });
 
+test('a reader that goes away does not stop the command halfway: the copy is still removed, the exit code kept', async (t) => {
+  const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST });
+  write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}${STOPS}` });
+  const tmp = tempDir(t);
+  const env = { ...process.env, TMPDIR: tmp };
+  delete env.NODE_TEST_CONTEXT;
+  const child = spawn(process.execPath, [MUTATE], { cwd: dir, env, stdio: ['ignore', 'pipe', 'pipe'] });
+  // Nobody reads the estimate, printed while the copy is there, or the report.
+  child.stdout.destroy();
+  let errors = '';
+  child.stderr.on('data', (data) => { errors += data; });
+  const code = await new Promise((resolve) => child.on('close', resolve));
+  assert.equal(code, 0, errors);
+  assert.equal(errors, '');
+  assert.deepEqual(fs.readdirSync(tmp).filter((name) => name.startsWith('greenwashing-mutants-')), []);
+});
+
 test('a signal stops the tests and removes the copy', async (t) => {
   const tmp = tempDir(t);
   const started = path.join(tmp, 'started');
@@ -290,8 +348,43 @@ test('the limits: --limit, then "mutants" in .greenwashing.json, then 20; the ti
   assert.notEqual(late.code, 0, late.out);
   assert.match(late.out, /; [1-4] not tried\n/);
   assert.match(late.out, /\nDid not run: no time was left for [1-4] of the breaks: the time for everything is 3 s \(--timeout\)\n/);
+  // The estimate said so, with what to change for every break to get its time: with that, it tries them all.
+  const proposed = /^Estimate: one test run takes [\d.]+ s \(the control run\); 6 runs to go \(1 control break, 5 mutants\), up to \d+ s each \([^)]*\): about [\d.]+ s in all, past the 3 s for everything \(--timeout\): the time left starts \d+ of them, so about \d of the 5 mutants will be tried\. For all of them, run it again with --timeout (\d+)$/m.exec(late.out);
+  assert.ok(proposed, late.out);
+  const all = mutate(t, dir, ['--limit', '5', '--timeout', proposed[1]]);
+  assert.match(all.out, /\nMutants: 5 tried - \d killed, \d survived, 0 did not run\n/);
+  assert.doesNotMatch(all.out, /not tried|no time was left/);
+  assert.match(all.out, /\nTime: [\d.]+ s in all \(estimated: about [\d.]+ s\)\n/);
   // A long line is shown around the place of the break.
   assert.match(mutate(t, dir, ['--limit', '5']).out, /\n- survived: limits\.js:1: \.\.\.\[?[\d, ]*23, 24, 25, .*30\]; {2}-> {2}\.\.\.\[?[\d, ]*23, 25, 25, .*30\];\n/);
+});
+
+test('when the time runs out, the breaks go in the order chosen - each file before any gets a second - and the estimate comes at once', async (t) => {
+  // Runs past the fifth (the control, two control breaks and two breaks) take past the time for everything.
+  const count = path.join(tempDir(t), 'runs');
+  const command = `n=$(cat ${count} 2>/dev/null || echo 0); n=$((n + 1)); echo $n > ${count}; if [ $n -gt 5 ]; then sleep 60; fi; ${NODE_CMD}`;
+  const check = "const test = require('node:test');\nrequire('./a');\nrequire('./b');\ntest('loads', () => {});\n";
+  const dir = project(t, { 'ab.test.js': check, 'a.js': 'module.exports = [];\n', 'b.js': 'module.exports = [];\n' }, command);
+  write(dir, { 'a.js': 'module.exports = [1, 2, 3, 4, 5, 6];\n', 'b.js': 'module.exports = [7, 8];\n' });
+  const env = { ...process.env, TMPDIR: tempDir(t) };
+  delete env.NODE_TEST_CONTEXT;
+  const child = spawn(process.execPath, [MUTATE, '--timeout', '10'], { cwd: dir, env });
+  let out = '';
+  let early = null;
+  let estimatedAt = null;
+  child.stdout.on('data', (data) => {
+    out += data;
+    if (early === null && /^Estimate: .*\n/m.test(out)) [early, estimatedAt] = [out, Date.now()];
+  });
+  const code = await new Promise((resolve) => child.on('close', resolve));
+  const closedAt = Date.now();
+  assert.equal(code, 1, out);
+  // Printed while the breaks were still to run: seconds before the sixth run was stopped and the report came.
+  assert.match(early, /^Estimate: one test run takes [\d.]+ s \(the control run\); 10 runs to go \(2 control breaks, 8 mutants\), [^\n]*\n$/);
+  assert.ok(closedAt - estimatedAt > 3000, `${closedAt - estimatedAt} ms`);
+  // Spread over a.js (4, then 2) and b.js (8) - not 1, 2 and 3 of a.js, as the order of place would have it - and shown in that order.
+  assert.match(out, /\nMutants: 3 tried - 0 killed, 2 survived, 1 did not run; 5 not tried\n- did not run: a\.js:1: module\.exports = \[1, 2, 3, 4, 5, 6\]; {2}-> {2}module\.exports = \[1, 3, 3, 4, 5, 6\]; \(the command did not finish in \d+ s and was stopped\)\n- survived: a\.js:1: module\.exports = \[1, 2, 3, 4, 5, 6\]; {2}-> {2}module\.exports = \[1, 2, 3, 5, 5, 6\];\n- survived: b\.js:1: module\.exports = \[7, 8\]; {2}-> {2}module\.exports = \[7, 9\];\n/);
+  assert.match(out, /\nDid not run: no time was left for 5 of the breaks: the time for everything is 10 s \(--timeout\)\n/);
 });
 
 test('the changed lines: since the merge base with main, committed or not, untracked too; --base; only the project folder', (t) => {
@@ -437,7 +530,7 @@ test('test files, test helpers and runner config are never broken', (t) => {
   const run = mutate(t, dir);
   assert.equal(run.code, 2, run.out);
   assert.match(run.out, /\n0 code files, 0 changed lines, 0 places to break; 0 tried at most \(limit 20\)\n/);
-  assert.match(run.out, /\nDid not run: no place to break in the changed code lines of JavaScript, TypeScript or Python\n/);
+  assert.match(run.out, /\nDid not run: no place to break in the changed code lines of JavaScript, TypeScript or Python\n[^]*\nTime: [\d.]+ s in all\nResult: did not run\n$/);
 });
 
 test('did not run before any test: no main branch, a base that is no commit, an unknown option, a broken setting, outside git', (t) => {
@@ -463,7 +556,7 @@ test('did not run before any test: no main branch, a base that is no commit, an 
   const outside = tempDir(t);
   const run = mutate(t, outside);
   assert.equal(run.code, 2);
-  assert.match(run.out, /is not in a git repository: the changed lines come from git/);
+  assert.match(run.out, /is not in a git repository: the changed lines come from git\n[^]*\nTime: [\d.]+ s in all\nResult: did not run\n$/);
 });
 
 test('a file the tests do not run - a built copy loaded instead of it: its breaks are not exercised, did not run, never survived', (t) => {
@@ -473,7 +566,7 @@ test('a file the tests do not run - a built copy loaded instead of it: its break
   write(dir, { 'src/cart.js': `${CART}${ADD}`, 'price.js': 'module.exports = (n) => n * 3;\n', 'cart.test.js': tests(3) });
   const run = mutate(t, dir);
   assert.equal(run.code, 2, run.out);
-  assert.match(run.out, /\nControl: .* on the unchanged copy: passed \(2 passed, 0 failed, 0 skipped\)\nControl breaks: 2 files, each made to fail as soon as it runs - 1 run by the tests, 1 not exercised\n/);
+  assert.match(run.out, /\nControl: .* on the unchanged copy: passed \(2 passed, 0 failed, 0 skipped\)\nEstimate: [^\n]*\nControl breaks: 2 files, each made to fail as soon as it runs - 1 run by the tests, 1 not exercised\n/);
   assert.match(run.out, /\nMutants: 5 tried - 1 killed, 0 survived, 4 did not run \(4 not exercised\)\n/);
   assert.match(run.out, /\n- killed: price\.js:1: .*\n- not exercised: src\/cart\.js: 4 mutants not run - the tests passed with this file failing as soon as it runs, so they do not run it: /);
   assert.doesNotMatch(run.out, /survived: |Survived/);
@@ -511,6 +604,76 @@ test('Python with an editable install: the tests import the user\'s files, not t
   assert.equal(own.code, 1, own.out);
   assert.match(own.out, /\nControl breaks: 1 file, each made to fail as soon as it runs - 1 run by the tests, 0 not exercised\n/);
   assert.match(own.out, /\n- survived: src\/shop\/__init__\.py:2: removed: if not prices: \(2 lines\)\n/);
+});
+
+test('without --run-timeout, a run with a break gets the control run\'s length x 1.5 + 10 s; the estimate counts the time before the control run', (t) => {
+  // A Python that takes 3 s to list the breaks: time spent before the control run, not part of it.
+  const slow = path.join(tempDir(t), 'slow-python');
+  fs.writeFileSync(slow, '#!/bin/sh\nsleep 3\nexec python3 "$@"\n', { mode: 0o755 });
+  const tests = 'import unittest\n\nfrom down import down\n\n\nclass T(unittest.TestCase):\n    def test_down(self):\n        self.assertEqual(down(3), 0)\n';
+  const dir = project(t, { 'down.py': 'def down(n):\n    return 0\n', 'test_down.py': tests }, null);
+  // i -= 2 from 3 never reaches 0: that break runs until its time is up.
+  write(dir, { 'down.py': 'def down(n):\n    i = n\n    while i != 0:\n        i -= 1\n    return i\n', '.greenwashing.json': JSON.stringify({ python: slow }) });
+  const run = mutate(t, dir);
+  assert.equal(run.code, 2, run.out);
+  const [, control, runs, each, total] = /^Estimate: one test run takes ([\d.]+) s \(the control run\); (\d+) runs to go \(1 control break, \d+ mutants\), up to (\d+) s each \(the control run x 1\.5 \+ 10 s, as --run-timeout is not set\): about ([\d.]+) s in all, within the 600 s for everything \(--timeout\): all of them fit$/m.exec(run.out) || [];
+  assert.ok(control, run.out);
+  // The control run's own length, not the 3 s before it; the time in all counts those 3 s.
+  assert.ok(Number(control) < 3, control);
+  assert.ok(Number(total) >= 3 + Number(runs) * Number(control) - 0.1, `${total} for ${runs} runs of ${control} s`);
+  assert.ok([Math.ceil((Number(control) - 0.05) * 1.5 + 10), Math.ceil((Number(control) + 0.05) * 1.5 + 10)].includes(Number(each)), `${each} for ${control}`);
+  // The break that loops is stopped at that time and did not run; the others were killed.
+  assert.match(run.out, new RegExp(`\n- did not run: down\\.py:4: i -= 1 {2}-> {2}i -= 2 \\(the command did not finish in ${each} s and was stopped\\)\n`));
+  assert.doesNotMatch(run.out, /survived: /);
+});
+
+test('no time left for the control run: it does not run, nothing is estimated, and no break is tried', (t) => {
+  // A Python that takes 2 s to list the breaks uses up the 1 s for everything.
+  const slow = path.join(tempDir(t), 'slow-python');
+  fs.writeFileSync(slow, '#!/bin/sh\nsleep 2\nexec python3 "$@"\n', { mode: 0o755 });
+  const tests = 'import unittest\n\nfrom shop import LIMIT\n\n\nclass T(unittest.TestCase):\n    def test_limit(self):\n        self.assertEqual(LIMIT, 7)\n';
+  const dir = project(t, { 'shop.py': 'LIMIT = 6\n', 'test_shop.py': tests.replace('7', '6') }, null);
+  write(dir, { 'shop.py': 'LIMIT = 7\n', 'test_shop.py': tests, '.greenwashing.json': JSON.stringify({ python: slow }) });
+  const run = mutate(t, dir, ['--timeout', '1']);
+  assert.equal(run.code, 2, run.out);
+  assert.match(run.out, /\nControl: not run\nMutants: 0 tried - 0 killed, 0 survived, 0 did not run; 1 not tried\n/);
+  assert.match(run.out, /\nDid not run: no time was left for the control run: the time for everything is 1 s \(--timeout\)\n/);
+  assert.doesNotMatch(run.out, /Estimate/);
+});
+
+test('a --run-timeout a human set is kept: shorter than the control run, no break runs, and the estimate says what to set', (t) => {
+  const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST }, `sleep 1; ${NODE_CMD}`);
+  write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}` });
+  const short = mutate(t, dir, ['--run-timeout', '1']);
+  assert.equal(short.code, 2, short.out);
+  // Printed first, and again right after the control line.
+  const said = /^(Estimate: one test run takes ([\d.]+) s \(the control run\), more than the 1 s --run-timeout gives a run with a break, so no break runs\. For all of them, run it again with --run-timeout (\d+))\n/.exec(short.out) || [];
+  const [line, control, needed] = said.slice(1);
+  assert.ok(control, short.out);
+  assert.ok(short.out.includes(`\nControl: sleep 1; ${NODE_CMD} (.greenwashing.json) on the unchanged copy: passed (2 passed, 0 failed, 0 skipped)\n${line}\nMutants: `), short.out);
+  assert.ok([Math.ceil((Number(control) - 0.05) * 1.5 + 10), Math.ceil((Number(control) + 0.05) * 1.5 + 10)].includes(Number(needed)), `${needed} for ${control}`);
+  assert.match(short.out, /\nMutants: 0 tried - 0 killed, 0 survived, 0 did not run; 4 not tried\n/);
+  assert.match(short.out, /\nDid not run: one test run takes longer than the 1 s --run-timeout gives a run with a break, so no break was run\n/);
+  assert.doesNotMatch(short.out, /Control breaks:/);
+  // The same from .greenwashing.json.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: `sleep 1; ${NODE_CMD}`, mutants: { runTimeoutSeconds: 1 } }) });
+  assert.match(mutate(t, dir).out, /\nDid not run: one test run takes longer than the 1 s --run-timeout gives a run with a break, so no break was run\n/);
+  // With what it said to set, every break runs, each with that time.
+  const all = mutate(t, dir, ['--run-timeout', needed]);
+  assert.equal(all.code, 1, all.out);
+  assert.match(all.out, new RegExp(`^Estimate: [^\n]*, up to ${needed} s each \\(--run-timeout\\): [^\n]*: all of them fit$`, 'm'));
+  assert.match(all.out, /\nMutants: 4 tried - 3 killed, 1 survived, 0 did not run\n/);
+});
+
+test('a control run the time for everything stops: its length is not known, and no break runs', (t) => {
+  const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST }, `sleep 5; ${NODE_CMD}`);
+  write(dir, { 'cart.js': `${CART}${ADD}` });
+  const run = mutate(t, dir, ['--timeout', '2']);
+  assert.equal(run.code, 2, run.out);
+  assert.match(run.out, /^Estimate: one test run takes more than [\d.]+ s: the control run did not finish in the 2 s for everything \(--timeout\), so no break runs\. For all of them, run it again with a longer --timeout\n/);
+  assert.match(run.out, /\nControl: .* on the unchanged copy: did not run - the command did not finish in \d s and was stopped \(no counts\)\n/);
+  assert.match(run.out, /\nDid not run: the tests are not green on an unchanged copy of the working tree, so no break can be judged/);
+  assert.match(run.out, /\nTime: [\d.]+ s in all\nResult: did not run\n$/);
 });
 
 test('a control break whose run does not finish tells nothing: its file\'s breaks did not run', (t) => {
