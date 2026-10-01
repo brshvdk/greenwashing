@@ -80,6 +80,7 @@ Root-cause and surgical changes don't conflict: root-cause goes deep along the t
 - The owner may set a cap on the number of agents per session - count it for the whole run including subagents; if ambiguous, take the smaller number.
 - An agent that edits the tree: commit BEFORE review, `git diff` AFTER.
 - Mutation runs go in a separate wave, in an isolated worktree. Forbid `rm` explicitly in mutator prompts.
+- Every reviewer and mutation agent works in its own worktree, never in the repository's tree. Run `git status` after each wave and put back anything an agent touched.
 
 ---
 
@@ -113,6 +114,7 @@ scripts/leak-check --all-history               # every commit of every branch; r
 - Revert a change by copying the file back, NOT `git checkout -- <file>` (it wipes uncommitted work next to it).
 - Stage files by name. `git add -A` drags untracked junk into the repo.
 - Conventional commits in English: `feat:`, `fix:`, `docs:`, `test:`, `chore:`.
+- Pull request titles follow conventional commits too: a squash merge puts the title into `main`.
 - CI minutes are limited. Push to the branch at save points and at the end of a step, not after every commit. Open the pull request only when the step is done. Do not edit a pull request's title or description after opening it unless the owner asks: each push and each edit runs the whole CI.
 
 ---
