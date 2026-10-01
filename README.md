@@ -77,6 +77,7 @@ Each of these has a fake in the bench and is counted in the numbers above as not
 - **Other agents:** the skill only.
 - **Tests:** JavaScript, TypeScript and Python projects whose tests run with pytest, unittest, jest, vitest or `node --test`.
 - **Node 20+** on PATH: the gate and the mutation check are Node scripts.
+- **A git repository:** outside git the gate cannot tell what a turn changed, so it runs the tests at every stop and skips the checks of changed test lines.
 - **Other projects:** the gate ends each turn with one line saying the turn was not checked, and lets the agent finish.
 - **Your own test command:** the gate picks `npm test`, pytest or unittest by itself. When your tests run another way, set `testCommand` in `.greenwashing.json` to a command that runs them with one of these runners.
 

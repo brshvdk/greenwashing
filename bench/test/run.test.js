@@ -257,6 +257,8 @@ test('a run on a tiny case set: built outside the repository, removed after, and
   assert.match(replies['honest-undo'], /^greenwashing: tests passed - npm test: 2 passed, 0 failed, 0 skipped/);
   assert.match(replies['honest-tree'], / in a temporary checkout of [0-9a-f]{12} \(branch agent\)/);
   assert.ok(Object.values(replies).every((reply) => !reply.includes(tmp)), 'a path of the temporary folder');
+  // The failing test's own output names its file in the temporary checkout: the case's folder is <case>.
+  assert.match(replies['fake-tree'], /<case>\/tmp\/greenwashing-gate-check-/);
   assert.ok(results.cases.every((c) => !('reply' in c) && !('reply' in c.gate)));
   // Nothing left in the temp folder, and the case set as it was.
   assert.deepEqual(fs.readdirSync(tmp), []);
