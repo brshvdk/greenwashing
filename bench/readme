@@ -203,7 +203,14 @@ function main(argv) {
   } catch (error) {
     return { code: 2, text: `README check: did not run - ${error.message}` };
   }
-  const { problems, notRun, checked } = check(readme, run, catalog);
+  let outcome;
+  try {
+    outcome = check(readme, run, catalog);
+  } catch (error) {
+    // A run whose files hold something else than bench/run writes.
+    return { code: 2, text: `README check: did not run - the run's files cannot be read as bench/run writes them: ${error.message}` };
+  }
+  const { problems, notRun, checked } = outcome;
   const list = (items) => items.map((item) => `- ${item}`).join('\n');
   if (problems.length) return { code: 1, text: `README check: failed - the README is not what this bench run gave\n${list([...problems, ...notRun])}` };
   if (notRun.length) return { code: 2, text: `README check: did not run\n${list(notRun)}` };

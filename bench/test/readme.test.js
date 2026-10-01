@@ -109,6 +109,10 @@ test('the command: passed, failed and did not run, as exit codes 0, 1 and 2', (t
   fs.writeFileSync(path.join(dir, 'results.json'), JSON.stringify(run().results));
   fs.writeFileSync(path.join(dir, 'replies.json'), '{not json');
   assert.equal(command(dir).status, 2);
+  fs.writeFileSync(path.join(dir, 'replies.json'), 'null');
+  const odd = command(dir);
+  assert.equal(odd.status, 2, odd.stdout);
+  assert.match(odd.stdout, /^README check: did not run - the run's files cannot be read as bench\/run writes them: /);
   fs.writeFileSync(path.join(dir, 'replies.json'), JSON.stringify(REPLIES));
   // The real README against this small run: its numbers and replies differ.
   const differs = command(dir);
