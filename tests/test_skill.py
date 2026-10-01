@@ -162,7 +162,7 @@ class CheckerTest(unittest.TestCase):
                 self.assert_breaks(self.replace(line, "description: " + "x" * length), *rules)
 
     def test_id_not_in_catalog(self):
-        for missing in ("GW-19", "GW-116", "GW-99"):
+        for missing in ("GW-19", "GW-199", "GW-99"):
             with self.subTest(id=missing):
                 self.assert_breaks(self.replace("(GW-55)", f"({missing})"), "id not in catalog")
 

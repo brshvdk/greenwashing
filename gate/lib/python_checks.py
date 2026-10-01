@@ -9,9 +9,13 @@ the lines a turn added or changed. The hook runs it as
      "entries": {"skips": "GW-17", ...}}
 and reads JSON from stdout:
     {"findings": [{"file", "line", "gw", "what"}], "errors": [{"file", "error"}]}
+The request can also ask for the tests of texts, for the tests a turn removed:
+    "list": [{"key", "file", "text", "start"}]  ->  "tests": {key: [{"name", "key", "body"}]}
+A text from the start of the turn that Python cannot read ran no tests: its list is empty.
 """
 
 import ast
+import copy
 import io
 import json
 import re
@@ -318,6 +322,87 @@ def test_functions(tree, names, marker):
     return found
 
 
+def list_tests(file, source):
+    """The tests of a file, as the checks see them: [{"name", "key", "body"}]. name and key: its classes
+    and its own name (TestCart.test_total); body: its parameters, without the self or cls of a method, and
+    its statements (ast.dump, without line numbers), the same wherever the test is indented and whether or
+    not it is in a class. A definition that a later one of the same name in its module or class replaces
+    is not a test: Python keeps only the later one."""
+    tree, names, _, marker = read(source, file)
+    qualified, methods = {}, set()
+    bodies = [(tree.body, "", False)]
+    while bodies:
+        body, prefix, in_class = bodies.pop()
+        last = {node.name: node for node in body if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef))}
+        for node in body:
+            if last.get(getattr(node, "name", None)) is not node:
+                continue
+            if isinstance(node, ast.ClassDef):
+                bodies.append((node.body, f"{prefix}{node.name}.", True))
+            else:
+                qualified[id(node)] = prefix + node.name
+                if in_class:
+                    methods.add(id(node))
+
+    def body(function):
+        args = function.args
+        if id(function) in methods and (args.posonlyargs or args.args):
+            args = copy.copy(args)
+            args.posonlyargs, args.args = (args.posonlyargs[1:], args.args) if args.posonlyargs else ([], args.args[1:])
+        return ast.dump(args) + "".join(ast.dump(s) for s in function.body)
+
+    listed = [function for function, _, _ in test_functions(tree, names, marker) if id(function) in qualified]
+    tests = [{"name": qualified[id(f)], "key": qualified[id(f)], "body": body(f)} for f in listed]
+    # A class a runner collects also runs the tests it inherits from classes of the module (a set of tests
+    # run once per backend by TestCase subclasses): listed under its name too, with the body they have there.
+    inherited = {id(f) for f in listed}
+    # The classes of the module, each name as Python keeps it (the last definition).
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+
+    def own(node):
+        """The names a class body binds: its methods, nested classes and assignments (test_x = None takes
+        an inherited test away)."""
+        bound = {}
+        for n in node.body:
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                bound[n.name] = n
+            elif isinstance(n, (ast.Assign, ast.AnnAssign)):
+                for target in (n.targets if isinstance(n, ast.Assign) else [n.target]):
+                    if isinstance(target, ast.Name):
+                        bound[target.id] = n
+        return bound
+
+    def collected(node, seen):
+        """pytest collects a Test* class; unittest a class whose bases reach one from outside the module
+        (unittest.TestCase)."""
+        if node.name.startswith("Test"):
+            return True
+        for base in node.bases:
+            parent = classes.get(base.id) if isinstance(base, ast.Name) else None
+            if parent is None or (parent.name not in seen and collected(parent, seen | {parent.name})):
+                return True
+        return False
+
+    def from_bases(node, seen):
+        found = {}
+        for base in node.bases:
+            parent = classes.get(base.id) if isinstance(base, ast.Name) else None
+            if parent is None or parent.name in seen:
+                continue
+            for name, method in {**from_bases(parent, seen | {parent.name}), **own(parent)}.items():
+                found.setdefault(name, method)
+        return found
+
+    for node in classes.values():
+        if not collected(node, {node.name}):
+            continue
+        mine = own(node)
+        for name, method in from_bases(node, {node.name}).items():
+            if name not in mine and id(method) in inherited:
+                tests.append({"name": f"{node.name}.{name}", "key": f"{node.name}.{name}", "body": body(method)})
+    return tests
+
+
 def runs(function, names, marker):
     """The test runs as written: no skip decorator, and no skipTest() or pytest.skip() in its body."""
     if any(marker(d) in NOT_RUN for d in function.decorator_list):
@@ -358,14 +443,26 @@ def truthy_constant(node):
 
 def main():
     request = json.loads(sys.stdin.buffer.read().decode("utf-8"))
-    findings, errors = [], []
+    findings, errors, tests = [], [], {}
+
+    def unreadable(file, error):
+        if all(e["file"] != file for e in errors):
+            errors.append({"file": file, "error": f"Python could not read it ({type(error).__name__}: {error})"})
     for item in request["files"]:
         try:
             findings += check(item["file"], item["text"], set(item["added"]), set(item["gaps"]), item["checks"], request["entries"],
                               item.get("before"))
         except (SyntaxError, ValueError, tokenize.TokenError) as error:
-            errors.append({"file": item["file"], "error": f"Python could not read it ({type(error).__name__}: {error})"})
-    sys.stdout.buffer.write(json.dumps({"findings": findings, "errors": errors}).encode("utf-8"))
+            unreadable(item["file"], error)
+    for item in request.get("list", []):
+        try:
+            tests[item["key"]] = list_tests(item["file"], item["text"])
+        except (SyntaxError, ValueError) as error:
+            if item["start"]:
+                tests[item["key"]] = []
+            else:
+                unreadable(item["file"], error)
+    sys.stdout.buffer.write(json.dumps({"findings": findings, "errors": errors, "tests": tests}).encode("utf-8"))
 
 
 if __name__ == "__main__":

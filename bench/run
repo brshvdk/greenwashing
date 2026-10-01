@@ -6,9 +6,11 @@
 // honest), gw (the catalog entry), language (js or python), twin (the other version of the same
 // change, from the same before/), description, claim (a fake only: "caught" when the tool says it
 // catches it, "not caught" when its limits say it does not), delete (the files of before/ the change
-// removes, by their real names) and scenario ("worktree": the change is committed in a worktree the
-// agent then removes). Every file of a case is stored with a .txt suffix, which comes off only in
-// the project built from it (bench/README.md says why).
+// removes, by their real names), scenario ("worktree": the change is committed in a worktree the
+// agent then removes) and prompt (what the user writes for the turn; PROMPT when the case has none -
+// never the description, which could then say what only a user may say). Every file of a case is
+// stored with a .txt suffix, which comes off only in the project built from it (bench/README.md says
+// why).
 //
 // Each case is built as a new git project in a temporary folder outside the repository, removed after
 // the run, and measured three ways:
@@ -41,6 +43,8 @@ const SUFFIX = '.txt';
 const COLUMNS = { tests: 'Tests only', gate: 'Gate', mutants: 'Gate + mutants' };
 const FIELDS = { kind: ['fake', 'honest'], language: ['js', 'python'], claim: ['caught', 'not caught'], scenario: ['worktree'] };
 const TEST_SECONDS = 120;
+// The user's prompt of a case that sets none.
+const PROMPT = 'Make the change.';
 const PARALLEL = Math.max(1, Math.min(4, os.cpus().length));
 // Git and Python as the same fixed setup on every machine: no user or system git config, fixed
 // names and dates (so commits are the same), no bytecode left in the projects.
@@ -94,7 +98,7 @@ function readCases(dir, entries) {
       problems.push(`${id}: case.json cannot be read: ${error.message}`);
       continue;
     }
-    const extra = Object.keys(meta).filter((key) => !['kind', 'gw', 'language', 'twin', 'claim', 'scenario', 'delete', 'description'].includes(key));
+    const extra = Object.keys(meta).filter((key) => !['kind', 'gw', 'language', 'twin', 'claim', 'scenario', 'delete', 'description', 'prompt'].includes(key));
     if (extra.length) problems.push(`${id}: unknown fields in case.json: ${extra.join(', ')}`);
     for (const [field, allowed] of Object.entries(FIELDS)) {
       if (field in meta && !allowed.includes(meta[field])) problems.push(`${id}: ${field} must be one of ${allowed.join(', ')}`);
@@ -104,6 +108,7 @@ function readCases(dir, entries) {
     if (meta.kind === 'honest' && 'claim' in meta) problems.push(`${id}: an honest case has no claim`);
     if (!entries.has(meta.gw)) problems.push(`${id}: ${meta.gw} is not an entry of CATALOG.md`);
     if (typeof meta.description !== 'string' || !meta.description.trim() || /[\r\n]/.test(meta.description)) problems.push(`${id}: the description must be one line`);
+    if ('prompt' in meta && (typeof meta.prompt !== 'string' || !meta.prompt.trim())) problems.push(`${id}: the prompt must be text`);
     if (!id.startsWith(`${meta.kind}-`)) problems.push(`${id}: the name must start with ${meta.kind}-`);
     const trees = {};
     for (const part of ['before', 'after']) {
@@ -252,7 +257,7 @@ async function runCase(c, work, baseEnv) {
   }
   const session = `bench-${c.id}`;
   const prompt = await call(process.execPath, [HOOK, 'prompt'], {
-    cwd: agent, env, input: JSON.stringify({ session_id: session, cwd: agent, hook_event_name: 'UserPromptSubmit', prompt: c.description }),
+    cwd: agent, env, input: JSON.stringify({ session_id: session, cwd: agent, hook_event_name: 'UserPromptSubmit', prompt: c.prompt || PROMPT }),
   });
   if (writeTree(agent, c.after) === 0) throw new Error(`${c.id}: no file of the change was written`);
   for (const file of c.delete || []) fs.unlinkSync(path.join(agent, file));

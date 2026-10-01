@@ -1,0 +1,7 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { reserve } = require('./stock');
+
+test('reserving takes the quantity off the stock', () => {
+  assert.equal(reserve(10, 3), 7);
+});

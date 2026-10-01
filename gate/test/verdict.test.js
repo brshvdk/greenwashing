@@ -3,7 +3,9 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { verdict, decide, blockReason } = require('../lib/verdict');
+const {
+  verdict, decide, blockReason, removedNote, FINDINGS, FAILED_NAMES, TAIL_LINE_CHARS,
+} = require('../lib/verdict');
 const { CHECKS } = require('../lib/command');
 
 const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', `${name}.txt`), 'utf8');
@@ -220,6 +222,35 @@ test('the quick checks: findings block with file, line and entry, at most twenty
   assert.match(notRunReason, /\nResult: did not run - python3 was not found on PATH\nSee GW-50 in \S+$/);
 });
 
+test('removed tests block with each name and GW-17, at most twenty listed, and say how the user allows the removal', () => {
+  const removed = Array.from({ length: 22 }, (_, i) => `a.test.js: 'test ${i + 1}'`);
+  const checks = { kind: 'checks', command: 'greenwashing checks', source: 'the checks', findings: [], removed };
+  const result = verdict(checks);
+  assert.deepEqual([result.outcome, result.why], ['failed', '22 tests removed']);
+  const reason = blockReason(checks, result);
+  assert.match(reason, /^greenwashing gate: this turn removed tests - you cannot finish yet\.\nRemoved tests /);
+  assert.match(reason, /\n- a\.test\.js: 'test 20' \(GW-17\)\n- and 2 more\nSee each entry in /);
+  assert.doesNotMatch(reason, /test 21|Found in the test lines|Fix the tests/);
+  assert.match(reason, /the user says "allow test removal" may remove tests/);
+  // With findings too: both lists, both how-tos, and the why counts both.
+  const both = { ...checks, removed: removed.slice(0, 1), findings: [{ file: 'a.test.js', line: 3, gw: 'GW-18', what: 'the test has no assertion' }] };
+  assert.equal(verdict(both).why, '1 problem in the test lines this turn added or changed; 1 test removed');
+  assert.match(blockReason(both, verdict(both)),
+    /^greenwashing gate: the changed tests can pass without testing anything, and this turn removed tests - you cannot finish yet\.\nFound [^\n]*\n- a\.test\.js:3: [^\n]*\nRemoved tests [^\n]*\n- a\.test\.js: 'test 1' \(GW-17\)\nSee each entry in \S+\nFix the tests\.[^\n]*skips also turns off the check of removed tests[^\n]*\nPut the tests back/);
+  // The release, which the user reads, says how the user allows the removal; one for other findings does not.
+  assert.match(decide([checks], [result], { blocks: 3 }, true).message,
+    /WORK NOT ACCEPTED\. .*Last result: failed - 22 tests removed \(greenwashing checks\)\. The removed tests still block after the next prompt: put them back, or write "allow test removal" in the prompt to let that turn remove them \(a test file the user edits between turns is theirs as it is then\)\.$/);
+  const skipOnly = { ...both, removed: [] };
+  assert.doesNotMatch(decide([skipOnly], [verdict(skipOnly)], { blocks: 3 }, true).message, /allow test removal/);
+});
+
+test('the line of an accepted turn names the tests removed with the user\'s permission, at most ten', () => {
+  assert.equal(removedNote([]), '');
+  assert.equal(removedNote(["a.test.js: 'x'"]), "; tests removed with the user's permission (1): a.test.js: 'x'");
+  const many = removedNote(Array.from({ length: 12 }, (_, i) => `t${i + 1}`));
+  assert.match(many, /\(12\): t1, t2, t3, t4, t5, t6, t7, t8, t9, t10, and 2 more$/);
+});
+
 test('the block reason stays short when a line of output is huge', () => {
   const reason = blockReason(run({ output: `start\n${'x'.repeat(5000000)}\nend` }), RED);
   assert.ok(reason.length < 10000, `${reason.length} characters`);
@@ -273,3 +304,20 @@ test('the catalog entries the gate cites exist in CATALOG.md', () => {
   for (const id of cited) assert.match(catalog, new RegExp(`^### ${id} `, 'm'), id);
   assert.match(blockReason(config, verdict(config)), /See GW-114 in /);
 });
+
+test('the lists of removed tests: exactly the most shown has no "more" line, and a long name is cut', () => {
+  const block = (removed, findings = []) => blockReason({ kind: 'checks', command: 'greenwashing checks', findings, removed }, { outcome: 'failed' });
+  const twenty = Array.from({ length: FINDINGS }, (_, i) => `a.test.js: 't${i + 1}'`);
+  const reason = block(twenty);
+  assert.match(reason, /\n- a\.test\.js: 't20' \(GW-17\)\nSee each/);
+  assert.doesNotMatch(reason, /and \d+ more/);
+  const found = Array.from({ length: FINDINGS }, (_, i) => ({ file: 'a.test.js', line: i + 1, gw: 'GW-17', what: 'test.skip - the test does not run' }));
+  assert.doesNotMatch(block([], found), /and \d+ more/);
+  const ten = removedNote(Array.from({ length: FAILED_NAMES }, (_, i) => `t${i + 1}`));
+  assert.match(ten, /, t10$/);
+  assert.doesNotMatch(ten, /more/);
+  const long = `a.test.js: '${'x'.repeat(TAIL_LINE_CHARS + 50)}'`;
+  assert.match(block([long]), new RegExp(`\\n- a\\.test\\.js: 'x{${TAIL_LINE_CHARS - 12}}\\.\\.\\. \\(${long.length} characters\\) \\(GW-17\\)\\n`));
+  assert.match(removedNote([long]), new RegExp(`\\.\\.\\. \\(${long.length} characters\\)$`));
+});
+

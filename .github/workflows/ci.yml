@@ -8,10 +8,19 @@ on:
 permissions:
   contents: read
 
+# A new push or edit of a pull request cancels the run still going for that pull request. Runs of
+# other pull requests never share a group, and a manual run (workflow_dispatch has no pull request
+# number) gets a group of its own, so it neither cancels nor is cancelled.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
+  # Timeouts are a few times each job's usual length (checks under 1 min, node about 3-4 min,
+  # leak-check under 1 min), so a hung run stops early instead of after GitHub's 6 hours.
   checks:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Check out with full history
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
@@ -58,23 +67,6 @@ jobs:
           fi
           exit "$status"
 
-      # The gate's tests on the Node the runner already has (no setup action), with the same
-      # guard: zero tests, or no "# tests N" line, fails the step. The TAP reporter keeps the
-      # summary lines stable across Node versions; Node 22 turns a glob that matches nothing
-      # into "# tests 0" and exit 0. tests/test_ci_steps.py runs this block as written.
-      - name: Gate tests
-        run: |
-          node --version
-          status=0
-          node --test --test-reporter=tap gate/test/*.test.js > "$RUNNER_TEMP/gate-tests.log" 2>&1 || status=$?
-          cat "$RUNNER_TEMP/gate-tests.log"
-          ran=$(sed -n 's/^# tests \([0-9][0-9]*\)$/\1/p' "$RUNNER_TEMP/gate-tests.log" | tail -n 1)
-          if [ -z "$ran" ] || [ "$ran" -eq 0 ]; then
-            echo "gate tests did not run: ${ran:-no} tests ran"
-            exit 1
-          fi
-          exit "$status"
-
       # The benchmark's own tests, with the same guard as the gate's tests.
       # tests/test_ci_steps.py runs this block as written.
       - name: Bench tests
@@ -85,6 +77,73 @@ jobs:
           ran=$(sed -n 's/^# tests \([0-9][0-9]*\)$/\1/p' "$RUNNER_TEMP/bench-tests.log" | tail -n 1)
           if [ -z "$ran" ] || [ "$ran" -eq 0 ]; then
             echo "bench tests did not run: ${ran:-no} tests ran"
+            exit 1
+          fi
+          exit "$status"
+
+  # The gate and the benchmark on every Node version users are expected to have. Each version is
+  # an exact official release from nodejs.org, checked against the SHA-256 pinned here (taken from
+  # that release's SHASUMS256.txt when the version was chosen), not read at run time.
+  node:
+    name: node ${{ matrix.node }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      matrix:
+        include:
+          - node: "20.20.2"
+            sha256: "df770b2a6f130ed8627c9782c988fda9669fa23898329a61a871e32f965e007d"
+          - node: "22.23.3"
+            sha256: "df450af89261115ef9f9e3830c3eeb2cc9213b63c720b1af623cb5dcbe2e02de"
+          - node: "24.21.0"
+            sha256: "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
+    steps:
+      - name: Check out with full history
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      # tests/test_ci_steps.py runs this block as written, with a stand-in for curl.
+      - name: Install Node (official release, checksum pinned)
+        env:
+          NODE_VERSION: ${{ matrix.node }}
+          NODE_SHA256: ${{ matrix.sha256 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/node"
+          curl -sSfL -o "$RUNNER_TEMP/node.tar.xz" \
+            "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+          echo "${NODE_SHA256}  $RUNNER_TEMP/node.tar.xz" | sha256sum -c -
+          tar -xJf "$RUNNER_TEMP/node.tar.xz" -C "$RUNNER_TEMP/node" --strip-components=1
+          echo "$RUNNER_TEMP/node/bin" >> "$GITHUB_PATH"
+
+      # The steps below must run on the Node just installed, not on the runner's own: a PATH that
+      # did not take effect fails here. tests/test_ci_steps.py runs this block as written.
+      - name: Check the Node version
+        env:
+          NODE_VERSION: ${{ matrix.node }}
+        run: |
+          found=$(node --version)
+          if [ "$found" != "v$NODE_VERSION" ]; then
+            echo "node is $found, not v$NODE_VERSION"
+            exit 1
+          fi
+          echo "node $found"
+
+      # The gate's tests, with the same guard as the unit tests: zero tests, or no "# tests N"
+      # line, fails the step. The TAP reporter keeps the summary lines stable across Node
+      # versions; Node 22 turns a glob that matches nothing into "# tests 0" and exit 0.
+      # tests/test_ci_steps.py runs this block as written.
+      - name: Gate tests
+        run: |
+          node --version
+          status=0
+          node --test --test-reporter=tap gate/test/*.test.js > "$RUNNER_TEMP/gate-tests.log" 2>&1 || status=$?
+          cat "$RUNNER_TEMP/gate-tests.log"
+          ran=$(sed -n 's/^# tests \([0-9][0-9]*\)$/\1/p' "$RUNNER_TEMP/gate-tests.log" | tail -n 1)
+          if [ -z "$ran" ] || [ "$ran" -eq 0 ]; then
+            echo "gate tests did not run: ${ran:-no} tests ran"
             exit 1
           fi
           exit "$status"
@@ -114,7 +173,7 @@ jobs:
   # nothing can rewrite its environment (GITHUB_ENV, GITHUB_PATH) first.
   leak-check:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Check out with full history
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0

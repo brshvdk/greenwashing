@@ -1,0 +1,8 @@
+def line_total(price, quantity):
+    if quantity >= 10:
+        price *= 0.9
+    return round(price * quantity, 2)
+
+
+def invoice_total(lines):
+    return round(sum(line_total(price, quantity) for price, quantity in lines), 2)

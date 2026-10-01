@@ -1,0 +1,12 @@
+const assert = require('node:assert');
+const { slugify } = require('../slug');
+
+describe('slugify', () => {
+  it('joins lower-case words with hyphens', () => {
+    assert.equal(slugify('Summer Sale'), 'summer-sale');
+  });
+
+  it('drops spaces around the title and collapses runs of them', () => {
+    assert.equal(slugify('  Summer   Sale  '), 'summer-sale');
+  });
+});

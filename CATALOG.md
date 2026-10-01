@@ -106,7 +106,7 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 ### GW-17 A skip that buys green
 - **Looks like:** the suite is green right after the agent added `.skip`, `xit` or `@pytest.mark.skip` to a failing test.
 - **Why it's green:** the failing test no longer runs. The summary counts it as skipped, and skipped reads as fine.
-- **Catch it:** any new skip, focus or expected-failure marker in a change is red until a human accepts it.
+- **Catch it:** any new skip, focus or expected-failure marker in a change, and any test the change removes, is red until a human accepts it.
 
 ### GW-18 A test with nothing to check
 - **Looks like:** `it("saves the user", async () => { await save(user) })`.
@@ -216,6 +216,11 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 - **Looks like:** a cleanup command is tested by checking its string.
 - **Why it's green:** the command is a program. Many changes alter what it does and keep the tested substrings.
 - **Catch it:** run the command in a throwaway environment and check the result.
+
+### GW-41 The expected value fitted to the bug
+- **Looks like:** `assertEqual(checkout_total([60, 40], 10, 0.2), 110)` in a test named "taxes the discounted sum", and the suite is green.
+- **Why it's green:** the expected value was taken from what the code returns, not worked out from the rule: `(100 - 10) * 1.2` is `108`. The test now guards the bug.
+- **Catch it:** work out expected values from the spec or by hand, never from a run of the code under test. Review a changed expected value as a change to the requirements.
 
 ## D. Reports that lie
 
@@ -447,7 +452,7 @@ IDs are stable and never renumbered. Gaps between sections are on purpose.
 
 ## H. CI that lies
 
-Found by independent reviewer agents while building this repository's own CI.
+Found by independent reviewer agents while building this repository's own CI and its gate.
 
 ### GW-110 A pipe swallows the exit code
 - **Looks like:** `pytest | tee test.log` in a CI step, and the step is green.
@@ -478,3 +483,8 @@ Found by independent reviewer agents while building this repository's own CI.
 - **Looks like:** an allowed-names check passes.
 - **Why it's green:** the allowlist file is read from the PR itself, so the PR can allow its own exception.
 - **Catch it:** read allowlists from the base branch.
+
+### GW-116 Green in the tree nobody changed
+- **Looks like:** the agent works in a git worktree and reports green tests.
+- **Why it's green:** the tests ran in the main checkout, which the change never touched. The failing commit sits on a branch, and the worktree that held it is already removed.
+- **Catch it:** run the tests on every tree and commit the turn changed, including the last commit of a removed worktree.

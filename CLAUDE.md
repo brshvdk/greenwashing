@@ -113,6 +113,7 @@ scripts/leak-check --all-history               # every commit of every branch; r
 - Revert a change by copying the file back, NOT `git checkout -- <file>` (it wipes uncommitted work next to it).
 - Stage files by name. `git add -A` drags untracked junk into the repo.
 - Conventional commits in English: `feat:`, `fix:`, `docs:`, `test:`, `chore:`.
+- CI minutes are limited. Push to the branch at save points and at the end of a step, not after every commit. Open the pull request only when the step is done. Do not edit a pull request's title or description after opening it unless the owner asks: each push and each edit runs the whole CI.
 
 ---
 

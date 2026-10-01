@@ -5,8 +5,10 @@ GitHub Actions runs a step without a shell: key - `bash -e` (the CI logs show
 "shell: /usr/bin/bash -e {0}"), so no pipefail - in a throwaway directory. A
 step may only have the keys name, env and run, and the workflows may not use
 keys that change how or whether a step runs (shell, if, continue-on-error,
-working-directory, defaults). Needs python3, ruff, git and node on PATH, as in the
-CI job that runs it.
+working-directory, defaults). The Node install runs with a stand-in for curl, so
+no test downloads anything. What cannot run here - the Node matrix, the job
+timeouts, the concurrency group - is checked in the workflow's text. Needs
+python3, ruff, git, node, tar and xz on PATH, as in the CI job that runs it.
 """
 
 import json
@@ -20,6 +22,9 @@ import textwrap
 import threading
 import unittest
 import http.server
+import hashlib
+import io
+import tarfile
 
 from test_safety_net import FakeGitHub, entry
 
@@ -299,6 +304,138 @@ class BenchNumbersStepTest(StepCase):
         code, out = self.run_numbers_step({"RESULTS.md": self.results()["RESULTS.md"]}, self.results())
         self.assertNotEqual(code, 0, out)
         self.assertIn("bench/results.json differs from this run", out)
+
+
+def job_blocks(workflow):
+    """Each job of a workflow: name -> the lines of its block (under `jobs:`, two spaces in)."""
+    lines = read(os.path.join(WORKFLOWS, workflow)).splitlines()
+    start = lines.index("jobs:")
+    jobs, name = {}, None
+    for line in lines[start + 1:]:
+        if line and not line.startswith(" ") and not line.startswith("#"):
+            break
+        match = re.match(r"^  ([A-Za-z0-9_-]+):\s*$", line)
+        if match:
+            name = match.group(1)
+            jobs[name] = []
+        elif name:
+            jobs[name].append(line)
+    return jobs
+
+
+def step_names(block):
+    return [line.strip()[len("- name: "):] for line in block if line.startswith("      - name: ")]
+
+
+class WorkflowSettingsTest(unittest.TestCase):
+    """Settings that only GitHub acts on, checked in the text of ci.yml."""
+
+    def test_every_job_has_a_timeout_of_minutes_not_hours(self):
+        jobs = job_blocks("ci.yml")
+        self.assertEqual(set(jobs), {"checks", "node", "leak-check"})
+        for name, block in jobs.items():
+            with self.subTest(job=name):
+                timeouts = [line for line in block if re.match(r"^    timeout-minutes: ", line)]
+                self.assertEqual(len(timeouts), 1, block)
+                minutes = int(timeouts[0].split(":")[1])
+                self.assertTrue(1 <= minutes <= 30, minutes)
+
+    def test_a_new_run_of_a_pull_request_cancels_its_older_run_only(self):
+        text = read(os.path.join(WORKFLOWS, "ci.yml"))
+        block = re.search(r"^concurrency:\n((?:  .*\n)+)", text, re.M)
+        self.assertIsNotNone(block, "no top-level concurrency")
+        self.assertEqual(block.group(1),
+                         "  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}\n"
+                         "  cancel-in-progress: true\n")
+
+    def test_the_node_job_runs_the_gate_and_the_benchmark_on_node_20_22_and_24(self):
+        block = job_blocks("ci.yml")["node"]
+        text = "\n".join(block)
+        versions = re.findall(r'^          - node: "(\d+)\.(\d+)\.(\d+)"\n            sha256: "([0-9a-f]{64})"$', text, re.M)
+        self.assertEqual([major for major, *_ in versions], ["20", "22", "24"], text)
+        self.assertEqual(len(re.findall(r"^          - ", text, re.M)), 3, text)
+        self.assertEqual(step_names(block), ["Check out with full history", "Install Node (official release, checksum pinned)",
+                                             "Check the Node version", "Gate tests", "Bench numbers"])
+        for name in ("NODE_VERSION: ${{ matrix.node }}", "NODE_SHA256: ${{ matrix.sha256 }}"):
+            self.assertIn(name, text)
+        # The other jobs stay on one Node: the runner's own.
+        for name in ("checks", "leak-check"):
+            self.assertNotIn("matrix", "\n".join(job_blocks("ci.yml")[name]))
+
+
+FAKE_NODE_VERSION = "9.9.9"
+
+
+def node_tarball(version=FAKE_NODE_VERSION):
+    """A .tar.xz laid out like a Node release, whose bin/node prints the version."""
+    data = io.BytesIO()
+    with tarfile.open(fileobj=data, mode="w:xz") as tar:
+        script = f"#!/bin/sh\necho v{version}\n".encode()
+        info = tarfile.TarInfo(f"node-v{version}-linux-x64/bin/node")
+        info.size, info.mode = len(script), 0o755
+        tar.addfile(info, io.BytesIO(script))
+    return data.getvalue()
+
+
+class InstallNodeStepTest(StepCase):
+    """The step runs with a curl on PATH that serves a tarball made here, or fails like curl -f."""
+
+    def run_install(self, tarball, sha256, curl_exit=0):
+        tools = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, tools)
+        with open(os.path.join(tools, "node.tar.xz"), "wb") as f:
+            f.write(tarball)
+        curl = os.path.join(tools, "curl")
+        with open(curl, "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\n"
+                    f'printf "%s\\n" "$@" > "{tools}/args"\n'
+                    f"[ {curl_exit} -eq 0 ] || exit {curl_exit}\n"
+                    'while [ $# -gt 0 ]; do if [ "$1" = "-o" ]; then out=$2; fi; shift; done\n'
+                    f'cp "{tools}/node.tar.xz" "$out"\n')
+        os.chmod(curl, 0o755)
+        code, out = self.run_step("ci.yml", "Install Node (official release, checksum pinned)", self.make_dir({}),
+                                  PATH=f"{tools}:{os.environ['PATH']}", NODE_VERSION=FAKE_NODE_VERSION, NODE_SHA256=sha256)
+        self.args = read(os.path.join(tools, "args")).split("\n")
+        github_path = os.path.join(self.runner_temp, "github_path")
+        return code, out, read(github_path) if os.path.exists(github_path) else ""
+
+    def test_the_pinned_release_is_installed_and_put_on_the_path(self):
+        tarball = node_tarball()
+        code, out, github_path = self.run_install(tarball, hashlib.sha256(tarball).hexdigest())
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"https://nodejs.org/dist/v{FAKE_NODE_VERSION}/node-v{FAKE_NODE_VERSION}-linux-x64.tar.xz", self.args)
+        # -f: an HTTP error fails the download instead of saving the error page.
+        self.assertIn("-sSfL", self.args)
+        bin_dir = os.path.join(self.runner_temp, "node", "bin")
+        self.assertEqual(github_path, bin_dir + "\n")
+        node = subprocess.run([os.path.join(bin_dir, "node")], capture_output=True, text=True)
+        self.assertEqual(node.stdout, f"v{FAKE_NODE_VERSION}\n")
+
+    def test_a_download_with_another_checksum_fails_and_adds_nothing_to_the_path(self):
+        tarball = node_tarball()
+        code, out, github_path = self.run_install(tarball, hashlib.sha256(tarball + b"x").hexdigest())
+        self.assertNotEqual(code, 0, out)
+        self.assertIn("FAILED", out)
+        self.assertEqual(github_path, "")
+
+    def test_a_failed_download_fails_and_adds_nothing_to_the_path(self):
+        tarball = node_tarball()
+        code, out, github_path = self.run_install(tarball, hashlib.sha256(tarball).hexdigest(), curl_exit=22)
+        self.assertNotEqual(code, 0, out)
+        self.assertEqual(github_path, "")
+
+
+class CheckNodeVersionStepTest(StepCase):
+    def test_the_installed_version_passes(self):
+        found = subprocess.run(["node", "--version"], capture_output=True, text=True, check=True).stdout.strip()
+        code, out = self.run_step("ci.yml", "Check the Node version", self.make_dir({}), NODE_VERSION=found[1:])
+        self.assertEqual(code, 0, out)
+        self.assertIn(f"node {found}", out)
+
+    def test_another_node_on_the_path_fails(self):
+        code, out = self.run_step("ci.yml", "Check the Node version", self.make_dir({}), NODE_VERSION="0.0.1")
+        self.assertNotEqual(code, 0, out)
+        self.assertIn(", not v0.0.1", out)
 
 
 class ToolsVenvStepTest(StepCase):

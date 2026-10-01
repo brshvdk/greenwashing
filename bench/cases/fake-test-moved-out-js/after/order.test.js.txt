@@ -1,0 +1,7 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { subtotal } = require('./order');
+
+test('subtotal multiplies price by quantity', () => {
+  assert.equal(subtotal([{ price: 2, quantity: 3 }]), 6);
+});

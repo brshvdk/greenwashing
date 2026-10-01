@@ -1,7 +1,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { chooseCommand, readConfig, isPythonTest, ROOT_FILES, CHECKS, MUTANT_LIMITS } = require('../lib/command');
+const {
+  chooseCommand, readConfig, support, isPythonTest, ROOT_FILES, CHECKS, MUTANT_LIMITS,
+} = require('../lib/command');
 
 // Every root file the rules look at is absent unless the case names it.
 const files = (present = {}) => ({ ...Object.fromEntries(ROOT_FILES.map((name) => [name, null])), ...present });
@@ -190,3 +192,61 @@ test('.greenwashing.json: a config that cannot be trusted is an error, not a def
     assert.match(pick({ '.greenwashing.json': text, 'package.json': '{"scripts": {"test": "jest"}}' }).error, message, text);
   }
 });
+
+test('the gate checks a project whose test command is one of the five kinds, or one a human set; not one with none or another kind', () => {
+  const scripts = (all) => support(files({ 'package.json': JSON.stringify({ scripts: all }) }), false);
+  for (const [test, runners] of [['node --test', ['node --test']], ['node --import tsx --test src', ['node --test']], ['jest --coverage', ['jest']],
+    ['npx vitest run', ['vitest']], ['node node_modules/.bin/jest', ['jest']], ['python3 -m pytest -q', ['pytest']], ['py.test', ['pytest']],
+    ['python3 -m unittest discover', ['unittest']], ['tsc && vitest', ['vitest']], ['jest && node --test', ['jest', 'node --test']]]) {
+    assert.deepEqual(scripts({ test }), { supported: true, runners }, test);
+  }
+  // Through the scripts it runs: npm, yarn, pnpm; a loop of scripts ends.
+  for (const [all, runners] of [[{ test: 'npm run unit', unit: 'node --test' }, ['node --test']], [{ test: 'npm run-script unit', unit: 'jest' }, ['jest']],
+    [{ test: 'yarn unit', unit: 'vitest' }, ['vitest']], [{ test: 'yarn run lint && pnpm run unit', lint: 'eslint .', unit: 'pytest' }, ['pytest']],
+    [{ test: 'pnpm unit', unit: 'npm run deep', deep: 'node --test' }, ['node --test']]]) {
+    assert.deepEqual(scripts(all), { supported: true, runners }, JSON.stringify(all));
+  }
+  // Another kind, a name inside a longer word or a file name, or a script that runs no runner.
+  for (const all of [{ test: 'mocha' }, { test: 'go test ./...' }, { test: 'make test' }, { test: 'nodemon --test' }, { test: 'node --test-reporter=tap' },
+    { test: 'eslint --plugin eslint-plugin-jest .' }, { test: 'node scripts/jest.config.js' }, { test: 'npm run unit', unit: 'mocha' },
+    { test: 'npm run a', a: 'npm run b', b: 'npm run a' }, { test: 'npm test' }, { test: 'npm run missing' }]) {
+    const found = scripts(all);
+    assert.equal(found.supported, false, JSON.stringify(all));
+    assert.equal(found.why, `the test command npm test runs ${JSON.stringify(all.test)}`);
+  }
+  assert.deepEqual(support(files(), false), { supported: false, why: 'no test command was found' });
+  assert.deepEqual(support(files({ 'package.json': '{"scripts": {"test": "echo \\"Error: no test specified\\" && exit 1"}}' }), false),
+    { supported: false, why: 'no test command was found' });
+  // Found without a script: pytest settings, Python tests.
+  assert.deepEqual(support(files({ 'pytest.ini': '' }), false), { supported: true, runners: ['pytest'] });
+  assert.deepEqual(support(files(), true), { supported: true, runners: ['unittest'] });
+  // Set by a human: whatever it is, with the runners it names, also through npm test and the scripts after it.
+  const human = (command, pkg = null) => support(files({ '.greenwashing.json': JSON.stringify({ testCommand: command }), 'package.json': pkg }), false);
+  assert.deepEqual(human('go test ./...', '{"scripts": {"test": "mocha"}}'), { supported: true, runners: null });
+  assert.deepEqual(human('python3 -I -m unittest discover -s tests && node --test gate/test/*.test.js'), { supported: true, runners: ['unittest', 'node --test'] });
+  assert.deepEqual(human('npm test', '{"scripts": {"test": "npm run unit", "unit": "vitest"}}'), { supported: true, runners: ['vitest'] });
+  assert.deepEqual(human('npm t', '{'), { supported: true, runners: null });
+  // A broken setup: checked, and did not run.
+  assert.deepEqual(support(files({ 'package.json': '{' }), false), { supported: true, runners: null });
+  assert.deepEqual(support(files({ 'package.json': '{"scripts": {"test": "mocha"}}' }), true), { supported: true, runners: null });
+});
+
+test('support() reads a runner only as a word of its own and follows every form of a script call; a BOM or scripts: null in package.json', () => {
+  const scripts = (all) => support(files({ 'package.json': JSON.stringify({ scripts: all }) }), false);
+  for (const test of ['sh run-unittest.sh', 'node vitest.config.js', 'node build.js && echo --test', 'node build.js | tee --test', 'ts-node --test src',
+    'sh run-pytest', 'sh run-vitest']) {
+    assert.equal(scripts({ test }).supported, false, test);
+  }
+  // A script call is npm, yarn or pnpm by name: another tool's run is not followed.
+  assert.equal(scripts({ test: 'cnpm run unit', unit: 'jest' }).supported, false);
+  for (const [all, runners] of [[{ test: 'npm run test:unit', 'test:unit': 'jest' }, ['jest']], [{ test: 'yarn run unit', unit: 'vitest' }, ['vitest']],
+    [{ test: 'npm run unit.fast', 'unit.fast': 'node --test' }, ['node --test']]]) {
+    assert.deepEqual(scripts(all), { supported: true, runners }, JSON.stringify(all));
+  }
+  const human = (command, pkg) => support(files({ '.greenwashing.json': JSON.stringify({ testCommand: command }), 'package.json': pkg }), false);
+  assert.deepEqual(human('npm t', '{"scripts": {"test": "jest"}}'), { supported: true, runners: ['jest'] });
+  assert.deepEqual(human('npm tag ls && ./check', '{"scripts": {"test": "jest"}}'), { supported: true, runners: null });
+  assert.deepEqual(human('npm run unit', '{"scripts": null}'), { supported: true, runners: null });
+  assert.deepEqual(support(files({ 'package.json': '\ufeff{"scripts": {"test": "jest"}}' }), false), { supported: true, runners: ['jest'] });
+});
+

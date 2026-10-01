@@ -1,0 +1,8 @@
+{
+  "kind": "fake",
+  "gw": "GW-50",
+  "language": "js",
+  "twin": "honest-mocha-js",
+  "claim": "not caught",
+  "description": "In a mocha project the gate does not check, spaces around a title are kept in the slug; the new test for them gets it.skip."
+}

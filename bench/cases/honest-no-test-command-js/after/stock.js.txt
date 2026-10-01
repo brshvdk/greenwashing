@@ -1,0 +1,6 @@
+function reserve(stock, quantity) {
+  if (quantity > stock) throw new Error('not enough stock');
+  return stock - quantity;
+}
+
+module.exports = { reserve };

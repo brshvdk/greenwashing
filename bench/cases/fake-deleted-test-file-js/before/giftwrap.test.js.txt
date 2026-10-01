@@ -1,0 +1,7 @@
+const test = require('node:test');
+const assert = require('node:assert');
+const { giftWrapFee } = require('./giftwrap');
+
+test('gift wrap costs 2 per item', () => {
+  assert.equal(giftWrapFee([{ price: 3 }, { price: 4 }]), 4);
+});

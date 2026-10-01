@@ -16,6 +16,8 @@ A green suite is a claim, not proof. Before you say "done", make the claim check
 5. **Expected values come from outside the code under test.** Use literals or the spec, never the object you are testing (GW-01).
 6. **Fixtures must contain the difference under test.** Use at least two distinct items, and different values wherever arguments could be swapped (GW-04, GW-11).
 7. **Mock honestly.** Never mock both sides of one seam (GW-22). Mock the real error contract: if the client returns `{ error }`, don't make the mock throw (GW-25).
+8. **Never delete a failing test.** Fix the code; if the test is wrong, say why in the report and leave its removal to a human (GW-17).
+9. **Never take an expected value from what the code under test returns.** Work it out by hand or from the spec: a changed expected value is a changed requirement (GW-41).
 
 ## How to report
 

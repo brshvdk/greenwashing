@@ -7,7 +7,9 @@ const { spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { readConfig, MAX_TIMEOUT_SECONDS } = require('../lib/command');
+const {
+  readConfig, gateOff, MAX_TIMEOUT_SECONDS, MIN_NODE, NO_NODE,
+} = require('../lib/command');
 
 const ROOT = path.join(__dirname, '..', '..');
 const readJson = (file) => JSON.parse(fs.readFileSync(path.join(ROOT, file), 'utf8'));
@@ -41,9 +43,16 @@ const CONFIGS = {
 };
 
 for (const [file, { variable, placeholder }] of Object.entries(CONFIGS)) {
+  test(`${file}: one session hook that tells the user when node cannot start the gate`, () => {
+    const { hooks } = readJson(file);
+    // When node cannot start the gate at all, the shell prints the line itself.
+    assert.deepEqual(hooks.SessionStart.flatMap((group) => group.hooks),
+      [{ type: 'command', command: `node "${placeholder}/gate/hook.js" session || echo '${JSON.stringify({ systemMessage: gateOff(NO_NODE) })}'` }]);
+  });
+
   test(`${file}: one prompt hook and one Stop hook, the Stop hook outlives the longest test run`, () => {
     const { hooks } = readJson(file);
-    assert.deepEqual(Object.keys(hooks).sort(), ['Stop', 'UserPromptSubmit']);
+    assert.deepEqual(Object.keys(hooks).sort(), ['SessionStart', 'Stop', 'UserPromptSubmit']);
     const [prompt] = hooks.UserPromptSubmit.flatMap((group) => group.hooks);
     const [stop] = hooks.Stop.flatMap((group) => group.hooks);
     assert.equal(hooks.UserPromptSubmit.flatMap((group) => group.hooks).length, 1);
@@ -71,6 +80,12 @@ for (const [file, { variable, placeholder }] of Object.entries(CONFIGS)) {
     const run = (command) => spawnSync('sh', ['-c', command], { input, env, encoding: 'utf8' });
     const prompt = run(hooks.UserPromptSubmit[0].hooks[0].command);
     assert.deepEqual([prompt.status, prompt.stdout, prompt.stderr], [0, '', '']);
+    // A Node the gate runs on: the session hook says nothing. No node on PATH: the user is told.
+    const session = hooks.SessionStart[0].hooks[0].command;
+    assert.deepEqual([run(session).status, run(session).stdout], [0, '']);
+    const noNode = spawnSync('/bin/sh', ['-c', session], { input, env: { ...env, PATH: fs.mkdtempSync(path.join(base, 'empty path ')) }, encoding: 'utf8' });
+    assert.equal(noNode.status, 0);
+    assert.deepEqual(JSON.parse(noNode.stdout), { systemMessage: gateOff(NO_NODE) });
     const stop = run(hooks.Stop[0].hooks[0].command);
     assert.equal(stop.status, 0, stop.stderr);
     // Not a git repository, so the tests run; "echo ok" prints no counts: blocked.
@@ -79,6 +94,13 @@ for (const [file, { variable, placeholder }] of Object.entries(CONFIGS)) {
     assert.match(output.reason, /Command: echo ok \(\.greenwashing\.json\)/);
   });
 }
+
+test('the oldest Node the gate runs on is the oldest Node CI tests', () => {
+  const workflow = fs.readFileSync(path.join(ROOT, '.github', 'workflows', 'ci.yml'), 'utf8');
+  const majors = [...workflow.matchAll(/^ {10}- node: "(\d+)\.\d+\.\d+"$/gm)].map((m) => Number(m[1]));
+  assert.ok(majors.length > 0, 'no Node versions in ci.yml');
+  assert.equal(Math.min(...majors), MIN_NODE);
+});
 
 test('the plugin command /greenwashing:mutants runs the mutation command as written, from a path with a space', (t) => {
   const text = fs.readFileSync(path.join(ROOT, 'commands', 'mutants.md'), 'utf8');

@@ -10,7 +10,8 @@ const path = require('node:path');
 
 const HOOK = path.join(__dirname, '..', 'hook.js');
 const NODE_PASS = "const test = require('node:test');\nconst assert = require('node:assert');\ntest('ok', () => assert.equal(1 + 1, 2));\n";
-const NODE_FAIL = "const test = require('node:test');\nconst assert = require('node:assert');\ntest('bad', () => assert.equal(1, 2));\n";
+// The same test as NODE_PASS, failing: a test edited in place, not one removed and another added (GW-17).
+const NODE_FAIL = "const test = require('node:test');\nconst assert = require('node:assert');\ntest('ok', () => assert.equal(1, 2));\n";
 const NODE_EMPTY = "const test = require('node:test');\ntest.skip('later', () => {});\n";
 const NODE_CMD = 'node --test --test-reporter=tap t.test.js';
 const PY_PASS = 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_a(self):\n        self.assertEqual(1 + 1, 2)\n';
@@ -18,6 +19,10 @@ const PY_FAIL = 'import unittest\n\n\nclass T(unittest.TestCase):\n    def test_
 // A command that prints the counts of a green unittest run without running anything.
 const GREEN_ECHO = "printf 'Ran 1 test in 0.1s\\n\\nOK\\n'";
 const NO_CHANGES = { systemMessage: 'greenwashing: no files changed this turn - tests not run' };
+// The line of a turn in a project the gate cannot check.
+const NOT_CHECKED = (why) => `greenwashing: this turn was NOT checked - ${why}, and the gate reads only the test output of pytest, unittest, jest, vitest and node --test. `
+  + 'To have turns checked, a human sets {"testCommand": "<a command that runs your tests with one of them, or prints their output>"} in .greenwashing.json '
+  + 'in the project root, between turns.';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function tempDir(t) {
@@ -70,7 +75,7 @@ function session(t, dir, { id = 's', tmp = tempDir(t), env: extra = {} } = {}) {
   };
   const stopInput = (active, cwd) => ({ session_id: id, cwd, hook_event_name: 'Stop', stop_hook_active: active });
   return {
-    prompt: (cwd = dir) => call('prompt', { session_id: id, cwd, hook_event_name: 'UserPromptSubmit', prompt: 'go' }),
+    prompt: (cwd = dir, text = 'go') => call('prompt', { session_id: id, cwd, hook_event_name: 'UserPromptSubmit', prompt: text }),
     stop: (active = false, cwd = dir) => call('stop', stopInput(active, cwd)),
     raw: call,
     stopInput,
@@ -303,10 +308,11 @@ test('a Python project without a test command runs unittest', (t) => {
 });
 
 test('no way to find a test command: blocked, and the reason says how to set one', (t) => {
-  const dir = project(t, { 'main.go': 'package main\n' }, null);
+  // A project the gate checked when the work started, whose test script the turn removes.
+  const dir = project(t, { 'package.json': '{"scripts": {"test": "node --test"}}', 'app.js': '1;\n' }, null);
   const gate = session(t, dir);
   gate.prompt();
-  write(dir, { 'main.go': 'package main\n\nfunc main() {}\n' });
+  write(dir, { 'package.json': '{"scripts": {}}', 'app.js': '2;\n' });
   const { json } = gate.stop();
   assert.equal(json.decision, 'block');
   assert.match(json.reason, /a human adds \{"testCommand": "<the command that runs your tests>"\} to \.greenwashing\.json in the project root, between turns/);
@@ -1190,11 +1196,13 @@ test('a repository whose .git is a symbolic link still has its worktrees followe
 test('a folder git cannot read is not taken for one outside git', (t) => {
   const dir = tempDir(t);
   write(dir, { '.git': 'gitdir: /nonexistent/greenwashing-gate-test\n', 'main.go': 'package main\n' });
+  // With a prompt recorded (which found no test command, reading what git would not list) and without.
   const gate = session(t, dir);
   gate.prompt();
   const { json } = gate.stop();
   assert.equal(json.decision, 'block');
   assert.match(json.reason, /git cannot read the repository this folder is in/);
+  assert.match(session(t, dir, { id: 'no-prompt' }).stop().json.reason, /git cannot read the repository this folder is in/);
   // The same for a project in a subfolder of such a checkout.
   write(dir, { 'p/main.go': 'package main\n' });
   assert.match(session(t, path.join(dir, 'p')).stop().json.reason, /git cannot read the repository this folder is in/);
@@ -1212,8 +1220,8 @@ test('an empty .git folder above a folder outside git is not a checkout', (t) =>
   const dir = tempDir(t);
   fs.mkdirSync(path.join(dir, '.git'));
   write(dir, { 'p/main.go': 'package main\n' });
+  // No prompt recorded, as for a folder git cannot read.
   const gate = session(t, path.join(dir, 'p'));
-  gate.prompt();
   assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: not a git repository and no test command - tests not run' });
 });
 
@@ -1278,7 +1286,7 @@ test('outside a git repository with no test command, the stop is allowed with on
   write(dir, { 'main.go': 'package main\n', 'helper.py': 'print("helper")\n' });
   const gate = session(t, dir);
   gate.prompt();
-  assert.deepEqual(gate.stop().json, { systemMessage: 'greenwashing: not a git repository and no test command - tests not run' });
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
   // A broken config is a broken setup, not "nothing to test".
   write(dir, { '.greenwashing.json': '{"testCommand": ' });
   gate.prompt();
@@ -1299,9 +1307,10 @@ test('outside git too, the tests run with the settings the turn started with', (
 
 test('Python files git does not track yet make a Python project; outside git, a top-level .py does', (t) => {
   const dir = project(t, { 'data.json': '{}\n' }, null);
+  write(dir, { 'tests/__init__.py': '', 'tests/test_a.py': PY_PASS });
   const gate = session(t, dir);
   gate.prompt();
-  write(dir, { 'tests/__init__.py': '', 'tests/test_a.py': PY_FAIL });
+  write(dir, { 'tests/test_a.py': PY_FAIL });
   const { json } = gate.stop();
   assert.equal(json.decision, 'block');
   assert.match(json.reason, /Command: python3 -m unittest discover \(Python project\)/);
@@ -1540,7 +1549,7 @@ test('the block for a failing run names the failed tests', (t) => {
   const gate = session(t, dir);
   gate.prompt();
   write(dir, { 't.test.js': NODE_FAIL });
-  assert.match(gate.stop().json.reason, /\nFailed tests \(1\):\n- bad\nLast 20 lines of output:/);
+  assert.match(gate.stop().json.reason, /\nFailed tests \(1\):\n- ok\nLast 20 lines of output:/);
 });
 
 test('GW-17, GW-18, GW-01: each problem in the added test lines blocks, with file, line and entry', (t) => {
@@ -1636,10 +1645,12 @@ test('a test file moved in the turn is read against the file it was: an old skip
   write(dir, { 'b.test.js': `${old}it.only('new', () => { expect(f()).toBe(1); });\n` });
   const { json } = gate.stop();
   assert.match(json.reason, /\n- b\.test\.js:5: it\.only - only this test runs \(GW-17\)\nSee each/);
-  // Mostly new lines: a new file, not a moved one.
+  // Mostly new lines: a new file, not a moved one. The test 'adds' of the deleted file is gone too.
   fs.unlinkSync(path.join(dir, 'b.test.js'));
   write(dir, { 'c.test.js': "it.skip('old', () => {});\ntest('more', () => {\n  expect(add(2, 2)).toBe(4);\n}, 5000);\n" });
-  assert.match(gate.stop(true).json.reason, /\n- c\.test\.js:1: it\.skip - the test does not run \(GW-17\)\nSee each/);
+  const moved = gate.stop(true).json.reason;
+  assert.match(moved, /\n- c\.test\.js:1: it\.skip - the test does not run \(GW-17\)\nRemoved tests /);
+  assert.match(moved, /\n- src\/__tests__\/a\.test\.js: 'adds' \(GW-17\)\nSee each/);
 });
 
 test('a test the turn brings into an old skipped suite by moving the suite around it blocks, in JS and Python', (t) => {
@@ -1665,7 +1676,7 @@ test('a copied test file is new: the file it came from is still there, so its ol
 });
 
 test('GW-114 for a .greenwashing.json git ignores: changed or created during the turn blocks, alone too', (t) => {
-  const dir = project(t, { 'a.test.js': JEST_OK, '.gitignore': '.greenwashing.json\n' }, null);
+  const dir = project(t, { 'a.test.js': JEST_OK, '.gitignore': '.greenwashing.json\n', 'package.json': '{"scripts": {"test": "jest"}}' }, null);
   const settings = (checks) => ({ '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, ...(checks ? { checks } : {}) }) });
   const gate = session(t, dir);
   // Created during the turn, with nothing else changed; removed again, nothing changed.
@@ -1824,3 +1835,911 @@ test('a test file that was dirty when the turn started: only the lines the turn 
   write(dir, { 'a.test.js': `${JEST_OK}it.skip('mine', () => {});\ntest('b', () => {\n  expect(b()).toBe(2);\n});\n` });
   assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
 });
+
+// Tests the turn removes (GW-17). Two tests in each language; the turns remove the second.
+const TWO_JS = `${JEST_OK}test('subtracts', () => {\n  expect(sub(3, 2)).toBe(1);\n});\n`;
+const MUL_JS = "test('multiplies', () => {\n  expect(mul(2, 3)).toBe(6);\n});\n";
+const TWO_PY = 'import unittest\n\n\nclass TestMath(unittest.TestCase):\n    def test_adds(self):\n        self.assertEqual(add(1, 2), 3)\n\n'
+  + '    def test_subtracts(self):\n        self.assertEqual(sub(3, 2), 1)\n';
+const ONE_PY = TWO_PY.replace(/\n\n {4}def test_subtracts[^]*$/, '\n');
+
+test('a test the turn removes blocks, named with its file, GW-17 and how the user allows it, in JS and Python', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 'test_m.py': TWO_PY }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': JEST_OK, 'test_m.py': ONE_PY });
+  const { json } = gate.stop();
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /^greenwashing gate: this turn removed tests - you cannot finish yet\.\nRemoved tests /);
+  assert.match(json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\n- test_m\.py: TestMath\.test_subtracts \(GW-17\)\nSee each entry in /);
+  assert.match(json.reason, /a turn whose prompt from the user says "allow test removal" may remove tests/);
+  assert.match(json.reason, /turn the check off with \{"checks": \{"skips": false\}\}/);
+});
+
+test('a whole test file removed blocks with each of its tests; a test moved to a file no runner collects is removed too', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 'b.test.js': MUL_JS, 'app.js': '1;\n' }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  fs.unlinkSync(path.join(dir, 'a.test.js'));
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'adds' \(GW-17\)\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  write(dir, { 'a.test.js': TWO_JS, 'cases.js': MUL_JS });
+  fs.unlinkSync(path.join(dir, 'b.test.js'));
+  const reason = gate.stop(true).json.reason;
+  assert.match(reason, /\nRemoved tests [^\n]*\n- b\.test\.js: 'multiplies' \(GW-17\)\nSee each/);
+});
+
+test('a test renamed with the same body, or moved to another test file, is not removed; moved into a skipped suite it is a new skip', (t) => {
+  const old = "describe.skip('old', () => {\n  test('a', () => { expect(f()).toBe(1); });\n});\n";
+  const dir = project(t, { 'a.test.js': TWO_JS, 'test_m.py': TWO_PY, 'old.test.js': old }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, {
+    'a.test.js': JEST_OK.replace("'adds'", "'adds two numbers'"),
+    'math/sub.test.js': "describe('sub', () => {\n  test('subtracts', () => {\n    expect(sub(3, 2)).toBe(1);\n  });\n});\n",
+    'test_m.py': TWO_PY.replace('class TestMath', 'class TestArithmetic').replace('def test_adds', 'def test_adds_two'),
+  });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  gate.prompt();
+  write(dir, { 'math/sub.test.js': '', 'old.test.js': old.replace('});\n', "});\n  test('subtracts', () => {\n    expect(sub(3, 2)).toBe(1);\n  });\n") });
+  const { json } = gate.stop();
+  assert.match(json.reason, /\n- old\.test\.js:3: a test inside describe\.skip - the test does not run \(GW-17\)\nSee each/);
+  assert.doesNotMatch(json.reason, /Removed tests/);
+});
+
+test('the words "allow test removal" in the user\'s prompt let that turn remove tests, and its line names them; nothing else lets it', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 'notes.txt': 'x\n' }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'Drop sub() and its test. Allow  Test\nRemoval, please.');
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - .*: 1 passed, 0 failed, 0 skipped; tests removed with the user's permission \(1\): a\.test\.js: 'subtracts'$/);
+  // Only for that turn, and only the user's prompt: words the agent writes into a file do not count.
+  gate.prompt(dir, 'Tidy up the notes.');
+  write(dir, { 'a.test.js': '', 'notes.txt': 'allow test removal\n' });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'adds' \(GW-17\)\nSee each/);
+  // A word that only contains them is not them.
+  gate.prompt(dir, 'We disallow test removals here.');
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'adds' \(GW-17\)\nSee each/);
+});
+
+test('after WORK NOT ACCEPTED a removal still blocks at the next prompt without the words, and the words then let it go', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': JEST_OK });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\n/);
+  assert.match(gate.stop(true).json.systemMessage, /^greenwashing: CHECKS DID NOT PASS - WORK NOT ACCEPTED\. .*Last result: failed - 1 test removed/);
+  gate.prompt(dir, 'go on');
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\n/);
+  gate.prompt(dir, 'allow test removal');
+  assert.match(gate.stop().json.systemMessage, /; tests removed with the user's permission \(1\): a\.test\.js: 'subtracts'$/);
+});
+
+test('a test the user removes between turns does not block, while the agent\'s removal carried from the turn before does', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 'b.test.js': MUL_JS, 'test_m.py': TWO_PY }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': JEST_OK });
+  for (const active of [false, true, true]) assert.equal(gate.stop(active).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // The agent stopped: between turns the user deletes b.test.js and a Python test.
+  fs.unlinkSync(path.join(dir, 'b.test.js'));
+  write(dir, { 'test_m.py': ONE_PY });
+  gate.prompt();
+  const reason = gate.stop().json.reason;
+  assert.match(reason, /\nRemoved tests [^\n]*\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  // Turns cut off before their Stop after it: the user's removals stay theirs.
+  gate.prompt();
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /\nRemoved tests [^\n]*\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  // The agent removes another test of a file the user changed: that one blocks.
+  write(dir, { 'test_m.py': ONE_PY.replace(/ {4}def test_adds[^]*$/, '    pass\n') });
+  assert.match(gate.stop(true).json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\n- test_m\.py: TestMath\.test_adds \(GW-17\)\nSee each/);
+  write(dir, { 'test_m.py': ONE_PY });
+  // After a release, the user edits the file the agent removed a test from: the file as it is now is theirs.
+  assert.equal(gate.stop(true).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  write(dir, { 'a.test.js': `${JEST_OK}// kept as it is\n` });
+  gate.prompt();
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+});
+
+test('a test removed after a turn the gate only blocked, or cut off before its Stop, counts as the agent\'s: the agent may have removed it', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 'b.test.js': MUL_JS, 'app.js': '1;\n' }, GREEN_ECHO);
+  const gate = session(t, dir);
+  // Blocked once, then the turn is interrupted: the removal made after that Stop blocks at the next turn.
+  gate.prompt();
+  write(dir, { 'app.js': '2;\n', 'a.test.js': "test('adds', () => {\n  expect(add(1, 2)).toBe(3);\n});\ntest.skip('x', () => {});\n" });
+  assert.match(gate.stop().json.reason, /a\.test\.js:4: test\.skip/);
+  write(dir, { 'a.test.js': JEST_OK });
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /\nRemoved tests [^\n]*\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  // A turn cut off before any Stop: the same.
+  write(dir, { 'a.test.js': TWO_JS });
+  assert.match(gate.stop(true).json.systemMessage, /^greenwashing: tests passed/);
+  gate.prompt();
+  fs.unlinkSync(path.join(dir, 'b.test.js'));
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /\n- b\.test\.js: 'multiplies' \(GW-17\)\nSee each/);
+  // A killed Stop records nothing either: still the agent's.
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /\n- b\.test\.js: 'multiplies' \(GW-17\)\nSee each/);
+});
+
+
+test('"skips": false turns the check of removed tests off', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, checks: { skips: false } }) }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - [^;]*$/);
+});
+
+test('a test removed in a worktree the agent works in, or in the last commit of a removed worktree, blocks', (t) => {
+  const { dir, tree, gate } = seenWorktree(t, { 'a.test.js': TWO_JS }, GREEN_ECHO);
+  write(tree, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop(false, tree).json.reason, /\n- \.claude\/worktrees\/feat\/a\.test\.js: 'subtracts' \(GW-17\)\n/);
+  git(tree, 'commit', '-qam', 'drop a test');
+  git(dir, 'worktree', 'remove', tree);
+  assert.match(gate.stop(true, dir).json.reason, /\n- a\.test\.js \(last commit of the removed worktree \.claude\/worktrees\/feat\): 'subtracts' \(GW-17\)\n/);
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+// A project the gate cannot check: no test command, or one of another kind, when the work started.
+const MOCHA_PKG = '{"scripts": {"test": "mocha"}}';
+
+test('a project with no test command, or a test script of another kind, ends each turn with a line saying it was not checked', (t) => {
+  const none = project(t, { 'main.go': 'package main\n' }, null);
+  const gate = session(t, none);
+  gate.prompt();
+  write(none, { 'main.go': 'package main\n\nfunc main() {}\n' });
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+  // Also a turn that changed nothing: the gate says it is not checking.
+  gate.prompt();
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+  // Tests the agent adds in the turn do not make that turn checked: the start decides.
+  gate.prompt();
+  write(none, { 'a.test.js': NODE_FAIL, 'package.json': '{"scripts": {"test": "node --test"}}' });
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+  // From the next turn on the project has them, so the gate checks it.
+  gate.prompt();
+  write(none, { 'a.test.js': `${NODE_FAIL}// more\n` });
+  assert.match(gate.stop().json.reason, /the tests failed/);
+
+  const mocha = project(t, { 'package.json': MOCHA_PKG, 'test/cart.js': "it('adds', () => {});\n", 'cart.js': '1;\n' }, null);
+  const other = session(t, mocha);
+  other.prompt();
+  write(mocha, { 'cart.js': '2;\n' });
+  assert.deepEqual(other.stop().json, { systemMessage: NOT_CHECKED('the test command npm test runs "mocha"') });
+});
+
+test('a test script that runs one of the five kinds through another script is checked; emptied or removed by the agent it is did not run', (t) => {
+  const pkg = (unit) => JSON.stringify({ scripts: { test: 'npm run unit', unit } });
+  const dir = project(t, { 'package.json': pkg('node --test --test-reporter=tap'), 't.test.js': NODE_PASS, 'app.js': '1;\n' }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'package.json': pkg('exit 0'), 'app.js': '2;\n' });
+  const { json } = gate.stop();
+  assert.equal(json.decision, 'block');
+  assert.match(json.reason, /Command: npm test \(package\.json scripts\.test\)\nResult: did not run - no test counts/);
+  // The test script removed: no test command, still did not run.
+  write(dir, { 'package.json': '{"scripts": {}}' });
+  assert.match(gate.stop(true).json.reason, /Result: did not run - no test command found/);
+  // After WORK NOT ACCEPTED the next turn keeps what the work started with.
+  gate.stop(true);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Result: did not run - no test command found/);
+});
+
+test('a test command a human set in .greenwashing.json is always checked: output with no counts is did not run', (t) => {
+  const dir = project(t, { 'main.go': 'package main\n' }, 'go-test-that-is-not-installed ./...');
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'main.go': 'package main\n\nfunc main() {}\n' });
+  assert.match(gate.stop().json.reason, /Result: did not run - the command was not found \(exit code 127\)/);
+});
+
+test('in a project the gate cannot check, a .greenwashing.json the agent writes during the turn still blocks (GW-114)', (t) => {
+  const dir = project(t, { 'package.json': MOCHA_PKG, 'cart.js': '1;\n' }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /Changed: \.greenwashing\.json\n/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // Left as the gate last saw it, it is still the agent's in the next turn: the project stays one the
+  // gate cannot check, and the change still blocks.
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+  // Put back: the turn is not checked, as before.
+  fs.unlinkSync(path.join(dir, '.greenwashing.json'));
+  assert.deepEqual(gate.stop(true).json, { systemMessage: NOT_CHECKED('the test command npm test runs "mocha"') });
+  // A human who sets it between turns makes the project one the gate checks.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  gate.prompt();
+  write(dir, { 'cart.js': '2;\n' });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - printf/);
+});
+
+test('outside git, a test command the work started with and the turn removes is did not run, not "no test command"', (t) => {
+  const dir = tempDir(t);
+  write(dir, { 'package.json': '{"scripts": {"test": "node --test"}}', 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'package.json': '{}' });
+  assert.match(gate.stop().json.reason, /Result: did not run - no test command found/);
+});
+
+test('on a Node older than the gate needs, no turn is blocked: the session start and each Stop tell the user, the prompt says nothing', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  // The hook runs with this Node claiming to be 18.20.8 (process.versions.node can be redefined).
+  const preload = path.join(tempDir(t), 'old-node.js');
+  fs.writeFileSync(preload, "Object.defineProperty(process.versions, 'node', { value: '18.20.8' });\n");
+  const gate = session(t, dir, { env: { NODE_OPTIONS: `--require ${preload}` } });
+  const off = { systemMessage: 'greenwashing: the gate is OFF - the node on PATH is v18.20.8. It needs Node.js 20 or newer on PATH; '
+    + 'no turn is checked until a human sets that up and restarts Claude Code.' };
+  const started = gate.raw('session', { session_id: 's', cwd: dir, hook_event_name: 'SessionStart', source: 'startup' });
+  assert.deepEqual([started.code, started.json, started.stderr], [0, off, '']);
+  const prompt = gate.prompt();
+  assert.deepEqual([prompt.code, prompt.stdout, prompt.stderr], [0, '', '']);
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.deepEqual(gate.stop().json, off);
+  assert.deepEqual(gate.stop(true).json, off);
+  // On a Node it runs on, the session hook says nothing and the same turn blocks.
+  const fine = session(t, dir, { tmp: gate.tmp });
+  assert.deepEqual(fine.raw('session', { session_id: 's', cwd: dir, hook_event_name: 'SessionStart', source: 'startup' }).stdout, '');
+});
+
+// Round 1 of the review: where a moved test still runs, which projects stay checked, and when the
+// user's permission ends.
+test('a test moved to a test file the project\'s runner does not collect is removed; to one it collects, it is kept', (t) => {
+  const moveOut = (files, from, to, testCommand) => {
+    const dir = project(t, files, testCommand);
+    const gate = session(t, dir);
+    gate.prompt();
+    to(dir);
+    return gate.stop().json;
+  };
+  const sub = "test('subtracts', () => {\n  expect(sub(3, 2)).toBe(1);\n});\n";
+  // node --test does not collect *.spec.js (also when the runner is not known: every runner counts).
+  for (const command of [null, `${GREEN_ECHO} # node --test`, GREEN_ECHO]) {
+    const files = command === null ? { 'package.json': '{"scripts": {"test": "node --test"}}', 'a.test.js': TWO_JS } : { 'a.test.js': TWO_JS };
+    const json = moveOut(files, 'a.test.js', (dir) => write(dir, { 'a.test.js': JEST_OK, 'a.spec.js': sub }), command);
+    assert.match(json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/, String(command));
+  }
+  // jest collects both *.test.js and __tests__/: kept.
+  const jest = moveOut({ 'a.test.js': TWO_JS }, 'a.test.js', (dir) => write(dir, { 'a.test.js': JEST_OK, '__tests__/sub.js': sub }), `${GREEN_ECHO} # jest`);
+  assert.match(jest.systemMessage, /^greenwashing: tests passed/);
+  // unittest discover does not collect *_test.py; pytest does.
+  const moved = (dir) => write(dir, { 'test_m.py': ONE_PY, 'm_test.py': `import unittest\n\n\nclass TestMath(unittest.TestCase):\n${TWO_PY.slice(TWO_PY.indexOf('    def test_subtracts'))}` });
+  assert.match(moveOut({ 'test_m.py': TWO_PY }, 'test_m.py', moved, `${GREEN_ECHO} # python3 -m unittest`).reason, /\n- test_m\.py: TestMath\.test_subtracts \(GW-17\)\nSee each/);
+  assert.match(moveOut({ 'test_m.py': TWO_PY }, 'test_m.py', moved, `${GREEN_ECHO} # python3 -m pytest`).systemMessage, /^greenwashing: tests passed/);
+});
+
+test('a test file moved with a test edited in it keeps its tests; moved where the runner does not collect it, they are removed', (t) => {
+  const dir = project(t, { 'math.test.js': TWO_JS }, `${GREEN_ECHO} # node --test`);
+  const gate = session(t, dir);
+  gate.prompt();
+  fs.mkdirSync(path.join(dir, 'test'));
+  git(dir, 'mv', 'math.test.js', 'test/math.test.js');
+  write(dir, { 'test/math.test.js': TWO_JS.replace('toBe(1);', 'toBe(1);\n  expect(sub(2, 2)).toBe(0);') });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  gate.prompt();
+  git(dir, 'add', '-A');
+  git(dir, 'mv', 'test/math.test.js', 'math.spec.js');
+  assert.match(gate.stop().json.reason, /\n- test\/math\.test\.js: 'adds' \(GW-17\)\n- test\/math\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+});
+
+test('a project the gate checked stays checked for the session, also after an accepted turn changed its test script', (t) => {
+  const runner = "require('node:child_process').execSync('node --test --test-reporter=tap t.test.js', { stdio: 'inherit' });\n";
+  const dir = project(t, { 'package.json': '{"scripts": {"test": "node --test --test-reporter=tap"}}', 't.test.js': NODE_PASS, 'run-tests.js': runner }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'package.json': '{"scripts": {"test": "node run-tests.js"}}' });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - npm test: 1 passed/);
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.match(gate.stop().json.reason, /the tests failed/);
+});
+
+test('a human who sets testCommand between turns makes the project checked from the next turn, also after WORK NOT ACCEPTED', (t) => {
+  const dir = project(t, { 'package.json': MOCHA_PKG, 'cart.js': '1;\n' }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: 'echo agent' }) });
+  for (const active of [false, true, true]) assert.equal(gate.stop(active).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  gate.prompt();
+  write(dir, { 'cart.js': '2;\n' });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - printf/);
+});
+
+test('the user\'s permission ends with the turn: a removal after the turn ended, with no new prompt, blocks', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'allow test removal');
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.systemMessage, /tests removed with the user's permission \(1\)/);
+  // The removal the user allowed is not reported again; the new one is.
+  write(dir, { 'a.test.js': '' });
+  assert.match(gate.stop().json.reason, /\nRemoved tests [^\n]*\n- a\.test\.js: 'adds' \(GW-17\)\nSee each/);
+});
+
+test('the permission is only the words themselves; allowed removals are not listed as a problem next to other findings, nor on a release', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS }, GREEN_ECHO);
+  const gate = session(t, dir);
+  for (const prompt of ['We disallow test removal here.', 'No allow test removals.']) {
+    gate.prompt(dir, prompt);
+    write(dir, { 'a.test.js': JEST_OK });
+    assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/, prompt);
+  }
+  // Allowed, with a new skip in the same turn: the block is for the skip only.
+  gate.prompt(dir, 'allow test removal');
+  write(dir, { 'a.test.js': `${JEST_OK}test.skip('later', () => {});\n` });
+  const skipped = gate.stop().json.reason;
+  assert.match(skipped, /a\.test\.js:4: test\.skip/);
+  assert.doesNotMatch(skipped, /Removed tests|Put the tests back/);
+  assert.equal(gate.stop(true).json.decision, 'block');
+  assert.equal(gate.stop(true).json.decision, 'block');
+  const released = gate.stop(true).json.systemMessage;
+  assert.match(released, /WORK NOT ACCEPTED/);
+  assert.doesNotMatch(released, /with the user's permission/);
+});
+
+test('a test file the user changed after a release is theirs only until a turn is accepted', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': JEST_OK });
+  for (const active of [false, true, true]) assert.equal(gate.stop(active).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  write(dir, { 'a.test.js': `${JEST_OK}// the user keeps it\n` });
+  gate.prompt();
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  // The user adds a test between turns; the agent removes it in the next turn: blocked.
+  write(dir, { 'a.test.js': `${JEST_OK}${MUL_JS}` });
+  gate.prompt();
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'multiplies' \(GW-17\)\nSee each/);
+});
+
+test('a Python test file Python could not read at the start is not did not run once the agent fixes it', (t) => {
+  const dir = project(t, { 'test_m.py': 'def test_(:\n' }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'test_m.py': TWO_PY });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+});
+
+test('the Python checks must list the tests asked for: a Python that prints no list is did not run', (t) => {
+  const fake = '#!/bin/sh\ncat > /dev/null\necho \'{"findings": [], "errors": []}\'\n';
+  const dir = project(t, { 'test_m.py': TWO_PY, 'fakepy': fake, '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, python: './fakepy' }) }, null);
+  fs.chmodSync(path.join(dir, 'fakepy'), 0o755);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'test_m.py': ONE_PY });
+  assert.match(gate.stop().json.reason, /Result: did not run - the Python test checks could not run: \.\/fakepy printed no findings list|Result: did not run - the Python test checks could not run: .*fakepy printed no findings list/);
+});
+
+test('Node 20.0.0 is new enough: the gate runs', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const preload = path.join(tempDir(t), 'node-20.js');
+  fs.writeFileSync(preload, "Object.defineProperty(process.versions, 'node', { value: '20.0.0' });\n");
+  const gate = session(t, dir, { env: { NODE_OPTIONS: `--require ${preload}` } });
+  assert.equal(gate.raw('session', { session_id: 's', cwd: dir, hook_event_name: 'SessionStart' }).stdout, '');
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.match(gate.stop().json.reason, /the tests failed/);
+});
+
+test('a Python test file split in two keeps every test; a part that loses one is a removal', (t) => {
+  const head = 'import unittest\n\n\nclass TestMath(unittest.TestCase):\n';
+  const method = (name, n) => `    def test_${name}(self):\n        self.assertEqual(f(${n}), ${n})\n`;
+  const all = `${head}${method('a', 1)}\n${method('b', 2)}\n${method('c', 3)}\n${method('d', 4)}`;
+  const dir = project(t, { 'test_m.py': all }, `${GREEN_ECHO} # python3 -m unittest`);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'Split test_m.py in two files.');
+  fs.unlinkSync(path.join(dir, 'test_m.py'));
+  write(dir, { 'test_small.py': `${head}${method('a', 1)}\n${method('b', 2)}`, 'test_big.py': `${head}${method('c', 3)}\n${method('d', 4)}` });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  gate.prompt();
+  write(dir, { 'test_big.py': `${head}${method('c', 3)}` });
+  assert.match(gate.stop().json.reason, /\n- test_big\.py: TestMath\.test_d \(GW-17\)\nSee each/);
+});
+
+test('a failing test\'s body pasted into a test that stays skipped, or a test renamed onto a later one of the same name, is removed', (t) => {
+  const later = "test.skip('currency, later', () => {\n  assert.equal(1, 1);\n});\n";
+  const skipPy = '    @unittest.skip("later")\n    def test_currency(self):\n        self.assertEqual(1, 1)\n';
+  const dir = project(t, { 'a.test.js': `${TWO_JS}${later}`, 'test_m.py': `${TWO_PY}\n${skipPy}` }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, {
+    'a.test.js': `${JEST_OK}${later.replace('assert.equal(1, 1);', 'expect(sub(3, 2)).toBe(1);')}`,
+    'test_m.py': `${ONE_PY}\n${skipPy.replace('self.assertEqual(1, 1)', 'self.assertEqual(sub(3, 2), 1)')}`,
+  });
+  const reason = gate.stop().json.reason;
+  assert.match(reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\n- test_m\.py: TestMath\.test_subtracts \(GW-17\)\nSee each/);
+  // Python keeps only the later of two methods of one name: the failing one renamed onto it is gone.
+  write(dir, { 'a.test.js': TWO_JS + later, 'test_m.py': `${TWO_PY.replace('def test_subtracts', 'def test_adds')}\n${skipPy}` });
+  assert.match(gate.stop(true).json.reason, /\nRemoved tests [^\n]*\n- test_m\.py: TestMath\.test_subtracts \(GW-17\)\nSee each/);
+  // Control: renamed to a new name, it is kept.
+  write(dir, { 'test_m.py': `${TWO_PY.replace('def test_subtracts', 'def test_takes_away')}\n${skipPy}` });
+  assert.match(gate.stop(true).json.systemMessage, /^greenwashing: tests passed/);
+});
+
+test('tests given only a function: deleting one is removed, renaming one is not', (t) => {
+  const fns = 'test(function emptyCart() {\n  assert.equal(total([]), 0);\n});\ntest(function sumsPrices() {\n  assert.equal(total([2, 4]), 6);\n});\n';
+  const dir = project(t, { 'cart.test.js': fns }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'cart.test.js': fns.replace('sumsPrices', 'addsPrices') });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  gate.prompt();
+  write(dir, { 'cart.test.js': fns.split('test(function sumsPrices')[0] });
+  assert.match(gate.stop().json.reason, /\n- cart\.test\.js: addsPrices \(GW-17\)\nSee each/);
+});
+
+test('honest reshaping keeps the tests: quotes a formatter changed, pytest functions grouped into a class', (t) => {
+  const js = "test('joins first and last name', () => {\n  assert.equal(label('Ada', 'Lovelace'), 'Ada Lovelace');\n});\n";
+  const py = 'from cart import total\n\n\ndef test_empty():\n    assert total([]) == 0\n\n\ndef test_sums():\n    assert total([2, 4]) == 6\n';
+  const dir = project(t, { 'label.test.js': js, 'test_cart.py': py }, `${GREEN_ECHO} # python3 -m pytest`);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, {
+    'label.test.js': js.replace(/'/g, '"'),
+    'test_cart.py': 'from cart import total\n\n\nclass TestTotal:\n    def test_empty(self):\n        assert total([]) == 0\n\n    def test_sums(self):\n        assert total([2, 4]) == 6\n',
+  });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  // Control: grouped, with one of them gone.
+  write(dir, { 'test_cart.py': 'from cart import total\n\n\nclass TestTotal:\n    def test_empty(self):\n        assert total([]) == 0\n' });
+  assert.match(gate.stop().json.reason, /\n- test_cart\.py: test_sums \(GW-17\)\nSee each/);
+});
+
+test('a test moved where the runner does not look is removed: a dot folder (node --test on Node 21+, pytest), a folder pytest skips, a name unittest cannot import', (t) => {
+  const moveOut = (files, move, testCommand) => {
+    const dir = project(t, files, testCommand);
+    const gate = session(t, dir);
+    gate.prompt();
+    move(dir);
+    return gate.stop().json;
+  };
+  const sub = "test('subtracts', () => {\n  expect(sub(3, 2)).toBe(1);\n});\n";
+  const dotted = moveOut({ 'a.test.js': TWO_JS }, (dir) => write(dir, { 'a.test.js': JEST_OK, '.ci/sub.test.js': sub }), `${GREEN_ECHO} # node --test`);
+  if (Number(process.versions.node.split('.')[0]) >= 21) assert.match(dotted.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  else assert.match(dotted.systemMessage, /^greenwashing: tests passed/);
+  // jest looks in dot folders: kept.
+  assert.match(moveOut({ 'a.test.js': TWO_JS }, (dir) => write(dir, { 'a.test.js': JEST_OK, '.ci/sub.test.js': sub }), `${GREEN_ECHO} # jest`).systemMessage, /^greenwashing: tests passed/);
+  const subPy = `import unittest\n\n\nclass TestMath(unittest.TestCase):\n${TWO_PY.slice(TWO_PY.indexOf('    def test_subtracts'))}`;
+  for (const [to, command] of [['build/test_sub.py', 'pytest'], ['.ci/test_sub.py', 'pytest'], ['test-sub.py', 'python3 -m unittest']]) {
+    const json = moveOut({ 'test_m.py': TWO_PY }, (dir) => write(dir, { 'test_m.py': ONE_PY, [to]: subPy }), `${GREEN_ECHO} # ${command}`);
+    assert.match(json.reason, /\n- test_m\.py: TestMath\.test_subtracts \(GW-17\)\nSee each/, to);
+  }
+  assert.match(moveOut({ 'test_m.py': TWO_PY }, (dir) => write(dir, { 'test_m.py': ONE_PY, 'tests/test_sub.py': subPy }), `${GREEN_ECHO} # pytest`).systemMessage, /^greenwashing: tests passed/);
+});
+
+test('node --test and TypeScript: where Node strips types, a .test.ts test moved to .spec.ts is removed and a .js test file moved to .ts is kept', (t) => {
+  const strips = Boolean(process.features.typescript);
+  const two = "import test from 'node:test';\nimport assert from 'node:assert';\ntest('empty', () => { assert.equal(total([]), 0); });\ntest('sums', () => { assert.equal(total([2, 4]), 6); });\n";
+  const dir = project(t, { 'cart.test.ts': two, 'cart.test.js': two.replace("test('empty'", "test('none'") }, `${GREEN_ECHO} # node --test`);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'cart.test.ts': two.replace(/test\('sums'[^\n]*\n/, ''), 'cart.spec.ts': "import test from 'node:test';\ntest('sums', () => { assert.equal(total([2, 4]), 6); });\n" });
+  const spec = gate.stop().json;
+  // On a Node that runs no .ts, the tests of cart.test.ts never ran: moving them is no removal.
+  if (strips) assert.match(spec.reason, /\n- cart\.test\.ts: 'sums' \(GW-17\)\nSee each/);
+  else assert.match(spec.systemMessage, /^greenwashing: tests passed/);
+  write(dir, { 'cart.test.ts': two });
+  fs.unlinkSync(path.join(dir, 'cart.spec.ts'));
+  assert.deepEqual(gate.stop(true).json, NO_CHANGES);
+  gate.prompt(dir, 'Move the cart tests to TypeScript.');
+  git(dir, 'mv', 'cart.test.js', 'cart2.test.ts');
+  const migrated = gate.stop().json;
+  if (strips) assert.match(migrated.systemMessage, /^greenwashing: tests passed/);
+  else assert.match(migrated.reason, /\n- cart\.test\.js: 'none' \(GW-17\)\n/);
+});
+
+test('after a turn whose prompt allowed test removal, the removal does not block the next turn, however the turn ended', (t) => {
+  for (const end of ['release', 'interrupt']) {
+    const dir = project(t, { 'a.test.js': TWO_JS, 'app.js': '1;\n', 't.test.js': NODE_PASS }, NODE_CMD);
+    const gate = session(t, dir);
+    gate.prompt(dir, 'The subtraction is gone: allow test removal, drop its test.');
+    write(dir, { 'a.test.js': JEST_OK, 't.test.js': NODE_FAIL });
+    if (end === 'release') {
+      for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /the tests failed/, end);
+      const released = gate.stop(true).json.systemMessage;
+      assert.match(released, /WORK NOT ACCEPTED/, end);
+      assert.doesNotMatch(released, /removed tests still block/, end);
+    }
+    gate.prompt(dir, 'Fix the failing test.');
+    write(dir, { 't.test.js': NODE_PASS });
+    assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/, end);
+    // Without the words, a removal made in the next turn blocks.
+    gate.prompt(dir, 'go on');
+    write(dir, { 'a.test.js': '' });
+    assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'adds' \(GW-17\)\nSee each/, end);
+  }
+  // Control: the same turn without the words blocks the next turn too.
+  const dir = project(t, { 'a.test.js': TWO_JS, 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'Drop the subtraction test.');
+  write(dir, { 'a.test.js': JEST_OK, 't.test.js': NODE_FAIL });
+  gate.prompt(dir, 'Fix the failing test.');
+  write(dir, { 't.test.js': NODE_PASS });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+});
+
+test('outside git, a .greenwashing.json the agent writes in a project the gate cannot check blocks (GW-114), and stays the agent\'s after WORK NOT ACCEPTED', (t) => {
+  const dir = tempDir(t);
+  write(dir, { 'package.json': MOCHA_PKG, 'cart.js': '1;\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /Changed: \.greenwashing\.json\n/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+  // A human who changes it between turns makes it theirs: the project is checked with their command.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, timeoutSeconds: 60 }) });
+  gate.prompt();
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - printf/);
+});
+
+test('outside git, after WORK NOT ACCEPTED the tests keep the settings the work started with while the agent\'s change is left as it was', (t) => {
+  const dir = tempDir(t);
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }), 't.test.js': NODE_FAIL });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /Command: node --test --test-reporter=tap t\.test\.js/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Command: node --test --test-reporter=tap t\.test\.js/);
+  // Changed by a human between turns: theirs.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, timeoutSeconds: 60 }) });
+  gate.prompt();
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - printf/);
+});
+
+test('hooks added in the middle of a session: a .greenwashing.json the agent writes before a start is recorded still blocks (GW-114)', (t) => {
+  // A project the gate cannot check: the first Stop has no prompt and blocks; the next prompt keeps its null start.
+  const unchecked = project(t, { 'main.go': 'package main\n', 'a.test.js': NODE_FAIL }, null);
+  const one = session(t, unchecked);
+  write(unchecked, { 'main.go': 'package main\n\nfunc main() {}\n' });
+  assert.equal(one.stop().json.decision, 'block');
+  one.prompt();
+  write(unchecked, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  assert.match(one.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+  // A project the gate checks: the agent fixes the tests and swaps the command in the same turn.
+  const checked = project(t, { 't.test.js': NODE_PASS, 'app.js': '1;\n' });
+  const two = session(t, checked);
+  write(checked, { 't.test.js': NODE_FAIL });
+  assert.match(two.stop().json.reason, /the tests failed/);
+  two.prompt();
+  write(checked, { 't.test.js': NODE_PASS, '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  assert.match(two.stop().json.reason, /Changed: \.greenwashing\.json\n/);
+  // Control: the same turn without the settings change passes, with the note that the checks did not run.
+  write(checked, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  assert.match(two.stop(true).json.systemMessage, /^greenwashing: tests passed - .*; quick checks of changed tests not run \(no start of the turn was recorded\)$/);
+});
+
+test('outside git, the line of a project the gate cannot check says why: a test script of another kind', (t) => {
+  const dir = tempDir(t);
+  write(dir, { 'package.json': MOCHA_PKG, 'cart.js': '1;\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'cart.js': '2;\n' });
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('the test command npm test runs "mocha"') });
+});
+
+test('a project the gate cannot check is decided again only after a turn the gate let end, not after one cut off', (t) => {
+  const dir = project(t, { 'main.go': 'package main\n' }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  // Cut off before its Stop: tests and a test script added; the next turn is still not checked.
+  write(dir, { 'package.json': '{"scripts": {"test": "node --test --test-reporter=tap"}}', 't.test.js': NODE_FAIL });
+  gate.prompt();
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+  // Let end: the next turn is checked.
+  gate.prompt();
+  write(dir, { 'main.go': 'package main\n\nfunc main() {}\n' });
+  assert.match(gate.stop().json.reason, /the tests failed/);
+});
+
+test('after WORK NOT ACCEPTED of a turn with the words, a Stop with no prompt before it has no permission', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'allow test removal');
+  write(dir, { 'a.test.js': JEST_OK, 't.test.js': NODE_FAIL });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /the tests failed/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // A turn a background task starts: no prompt of the user, so the words do not count, for the removal of
+  // the turn before (its permission is used up) and for a new one.
+  write(dir, { 'a.test.js': '', 't.test.js': NODE_PASS });
+  assert.match(gate.stop().json.reason, /\nRemoved tests [^\n]*\n- a\.test\.js: 'adds' \(GW-17\)\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+});
+
+test('a test file moved with exactly half of its lines new is a move: its tests keep their names', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  // The 6 lines of a.test.js and 6 new ones (both tests edited), with no line break at the end: 12 lines, half new.
+  fs.unlinkSync(path.join(dir, 'a.test.js'));
+  const moved = TWO_JS.replace('expect(add(1, 2)).toBe(3);', 'expect(add(1, 2)).toBe(3);\n  expect(add(0, 0)).toBe(0);\n  expect(add(1, 0)).toBe(1);\n  expect(add(0, 1)).toBe(1);')
+    .replace('expect(sub(3, 2)).toBe(1);', 'expect(sub(3, 2)).toBe(1);\n  expect(sub(0, 0)).toBe(0);\n  expect(sub(5, 5)).toBe(0);\n  expect(sub(2, 1)).toBe(1);').trimEnd();
+  assert.equal(moved.split('\n').length, 12);
+  write(dir, { 'b.test.js': moved });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  // One more new line: a new file, so the tests of the deleted one are removed.
+  write(dir, { 'b.test.js': moved.replace('expect(add(0, 0)).toBe(0);', 'expect(add(0, 0)).toBe(0);\n  expect(add(2, 0)).toBe(2);') });
+  assert.match(gate.stop(true).json.reason, /\n- a\.test\.js: 'adds' \(GW-17\)\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+});
+
+test('the Stop that let the agent stop is used by the next prompt only: a removal after a later blocked, cut-off turn stays the agent\'s', (t) => {
+  const three = `${TWO_JS}${MUL_JS}`;
+  const dir = project(t, { 'a.test.js': three }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'a.test.js': three.replace(/test\('subtracts'[^]*?\}\);\n/, '') });
+  for (const active of [false, true, true]) assert.equal(gate.stop(active).json.decision, 'block');
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // No edit of the user; the next turn removes another test, is blocked, and is cut off.
+  gate.prompt();
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\n- a\.test\.js: 'multiplies' \(GW-17\)\nSee each/);
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\n- a\.test\.js: 'multiplies' \(GW-17\)\nSee each/);
+});
+
+test('the words must stand alone: "auto-allow test removal" is not them; the line of a turn let go never names the permission', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'Our policy: never auto-allow test removal.');
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  // Allowed, but the tests fail until the gate lets the agent stop: the release line does not list the removal.
+  gate.prompt(dir, 'allow test removal');
+  write(dir, { 't.test.js': NODE_FAIL });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /the tests failed/);
+  const released = gate.stop(true).json.systemMessage;
+  assert.match(released, /WORK NOT ACCEPTED.*\(node --test --test-reporter=tap t\.test\.js\)\.$/);
+  assert.doesNotMatch(released, /permission/);
+});
+
+test('a test the user removes in a worktree after WORK NOT ACCEPTED stays theirs when the agent commits and removes the worktree', (t) => {
+  const { dir, tree, gate } = seenWorktree(t, { 'a.test.js': `${TWO_JS}${MUL_JS}`, 't.test.js': NODE_PASS });
+  write(tree, { 't.test.js': NODE_FAIL });
+  for (const active of [false, true, true]) assert.match(gate.stop(active, tree).json.reason, /the tests failed/);
+  assert.match(gate.stop(true, tree).json.systemMessage, /WORK NOT ACCEPTED/);
+  // Between turns the user removes a test there; the agent fixes the tests, commits and removes the worktree.
+  write(tree, { 'a.test.js': TWO_JS });
+  gate.prompt(tree);
+  write(tree, { 't.test.js': NODE_PASS });
+  git(tree, 'commit', '-qam', 'fix');
+  git(dir, 'worktree', 'remove', tree);
+  assert.match(gate.stop(false, dir).json.systemMessage, /^greenwashing: tests passed - .*the last commit of the removed worktree/);
+  assert.deepEqual(leftovers(gate, dir), []);
+});
+
+test('a project in a subfolder: a test moved out of the project\'s folder is removed; moves are judged from that folder', (t) => {
+  const moveIn = (sub, dest, runner = 'node --test') => {
+    const dir = tempDir(t);
+    const place = path.join(dir, sub);
+    write(place, { '.greenwashing.json': JSON.stringify({ testCommand: `${GREEN_ECHO} # ${runner}` }), 'cart.test.js': TWO_JS });
+    project(t, {}, null, dir);
+    const gate = session(t, place);
+    gate.prompt(place);
+    write(place, { 'cart.test.js': JEST_OK });
+    write(dir, { [dest]: "test('subtracts', () => {\n  expect(sub(3, 2)).toBe(1);\n});\n" });
+    return gate.stop(false, place).json;
+  };
+  assert.match(moveIn('app', 'lib/cart.test.js').reason, /\n- cart\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  assert.match(moveIn('app', 'lib/cart.test.js', 'jest').reason, /\n- cart\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  assert.match(moveIn('app', 'app/test/cart.js').systemMessage, /^greenwashing: tests passed/);
+  // The folders above the project do not count: node --test run in the project collects neither.
+  assert.match(moveIn('.github/actions/cart', '.github/actions/cart/cart.spec.js').reason, /\n- cart\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  assert.match(moveIn('test/e2e', 'test/e2e/cart-cases.js').reason, /\n- cart\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+});
+
+test('after WORK NOT ACCEPTED, a turn with no prompt of the user uses up what the gate kept for the next prompt: its removal stays the agent\'s', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /the tests failed/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // A turn a background task starts removes a test; its Stop blocks it.
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  // The user's next prompt does not take that removal as the user's.
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_PASS });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+});
+
+test('a turn with the words blocked and then cut off: a later Stop with no prompt of the user has no permission', (t) => {
+  const three = `${TWO_JS}${MUL_JS}`;
+  const dir = project(t, { 'a.test.js': three, 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'Drop the multiplication test. allow test removal');
+  write(dir, { 'a.test.js': TWO_JS, 't.test.js': NODE_FAIL });
+  assert.match(gate.stop().json.reason, /the tests failed/);
+  // Cut off. A turn with no prompt removes another test and makes the tests pass.
+  write(dir, { 'a.test.js': JEST_OK, 't.test.js': NODE_PASS });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\n- a\.test\.js: 'multiplies' \(GW-17\)\nSee each/);
+  // Control: a continuation after the block (stop_hook_active) keeps the permission.
+  const other = project(t, { 'a.test.js': three, 't.test.js': NODE_PASS }, NODE_CMD);
+  const again = session(t, other);
+  again.prompt(other, 'Drop the multiplication test. allow test removal');
+  write(other, { 'a.test.js': TWO_JS, 't.test.js': NODE_FAIL });
+  assert.match(again.stop().json.reason, /the tests failed/);
+  write(other, { 't.test.js': NODE_PASS });
+  assert.match(again.stop(true).json.systemMessage, /tests removed with the user's permission \(1\): a\.test\.js: 'multiplies'$/);
+});
+
+test('a project the gate cannot check is decided again after WORK NOT ACCEPTED: tests the human adds between turns are checked', (t) => {
+  const dir = project(t, { 'main.go': 'package main\n' }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /Changed: \.greenwashing\.json\n/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  // Between turns the human removes the agent's file and adds tests and a test script.
+  fs.unlinkSync(path.join(dir, '.greenwashing.json'));
+  write(dir, { 'package.json': '{"scripts": {"test": "node --test --test-reporter=tap"}}', 't.test.js': NODE_PASS });
+  git(dir, 'add', '-A');
+  git(dir, 'commit', '-qm', 'tests');
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.match(gate.stop().json.reason, /the tests failed/);
+});
+
+test('Python tests a class inherits from a class of its file: removing the class that runs them is a removal', (t) => {
+  const mixin = 'import unittest\n\n\nclass CartTests:\n    backend = None\n\n    def test_total(self):\n        self.assertEqual(total([1, 2], self.backend), 3)\n\n\n'
+    + 'class TestMemoryCart(CartTests, unittest.TestCase):\n    backend = "memory"\n\n\nclass TestSqlCart(CartTests, unittest.TestCase):\n    backend = "sql"\n';
+  const dir = project(t, { 'test_cart.py': mixin }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'test_cart.py': mixin.replace('class TestSqlCart', 'class TestSqlStoreCart') });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  gate.prompt();
+  write(dir, { 'test_cart.py': mixin.split('\n\n\nclass TestSqlCart')[0] + '\n' });
+  assert.match(gate.stop().json.reason, /\n- test_cart\.py: TestSqlStoreCart\.test_total \(GW-17\)\nSee each/);
+});
+
+test('outside git, a settings change the agent makes in a turn the gate accepts does not become the user\'s at the next prompt', (t) => {
+  const dir = tempDir(t);
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }), 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO }) });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - node --test/);
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.match(gate.stop().json.reason, /Command: node --test --test-reporter=tap t\.test\.js/);
+});
+
+test('Node 19 is too old: the gate says it is off', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const preload = path.join(tempDir(t), 'node-19.js');
+  fs.writeFileSync(preload, "Object.defineProperty(process.versions, 'node', { value: '19.9.0' });\n");
+  const gate = session(t, dir, { env: { NODE_OPTIONS: `--require ${preload}` } });
+  gate.prompt();
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: the gate is OFF - the node on PATH is v19\.9\.0\./);
+});
+
+test('outside git, a .greenwashing.json the agent deletes stays the agent\'s change after WORK NOT ACCEPTED', (t) => {
+  const dir = tempDir(t);
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }), 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  fs.unlinkSync(path.join(dir, '.greenwashing.json'));
+  write(dir, { 't.test.js': NODE_FAIL });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /Command: node --test --test-reporter=tap t\.test\.js/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  gate.prompt();
+  assert.match(gate.stop().json.reason, /Command: node --test --test-reporter=tap t\.test\.js/);
+});
+
+test('a Python test file moved with a test edited in it keeps its tests', (t) => {
+  const dir = project(t, { 'test_m.py': TWO_PY }, `${GREEN_ECHO} # pytest`);
+  const gate = session(t, dir);
+  gate.prompt();
+  git(dir, 'mv', 'test_m.py', 'test_math.py');
+  write(dir, { 'test_math.py': TWO_PY.replace('self.assertEqual(add(1, 2), 3)', 'self.assertEqual(add(1, 2), 3)\n        self.assertEqual(add(0, 0), 0)') });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+});
+
+test('the Python checks must list every text asked for: a list without the asked keys is did not run', (t) => {
+  const fake = '#!/bin/sh\ncat > /dev/null\necho \'{"findings": [], "errors": [], "tests": {}}\'\n';
+  const dir = project(t, { 'test_m.py': TWO_PY, 'fakepy': fake, '.greenwashing.json': JSON.stringify({ testCommand: GREEN_ECHO, python: './fakepy' }) }, null);
+  fs.chmodSync(path.join(dir, 'fakepy'), 0o755);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'test_m.py': ONE_PY });
+  assert.match(gate.stop().json.reason, /Result: did not run - the Python test checks could not run: .*fakepy printed no findings list/);
+});
+
+test('the words followed by a hyphen are not them; the permission of a turn that ended with no code change does not reach a later Stop with no prompt', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS, 'notes.md': 'x\n' }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'No allow test removal-style shortcuts here.');
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  write(dir, { 'a.test.js': TWO_JS });
+  assert.deepEqual(gate.stop(true).json, NO_CHANGES);
+  gate.prompt(dir, 'allow test removal');
+  assert.deepEqual(gate.stop().json, NO_CHANGES);
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.reason, /\n- a\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+});
+
+test('an existing test file that takes in a deleted file\'s tests is not that file moved: its own tests keep its name', (t) => {
+  const six = `${MUL_JS}test('divides', () => {\n  expect(div(6, 3)).toBe(2);\n});\n`;
+  const dir = project(t, { 'a.test.js': "it.todo('later');\n", 'b.test.js': six }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  fs.unlinkSync(path.join(dir, 'b.test.js'));
+  write(dir, { 'a.test.js': `it.todo('later');\n${six}` });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+});
+
+test('a turn accepted with removals the user allowed: later Stops before the next prompt do not report them again', (t) => {
+  const dir = project(t, { 'a.test.js': TWO_JS }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'Drop the subtraction test. allow test removal');
+  write(dir, { 'a.test.js': JEST_OK });
+  assert.match(gate.stop().json.systemMessage, /tests removed with the user's permission \(1\): a\.test\.js: 'subtracts'$/);
+  // A continuation after another hook's block, then a turn with no prompt: nothing new, nothing reported.
+  assert.match(gate.stop(true).json.systemMessage, /^greenwashing: tests passed - [^;]*$/);
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed - [^;]*$/);
+});
+
+test('after WORK NOT ACCEPTED of a turn with the words, a continuation after another hook\'s block keeps the permission', (t) => {
+  const three = `${TWO_JS}${MUL_JS}`;
+  const dir = project(t, { 'a.test.js': three, 't.test.js': NODE_PASS }, NODE_CMD);
+  const gate = session(t, dir);
+  gate.prompt(dir, 'Drop the multiplication test. allow test removal');
+  write(dir, { 'a.test.js': TWO_JS, 't.test.js': NODE_FAIL });
+  for (const active of [false, true, true]) assert.match(gate.stop(active).json.reason, /the tests failed/);
+  assert.match(gate.stop(true).json.systemMessage, /WORK NOT ACCEPTED/);
+  write(dir, { 't.test.js': NODE_PASS });
+  assert.match(gate.stop(true).json.systemMessage, /tests removed with the user's permission \(1\): a\.test\.js: 'multiplies'$/);
+});
+
+test('inherited Python tests: an empty class in between removed is no removal; a test switched off in a subclass by an assignment is', (t) => {
+  const cases = 'import unittest\n\n\nclass StoreCases:\n    def test_roundtrip(self):\n        self.assertTrue(store())\n\n\n';
+  const dir = project(t, { 'test_store.py': `${cases}class MemoryCases(StoreCases):\n    pass\n\n\nclass TestMemory(MemoryCases, unittest.TestCase):\n    pass\n` }, GREEN_ECHO);
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'test_store.py': `${cases}class TestMemory(StoreCases, unittest.TestCase):\n    pass\n` });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  gate.prompt();
+  write(dir, { 'test_store.py': `${cases}class TestMemory(StoreCases, unittest.TestCase):\n    test_roundtrip = None\n` });
+  assert.match(gate.stop().json.reason, /\n- test_store\.py: TestMemory\.test_roundtrip \(GW-17\)\nSee each/);
+});
+
+test('a project in a subfolder: a whole test file moved out of its folder or to a name its runner does not collect is removed; moves outside the folder are judged in the tree', (t) => {
+  const setup = (sub, runner, files) => {
+    const dir = tempDir(t);
+    const place = path.join(dir, sub);
+    write(place, { '.greenwashing.json': JSON.stringify({ testCommand: `${GREEN_ECHO} # ${runner}` }), 'cart.test.js': TWO_JS });
+    write(dir, files);
+    project(t, {}, null, dir);
+    const gate = session(t, place);
+    gate.prompt(place);
+    return { dir, place, gate };
+  };
+  const jest = setup('app', 'jest', {});
+  fs.mkdirSync(path.join(jest.dir, 'lib'));
+  git(jest.dir, 'mv', 'app/cart.test.js', 'lib/cart.test.js');
+  assert.match(jest.gate.stop(false, jest.place).json.reason, /\n- cart\.test\.js: 'adds' \(GW-17\)\n- cart\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  const node = setup('test/e2e', 'node --test', {});
+  git(node.dir, 'mv', 'test/e2e/cart.test.js', 'test/e2e/cart-cases.js');
+  assert.match(node.gate.stop(false, node.place).json.reason, /\n- cart\.test\.js: 'adds' \(GW-17\)\n- cart\.test\.js: 'subtracts' \(GW-17\)\nSee each/);
+  // Both files outside the project's folder: judged by their paths in the tree.
+  const outside = setup('app', 'node --test', { 'lib/a.test.js': TWO_JS });
+  write(outside.dir, { 'lib/a.test.js': JEST_OK, 'lib/b.test.js': "test('subtracts', () => {\n  expect(sub(3, 2)).toBe(1);\n});\n" });
+  assert.match(outside.gate.stop(false, outside.place).json.systemMessage, /^greenwashing: tests passed/);
+});
+
