@@ -65,9 +65,9 @@ Also not caught:
 
 - **Half a fix** ([GW-103](CATALOG.md#gw-103-half-a-fix)): the bug is fixed in one of two places, and the other still ships it.
 - **Mocks that agree** ([GW-22](CATALOG.md#gw-22-both-sides-of-the-seam-mocked-toward-each-other)): both sides of a seam are mocked, so the test only proves the mocks agree.
-- **A wrong denominator** ([GW-74](CATALOG.md#gw-74-an-unnamed-denominator)): a rate divided by the wrong thing. No test is involved, so no gate can see it.
+- **A wrong denominator** ([GW-74](CATALOG.md#gw-74-an-unnamed-denominator)): a rate divided by the wrong thing, tested on data where both give the same number.
 - **A removal you allowed**: you wrote `allow test removal`, so the deleted test is your call.
-- **Projects it doesn't check**: mocha, Go or no tests at all. The gate says so in one line and lets the agent finish.
+- **Projects it doesn't check**: mocha or no tests at all. The gate says so in one line and lets the agent finish.
 
 Each of these has a fake in the bench and is counted in the numbers above as not caught.
 
