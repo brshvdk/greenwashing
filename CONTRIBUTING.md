@@ -12,6 +12,7 @@ pip install ruff && ruff check --no-respect-gitignore .   # lint, as in CI
 node --test --test-reporter=tap gate/test/*.test.js    # the gate's tests, as in CI
 node --test --test-reporter=tap bench/test/*.test.js   # the benchmark's tests, as in CI
 node bench/run                             # the benchmark: rewrites bench/RESULTS.md and bench/results.json, which CI compares with its own run
+node bench/readme                          # README.md against that run: its scene, its table of the gate's replies and its numbers, as in CI
 scripts/leak-check                         # leak check
 ```
 

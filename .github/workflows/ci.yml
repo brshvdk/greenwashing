@@ -169,6 +169,12 @@ jobs:
           done
           echo "bench/RESULTS.md and bench/results.json match this run"
 
+      # The README against the same bench run: the gate's reply in its scene, the replies and outcomes in
+      # its table and its numbers must be what this run gave (bench/readme says how each is read).
+      # tests/test_ci_steps.py runs this block as written.
+      - name: README check
+        run: node bench/readme "$RUNNER_TEMP/bench"
+
   # A separate job: no test or tool from the PR runs before the leak check, so
   # nothing can rewrite its environment (GITHUB_ENV, GITHUB_PATH) first.
   leak-check:

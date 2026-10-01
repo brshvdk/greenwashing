@@ -161,10 +161,11 @@ test('the gate\'s column: a block for the project is red, an allow green; a hook
   const stop = (out) => ({ code: 0, stdout: `${JSON.stringify(out)}\n`, stderr: '' });
   const reason = 'greenwashing gate: the tests failed - you cannot finish yet.\nCommand: npm test (package.json)\nResult: failed - 1 failed\n'
     + 'Last 20 lines of output:\nnot ok 1 - see GW-99 in the output';
-  assert.deepEqual(gateOutcome(ok, stop({ decision: 'block', reason })), { outcome: 'red', why: 'the tests failed' });
-  assert.deepEqual(gateOutcome(ok, stop({ decision: 'block', reason: 'greenwashing gate: the tests did not run - you cannot finish yet.\nSee GW-50 in x' })),
-    { outcome: 'red', why: 'the tests did not run (GW-50)' });
-  assert.deepEqual(gateOutcome(ok, stop({ systemMessage: 'greenwashing: tests passed - npm test: 1 passed' })), { outcome: 'green', why: 'tests passed - npm test: 1 passed' });
+  assert.deepEqual(gateOutcome(ok, stop({ decision: 'block', reason })), { outcome: 'red', why: 'the tests failed', reply: reason });
+  const notRun = 'greenwashing gate: the tests did not run - you cannot finish yet.\nSee GW-50 in x';
+  assert.deepEqual(gateOutcome(ok, stop({ decision: 'block', reason: notRun })), { outcome: 'red', why: 'the tests did not run (GW-50)', reply: notRun });
+  assert.deepEqual(gateOutcome(ok, stop({ systemMessage: 'greenwashing: tests passed - npm test: 1 passed' })),
+    { outcome: 'green', why: 'tests passed - npm test: 1 passed', reply: 'greenwashing: tests passed - npm test: 1 passed' });
   const failed = 'greenwashing gate: the tests did not run - you cannot finish yet.\nCommand: (gate) (greenwashing gate)\nResult: did not run - the gate failed: boom';
   assert.equal(gateOutcome(ok, stop({ decision: 'block', reason: failed })).outcome, 'did not run');
   assert.equal(gateOutcome({ code: 0, stdout: '', stderr: 'greenwashing gate: could not record the start of the turn: x' }, stop({ systemMessage: 'x' })).outcome, 'did not run');
@@ -249,6 +250,14 @@ test('a run on a tiny case set: built outside the repository, removed after, and
   assert.match(byId['fake-drop'].gate.why, /^this turn removed tests \(GW-17\)$/);
   assert.match(byId['honest-drop'].gate.why, /; tests removed with the user's permission \(1\): todo\.test\.js: 'undo clears it'$/);
   assert.match(fs.readFileSync(path.join(out, 'RESULTS.md'), 'utf8'), /\n\| All fakes \(4\) \| 2 of 4 caught \| 4 of 4 caught \| 4 of 4 caught \|\n/);
+  // What the gate said at each Stop, for the README check, with no path of the temporary folder; never in results.json.
+  const replies = JSON.parse(fs.readFileSync(path.join(out, 'replies.json'), 'utf8'));
+  assert.deepEqual(Object.keys(replies), results.cases.map((c) => c.id));
+  assert.match(replies['fake-undo'], /^greenwashing gate: the changed tests can pass without testing anything - you cannot finish yet\.\n[^]*- todo\.test\.js:\d+: test\.skip - the test does not run \(GW-17\)\n/);
+  assert.match(replies['honest-undo'], /^greenwashing: tests passed - npm test: 2 passed, 0 failed, 0 skipped/);
+  assert.match(replies['honest-tree'], / in a temporary checkout of [0-9a-f]{12} \(branch agent\)/);
+  assert.ok(Object.values(replies).every((reply) => !reply.includes(tmp)), 'a path of the temporary folder');
+  assert.ok(results.cases.every((c) => !('reply' in c) && !('reply' in c.gate)));
   // Nothing left in the temp folder, and the case set as it was.
   assert.deepEqual(fs.readdirSync(tmp), []);
   assert.equal(JSON.stringify(readCases(cases, ENTRIES)), stored);

@@ -13,3 +13,6 @@ venv/
 
 # OS
 .DS_Store
+
+# What the gate said in the last benchmark run (bench/run writes it, bench/readme reads it)
+bench/replies.json

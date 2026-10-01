@@ -25,7 +25,9 @@
 //
 //   node bench/run [--out <folder>]
 //
-// Writes RESULTS.md and results.json to bench/, or to the folder given. Exit 0: written; 2: the
+// Writes RESULTS.md and results.json to bench/, or to the folder given, and replies.json: what the gate
+// said at the Stop of each case (bench/readme checks the README against it). replies.json is not
+// committed: a reply can end in the tests' own output, with their timings. Exit 0: written; 2: the
 // benchmark did not run (a broken case set, or a failure of git or of this script), nothing written.
 
 const { spawn, execFileSync } = require('node:child_process');
@@ -187,7 +189,8 @@ const notRun = (why) => ({ outcome: 'did not run', why });
 const firstLine = (text) => (text || '').trim().split('\n')[0];
 
 // The gate's column from its two hook runs: red when the Stop blocks for a reason of the project,
-// green when it lets the turn end; did not run when a hook failed or the gate itself failed.
+// green when it lets the turn end; did not run when a hook failed or the gate itself failed. reply: what
+// the Stop said, the block's reason or the line it lets the turn end with.
 function gateOutcome(prompt, stop) {
   if (prompt.code !== 0 || prompt.stdout.trim() || prompt.stderr.trim()) {
     return notRun(`the prompt hook failed: ${firstLine(prompt.stderr || prompt.stdout) || `exit code ${prompt.code}`}`);
@@ -205,9 +208,11 @@ function gateOutcome(prompt, stop) {
     const own = out.reason.split('\nLast ')[0];
     const cited = [...new Set(own.match(/GW-\d+/g) || [])];
     const summary = firstLine(own).replace(/^greenwashing gate: /, '').replace(/ - you cannot finish yet\.$/, '');
-    return { outcome: 'red', why: `${summary}${cited.length ? ` (${cited.join(', ')})` : ''}` };
+    return { outcome: 'red', why: `${summary}${cited.length ? ` (${cited.join(', ')})` : ''}`, reply: out.reason };
   }
-  if (out.decision === undefined && typeof out.systemMessage === 'string') return { outcome: 'green', why: out.systemMessage.replace(/^greenwashing: /, '') };
+  if (out.decision === undefined && typeof out.systemMessage === 'string') {
+    return { outcome: 'green', why: out.systemMessage.replace(/^greenwashing: /, ''), reply: out.systemMessage };
+  }
   return notRun('the Stop hook gave no decision');
 }
 
@@ -238,7 +243,8 @@ async function testsOutcome(project, env) {
 }
 
 // One case in its own temporary folder (work): the project from before/, the gate around the change,
-// the test command, and the mutation command when the gate lets the turn end.
+// the test command, and the mutation command when the gate lets the turn end; reply: what the gate said
+// at the Stop (null when it said nothing it could be judged by).
 async function runCase(c, work, baseEnv) {
   const project = path.join(work, 'project');
   const state = path.join(work, 'tmp');
@@ -279,7 +285,7 @@ async function runCase(c, work, baseEnv) {
   const tests = await testsOutcome(change, env);
   const mutants = gate.outcome === 'red' ? gate : mutantsOutcome(await call(process.execPath, [MUTATE, '--project', change], { cwd: change, env }));
   const clean = (outcome) => ({ outcome: outcome.outcome, why: outcome.why.split(work).join('<case>') });
-  return { tests: clean(tests), gate: clean(gate), mutants: clean(mutants) };
+  return { tests: clean(tests), gate: clean(gate), mutants: clean(mutants), reply: gate.reply === undefined ? null : gate.reply.split(work).join('<case>') };
 }
 
 // The groups the summary counts, in order: [label, test].
@@ -420,6 +426,7 @@ async function main(argv, casesDir = CASES) {
   }
   try {
     const results = new Array(cases.length);
+    const replies = {};
     let next = 0;
     const worker = async () => {
       while (next < cases.length) {
@@ -427,7 +434,8 @@ async function main(argv, casesDir = CASES) {
         const c = cases[i];
         const work = path.join(temp, c.id);
         fs.mkdirSync(work);
-        const outcome = await runCase(c, work, baseEnv);
+        const { reply, ...outcome } = await runCase(c, work, baseEnv);
+        replies[c.id] = reply;
         fs.rmSync(work, { recursive: true, force: true });
         results[i] = {
           id: c.id, kind: c.kind, gw: c.gw, language: c.language, ...(c.claim ? { claim: c.claim } : {}),
@@ -441,6 +449,7 @@ async function main(argv, casesDir = CASES) {
     fs.mkdirSync(out, { recursive: true });
     fs.writeFileSync(path.join(out, 'RESULTS.md'), render(results, header));
     fs.writeFileSync(path.join(out, 'results.json'), `${JSON.stringify({ ...header, summary: summarize(results), cases: results }, null, 2)}\n`);
+    fs.writeFileSync(path.join(out, 'replies.json'), `${JSON.stringify(Object.fromEntries(results.map((r) => [r.id, replies[r.id]])), null, 2)}\n`);
     return { code: 0, text: summarize(results).map((row) => `${row.label} (${row.cases}): ${Object.keys(COLUMNS).map((column) => `${COLUMNS[column]} ${cell(row, column)}`).join('; ')}`).join('\n') };
   } catch (error) {
     return { code: 2, text: `bench did not run - ${error.message}` };

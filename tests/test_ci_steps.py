@@ -306,6 +306,33 @@ class BenchNumbersStepTest(StepCase):
         self.assertIn("bench/results.json differs from this run", out)
 
 
+class ReadmeCheckStepTest(StepCase):
+    """The step runs bench/readme on the bench run of the step before: here a stand-in that writes down
+    the folder it is given and exits as told."""
+
+    def run_readme_step(self, exit_code):
+        script = ("const fs = require('fs');\n"
+                  "fs.writeFileSync('given.txt', process.argv.slice(2).join('\\n'));\n"
+                  f"process.exitCode = {exit_code};\n")
+        path = self.make_dir({"bench/readme": script})
+        code, out = self.run_step("ci.yml", "README check", path)
+        with open(os.path.join(path, "given.txt"), encoding="utf-8") as f:
+            return code, out, f.read()
+
+    def test_a_readme_that_matches_passes_and_is_read_against_the_bench_runs_folder(self):
+        code, out, given = self.run_readme_step(0)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(given, os.path.join(self.runner_temp, "bench"))
+
+    def test_a_readme_that_differs_fails(self):
+        code, out, _ = self.run_readme_step(1)
+        self.assertNotEqual(code, 0, out)
+
+    def test_a_check_that_did_not_run_fails(self):
+        code, out, _ = self.run_readme_step(2)
+        self.assertNotEqual(code, 0, out)
+
+
 def job_blocks(workflow):
     """Each job of a workflow: name -> the lines of its block (under `jobs:`, two spaces in)."""
     lines = read(os.path.join(WORKFLOWS, workflow)).splitlines()
@@ -355,7 +382,7 @@ class WorkflowSettingsTest(unittest.TestCase):
         self.assertEqual([major for major, *_ in versions], ["20", "22", "24"], text)
         self.assertEqual(len(re.findall(r"^          - ", text, re.M)), 3, text)
         self.assertEqual(step_names(block), ["Check out with full history", "Install Node (official release, checksum pinned)",
-                                             "Check the Node version", "Gate tests", "Bench numbers"])
+                                             "Check the Node version", "Gate tests", "Bench numbers", "README check"])
         for name in ("NODE_VERSION: ${{ matrix.node }}", "NODE_SHA256: ${{ matrix.sha256 }}"):
             self.assertIn(name, text)
         # The other jobs stay on one Node: the runner's own.

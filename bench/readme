@@ -1,0 +1,219 @@
+#!/usr/bin/env node
+'use strict';
+// The README against a benchmark run: what it shows the gate say and the numbers it gives must be what
+// that run gave. Checked:
+//   the scene    - the gate's reply in the README's code block, after Claude Code's label for a Stop
+//                  hook's block, is the reply of the run on SCENE, word for word (lines may wrap anywhere:
+//                  how Claude Code wraps them is its own output, which no run here gives);
+//   the table    - "What else it catches", one row per case of ROWS in order: "Plain test run" is the
+//                  run's tests-only outcome, and the greenwashing cell is a line of the gate's reply on that
+//                  case, without its "- " or "Result: ";
+//   the numbers  - the summary table of the run's RESULTS.md stands in "Numbers" as it is;
+//   other digits - no other number in the README, apart from catalog entries (GW-NN) and the oldest
+//                  Node the gate runs on (MIN_NODE);
+//   the links    - every GW-NN outside code is a link to its entry's heading in CATALOG.md.
+//
+//   node bench/readme [<folder>]
+//
+// <folder>: where bench/run wrote RESULTS.md, results.json and replies.json (default: bench/). Exit 0:
+// the README matches; 1: it does not (each difference printed); 2: did not run (a file missing or
+// unreadable, or a case the README shows that the run has no reply or outcome for).
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { MIN_NODE } = require('../gate/lib/command');
+
+const ROOT = path.resolve(__dirname, '..');
+// The case whose gate reply the README's scene shows, and the cases of the rows of its table, in order.
+const SCENE = 'fake-deleted-test-js';
+const ROWS = ['fake-skip-js', 'fake-no-assertion-js', 'fake-dummy-command-js'];
+// Where the gate's reply starts in the scene: Claude Code's label for a Stop hook's block (2.1.286).
+const LABEL = 'Stop hook error: ';
+// The "Plain test run" cell for each tests-only outcome.
+const PLAIN = { green: '✅ green', red: '❌ red' };
+
+const squash = (text) => text.replace(/\s+/g, ' ').trim();
+// Markdown links as their text: [GW-17](CATALOG.md#...) -> GW-17; an image in a link loses its URL too.
+const unlink = (text) => {
+  let out = text;
+  for (let before = null; before !== out;) {
+    before = out;
+    out = out.replace(/!?\[([^\][]*)\]\([^()]*\)/g, '$1');
+  }
+  return out;
+};
+// GitHub's anchor of a heading: lower case, only letters, digits, spaces, hyphens and underscores
+// kept, a hyphen for each space.
+const slug = (heading) => heading.toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, '').replace(/ /g, '-');
+
+// The README's lines, its fenced code blocks ({from, to}: the fence lines) and its "## " sections
+// ({title: [from, to)}).
+function parse(text) {
+  const lines = text.split('\n');
+  const blocks = [];
+  let open = null;
+  for (const [i, line] of lines.entries()) {
+    if (!/^```/.test(line)) continue;
+    if (open === null) open = i;
+    else {
+      blocks.push({ from: open, to: i });
+      open = null;
+    }
+  }
+  const inBlock = (i) => blocks.some((b) => i >= b.from && i <= b.to) || (open !== null && i >= open);
+  // A section runs to the next heading of level 1 or 2.
+  const headings = lines.map((line, i) => (/^#{1,2} /.test(line) && !inBlock(i) ? i : -1)).filter((i) => i >= 0);
+  const sections = {};
+  for (const [k, i] of headings.entries()) {
+    if (lines[i].startsWith('## ')) sections[lines[i].slice(3).trim()] = [i + 1, k + 1 < headings.length ? headings[k + 1] : lines.length];
+  }
+  return { lines, blocks, sections, inBlock };
+}
+
+// The cells of a table row, without the outer pipes; \| is a pipe inside a cell.
+const cells = (row) => row.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map((cell) => cell.trim().replace(/\\\|/g, '|'));
+
+// Where two texts first differ, to say it in a line.
+function firstDifference(a, b) {
+  let i = 0;
+  while (i < a.length && i < b.length && a[i] === b[i]) i += 1;
+  const at = (text) => JSON.stringify(text.slice(Math.max(0, i - 30), i + 50));
+  return `the README has ${at(a)}, the run ${at(b)}`;
+}
+
+// The checks: {problems, notRun, checked}. run: {resultsMd, results, replies} of one bench run.
+function check(readme, run, catalog) {
+  const problems = [];
+  const notRun = [];
+  const checked = [];
+  const { lines, blocks, sections, inBlock } = parse(readme);
+  const byId = new Map((run.results.cases || []).map((c) => [c.id, c]));
+  const reply = (id) => (typeof run.replies[id] === 'string' ? run.replies[id] : null);
+  // The lines a run decides, with the part of each the digit rule below still reads: none of the scene's
+  // block or of the numbers table, the first cell of a row of the table.
+  const decided = new Map();
+
+  // The scene.
+  const scenes = blocks.filter((b) => lines.slice(b.from + 1, b.to).some((line) => line.includes(LABEL)));
+  if (scenes.length === 1) for (let i = scenes[0].from; i <= scenes[0].to; i += 1) decided.set(i, '');
+  if (scenes.length !== 1) problems.push(`the scene: ${scenes.length} code blocks hold "${LABEL.trim()}", not 1`);
+  else if (reply(SCENE) === null || !byId.has(SCENE)) notRun.push(`the scene: this run has no reply of the gate on ${SCENE}`);
+  else {
+    const [{ from, to }] = scenes;
+    const body = lines.slice(from + 1, to);
+    const start = body.findIndex((line) => line.includes(LABEL));
+    const shown = squash([body[start].slice(body[start].indexOf(LABEL) + LABEL.length), ...body.slice(start + 1)].join('\n'));
+    const real = squash(reply(SCENE));
+    if (byId.get(SCENE).gate.outcome !== 'red') problems.push(`the scene: the gate does not stop ${SCENE} in this run (${byId.get(SCENE).gate.outcome})`);
+    if (shown !== real) problems.push(`the scene: the gate's reply on ${SCENE} differs from this run's: ${firstDifference(shown, real)}`);
+    checked.push('the scene');
+  }
+
+  // The table of what else it catches.
+  const table = sections['What else it catches'];
+  if (!table) problems.push('the table: no section "## What else it catches"');
+  else {
+    const rows = [];
+    for (let i = table[0]; i < table[1]; i += 1) if (lines[i].startsWith('|') && !inBlock(i)) rows.push(i);
+    const data = rows.slice(2);
+    for (const i of data) decided.set(i, cells(lines[i])[0]);
+    if (data.length !== ROWS.length) problems.push(`the table: ${data.length} rows of cases, not ${ROWS.length}`);
+    for (const [n, id] of ROWS.entries()) {
+      if (n >= data.length) break;
+      const c = byId.get(id);
+      if (!c || reply(id) === null) {
+        notRun.push(`the table: this run has no outcome or no reply of the gate on ${id}`);
+        continue;
+      }
+      const [, plain, caught] = cells(lines[data[n]]);
+      if (!PLAIN[c.tests.outcome]) notRun.push(`the table, ${id}: the tests-only column did not run`);
+      else if (plain !== PLAIN[c.tests.outcome]) problems.push(`the table, ${id}: "Plain test run" says "${plain}", this run "${PLAIN[c.tests.outcome]}"`);
+      if (c.gate.outcome !== 'red') problems.push(`the table, ${id}: the gate does not stop it in this run (${c.gate.outcome})`);
+      const said = reply(id).split('\n').map((line) => line.replace(/^(?:- |Result: )/, ''));
+      const shown = unlink(caught || '').replace(/^❌ /, '');
+      if (!(caught || '').startsWith('❌ ') || !said.includes(shown)) {
+        problems.push(`the table, ${id}: "${shown}" is not a line of the gate's reply in this run, which says: ${JSON.stringify(reply(id).split('\n').slice(0, 4).join(' / '))}`);
+      }
+      checked.push(id);
+    }
+  }
+
+  // The numbers.
+  const numbers = sections.Numbers;
+  const shown = [];
+  for (let i = numbers ? numbers[0] : 0; numbers && i < numbers[1]; i += 1) {
+    if (lines[i].startsWith('|') && !inBlock(i)) {
+      shown.push(lines[i]);
+      decided.set(i, '');
+    }
+  }
+  // The run's summary table: the first table after its heading.
+  const want = [];
+  for (const line of (run.resultsMd.split('\n## Summary\n')[1] || '').split('\n')) {
+    if (line.startsWith('|')) want.push(line);
+    else if (want.length) break;
+  }
+  if (want.length < 3) notRun.push('the numbers: no summary table in this run\'s RESULTS.md');
+  else if (!numbers) problems.push('the numbers: no section "## Numbers"');
+  else {
+    if (shown.join('\n') !== want.join('\n')) {
+      const differs = shown.find((line, i) => line !== want[i]) || '(missing rows)';
+      problems.push(`the numbers: the table in "Numbers" is not this run's summary table: ${differs} - the run has ${want.find((line, i) => line !== shown[i]) || '(fewer rows)'}`);
+    }
+    checked.push('the numbers');
+  }
+
+  // No other number, and every catalog entry a link to its heading.
+  const headings = new Map([...catalog.matchAll(/^### (GW-\d+) .*$/gm)].map((m) => [m[1], m[0].slice(4)]));
+  let links = 0;
+  for (const [i, line] of lines.entries()) {
+    const read = decided.has(i) ? decided.get(i) : line;
+    if (inBlock(i)) {
+      if (/\d/.test(read)) problems.push(`line ${i + 1}: a number no bench run gives: ${line.trim()}`);
+      continue;
+    }
+    for (const m of line.matchAll(/\[(GW-\d+)\]\(([^()]*)\)/g)) {
+      links += 1;
+      const heading = headings.get(m[1]);
+      if (!heading) problems.push(`line ${i + 1}: ${m[1]} is no entry of CATALOG.md`);
+      else if (m[2] !== `CATALOG.md#${slug(heading)}`) problems.push(`line ${i + 1}: ${m[1]} links to ${m[2]}, not CATALOG.md#${slug(heading)}`);
+    }
+    if (/GW-\d+/.test(line.replace(/\[GW-\d+\]\([^()]*\)/g, '').replace(/`[^`]*`/g, ''))) problems.push(`line ${i + 1}: a catalog entry that is no link to it: ${line.trim()}`);
+    const rest = unlink(read).replace(/GW-\d+/g, '').replace(new RegExp(`\\bNode ${MIN_NODE}\\+`, 'g'), '');
+    if (/\d/.test(rest)) problems.push(`line ${i + 1}: a number no bench run gives: ${line.trim()}`);
+  }
+  checked.push(`${links} catalog links`);
+  return { problems, notRun, checked };
+}
+
+function main(argv) {
+  if (argv.length > 1) return { code: 2, text: 'usage: node bench/readme [<folder with RESULTS.md, results.json and replies.json>]' };
+  const folder = path.resolve(argv[0] || __dirname);
+  let run;
+  let readme;
+  let catalog;
+  try {
+    readme = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8');
+    catalog = fs.readFileSync(path.join(ROOT, 'CATALOG.md'), 'utf8');
+    run = {
+      resultsMd: fs.readFileSync(path.join(folder, 'RESULTS.md'), 'utf8'),
+      results: JSON.parse(fs.readFileSync(path.join(folder, 'results.json'), 'utf8')),
+      replies: JSON.parse(fs.readFileSync(path.join(folder, 'replies.json'), 'utf8')),
+    };
+  } catch (error) {
+    return { code: 2, text: `README check: did not run - ${error.message}` };
+  }
+  const { problems, notRun, checked } = check(readme, run, catalog);
+  const list = (items) => items.map((item) => `- ${item}`).join('\n');
+  if (problems.length) return { code: 1, text: `README check: failed - the README is not what this bench run gave\n${list([...problems, ...notRun])}` };
+  if (notRun.length) return { code: 2, text: `README check: did not run\n${list(notRun)}` };
+  return { code: 0, text: `README check: passed - ${checked.join(', ')} match this bench run (${folder})` };
+}
+
+if (require.main === module) {
+  const { code, text } = main(process.argv.slice(2));
+  process.stdout.write(`${text}\n`);
+  process.exitCode = code;
+}
+
+module.exports = { check, main, slug, cells, SCENE, ROWS, LABEL };
