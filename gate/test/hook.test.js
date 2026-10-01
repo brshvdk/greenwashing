@@ -1724,6 +1724,19 @@ test('Python test checks that cannot run are did not run: no python3 on PATH, or
   assert.match(reason, /; if the project's Python reads it, a human sets \{"python": "<the project's Python, for example \.venv\/bin\/python>"\} in \.greenwashing\.json in the project root, or turns the checks off there/);
 });
 
+test('every check turned off: the Python checks do not run, so no python3 on PATH or a file Python cannot read leaves the tests to decide', (t) => {
+  const bin = tempDir(t);
+  for (const tool of ['git', 'sh']) fs.symlinkSync(spawnSync('sh', ['-c', `command -v ${tool}`], { encoding: 'utf8' }).stdout.trim(), path.join(bin, tool));
+  const off = JSON.stringify({ testCommand: GREEN_ECHO, checks: { skips: false, assertions: false, selfComparisons: false } });
+  for (const [change, env] of [[`${PY_OK}# more\n`, { PATH: bin }], ['def test_a(:\n', {}]]) {
+    const dir = project(t, { 'test_a.py': PY_OK, '.greenwashing.json': off }, null);
+    const gate = session(t, dir, { env });
+    gate.prompt();
+    write(dir, { 'test_a.py': change });
+    assert.match(gate.stop().json.systemMessage || '', /^greenwashing: tests passed - /, change);
+  }
+});
+
 test('"python" in .greenwashing.json runs the Python checks: a path from the project folder or a name, not python3 from PATH', (t) => {
   const real = spawnSync('sh', ['-c', 'command -v python3'], { encoding: 'utf8' }).stdout.trim();
   const bin = tempDir(t);
