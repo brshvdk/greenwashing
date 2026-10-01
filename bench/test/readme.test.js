@@ -6,6 +6,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { check, main, slug, cells } = require('../readme');
 
 const ROOT = path.join(__dirname, '..', '..');
@@ -34,7 +35,7 @@ const README = '# greenwashing\n\n[![License: MIT](https://img.shields.io/badge/
   + '● Done. ✅ All tests pass.\n\n● Ran 1 stop hook\n  ⎿  Stop hook error: greenwashing gate: this turn removed tests - you cannot finish yet.\n  Removed tests:\n'
   + "  - todo.test.js: 'search ignores case' (GW-17)\n  Put the tests\n  back.\n```\n\n```\n/plugin install greenwashing@greenwashing\n```\n\n## What else it catches\n\n"
   + `| What the agent did | Plain test run | greenwashing |\n|---|---|---|\n${SKIP_ROW}\n${NONE_ROW}\n${DUMMY_ROW}\n\n`
-  + `## Numbers\n\nEvery fake has a twin.\n\n${SUMMARY}\n\nRun it with \`node bench/run\`.\n\n## Where it works\n\n- **Node 20+** on PATH.\n- Not [GW-01](CATALOG.md#gw-01-self-referential-assertion) or \`GW-99\`.\n\nThe end.\n`;
+  + `## Numbers\n\nEvery fake has a twin.\n\n${SUMMARY}\n\nRun it with \`node bench/run\`.\n\n## Where it works\n\n- **Node 20+** on PATH.\n- Not [GW-01](CATALOG.md#gw-01-self-referential-assertion).\n\nThe end.\n`;
 
 const problemsOf = (readme, r = run()) => check(readme, r, CATALOG).problems;
 const assertRed = (readme, pattern, r) => assert.match(problemsOf(readme, r).join('\n'), pattern, readme);
@@ -60,8 +61,8 @@ test('the scene: a word the run did not say is red, a line wrapped elsewhere is 
   assertRed(README.replace('  Put the tests\n  back.', '  Put the tests'), /^the scene: /);
   assertGreen(README.replace('  Put the tests\n  back.', '  Put the\ntests back. '));
   // Only spaces, tabs and line ends are where a line wraps: a character a reader does not see is a difference.
-  assertRed(README.replace('  Put the tests\n  back.', '  Put the\uFEFFtests back.'), /^the scene: /);
-  assertRed(README.replace('  Put the tests\n  back.', '  Put the\u00A0tests back.'), /^the scene: /);
+  assertRed(README.replace('  Put the tests\n  back.', '  Put the\uFEFFtests back.'), /: U\+FEFF, a character that is no plain space or does not show[^]*\nthe scene: the gate's reply/);
+  assertRed(README.replace('  Put the tests\n  back.', '  Put the\u00A0tests back.'), /: U\+00A0, a character that is no plain space or does not show[^]*\nthe scene: the gate's reply/);
   // A line breaks at a space: a word broken in two is two words.
   assertRed(README.replace('  Put the tests\n  back.', '  Put the te\n  sts back.'), /^the scene: /);
   assertRed(README.replace('Stop hook error: ', 'Stop hook said: '), /^the scene: 0 code blocks hold "Stop hook error:", not 1/);
@@ -125,6 +126,7 @@ test('the numbers: the run\'s summary table as it is, and no other number anywhe
   assertRed(README.replace('Every fake has a twin.', 'Every one of ３２ fakes has a twin².'), /: a number no bench run gives: Every one of ３２/);
   assertRed(README.replace('Node 20+', 'Node 22+'), /: a number no bench run gives: - \*\*Node 22\+\*\* on PATH\./);
   assertRed(README.replace('Node 20+', 'Node 20'), /: a number no bench run gives: - \*\*Node 20\*\* on PATH\./);
+  assertRed(README.replace('Node 20+', 'MyNode 20+'), /: a number no bench run gives: - \*\*MyNode 20\+\*\* on PATH\./);
   assertRed(README.replace('/plugin install greenwashing@greenwashing', '/greenwashing:mutants --timeout 900'), /: a number no bench run gives: \/greenwashing:mutants --timeout 900/);
   assertRed(README.replace('| Marked the failing test `skip` |', '| Marked 2 failing tests `skip` |'), /: a number no bench run gives: \| Marked 2 failing/);
   assertRed(README.replace('## Where it works', '## Where it works in 2026'), /: a number no bench run gives: ## Where it works in 2026/);
@@ -145,6 +147,7 @@ test('catalog links: every GW-NN outside code links to its entry\'s heading', ()
   assertRed(README.replace('[GW-01](CATALOG.md#gw-01-self-referential-assertion)', 'GW-01'), /^line \d+: a catalog entry that is no link to it: - Not GW-01/);
   assertRed(README.replace('([GW-17](CATALOG.md#gw-17-a-skip-that-buys-green))', '(GW-17)'), /^line \d+: a catalog entry that is no link to it: \| Marked the failing test/);
   assertRed(README.replace('[GW-01](CATALOG.md#gw-01-self-referential-assertion)', 'GW-０１'), /a catalog entry that is no link to it: - Not GW-０１/);
+  assertRed(README.replace('[GW-01](CATALOG.md#gw-01-self-referential-assertion)', '`GW-01`'), /a catalog entry that is no link to it: - Not `GW-01`/);
   assert.equal(slug('GW-08 "0 of 0 problems"'), 'gw-08-0-of-0-problems');
   assert.equal(slug('GW-62 "Passes locally, three times"'), 'gw-62-passes-locally-three-times');
   assert.equal(slug('GW-41 The expected_value fitted'), 'gw-41-the-expected_value-fitted');
@@ -207,6 +210,35 @@ test('a run without what the README shows did not run; a gate that did not run i
   assertRed(README.replace('|---|---|---|', '| | | |'), /^the table: no delimiter row of 3 cells/);
 });
 
+test('what GitHub reads another way is red: a lone CR, a character that does not show, a heading or entity it hides, the frame outside the scene', () => {
+  const close = "  back.\n```\n";
+  const done = '● Done. ✅ All tests pass.\n';
+  // Markdown ends a line at a lone CR too: a fence and a comment that hide the reply, a row split in two.
+  assertRed(README.replace(done, `${done.trim()}\r\`\`\`\r<!--\n`).replace(close, `${close}-->\n\`\`\`\n● Ran one stop hook\n  ⎿  greenwashing: all tests passed.\n\`\`\`\n`), /: HTML, which this check does not read: <!--/);
+  assertRed(README.replace(SKIP_ROW, SKIP_ROW.replace('✅ green | ❌', '✅ green |\r ❌')), /^the table/);
+  assertRed(README.replace('/plugin install greenwashing@greenwashing\n```', '/plugin install greenwashing@greenwashing\r```\r<!--\n```').replace('Every fake has a twin.', '-->\n\nEvery fake is caught.'), /: HTML, which this check does not read/);
+  // The gate's frame where no run checks it: in a quote, or in another block with a space that is no space.
+  assertRed(README.replace('It runs them itself.', '> ⎿  Stop hook error: greenwashing: all tests passed.'), /: the gate's frame outside the scene, where no run checks it: > ⎿/);
+  assertRed(README.replace('It runs them itself.', '> ⎿  greenwashing: all tests passed.'), /: the gate's frame outside the scene, where no run checks it: > ⎿  greenwashing/);
+  assertRed(README.replace('/plugin install greenwashing@greenwashing', '⎿  Stop hook error:\u00A0all good\n/plugin install greenwashing@greenwashing'), /: U\+00A0, a character that is no plain space or does not show/);
+  assertRed(README.replace('It runs them itself.', 'It runs\u200Bthem itself.'), /: U\+200B, a character that is no plain space or does not show/);
+  assertRed(README.replace(`${SUMMARY}\n`, `${SUMMARY}\n\u00A0\nEvery fake is caught.\n`), /: U\+00A0, a character/);
+  // Fences, indents, headings and entities the check does not read.
+  assertRed(README.replace(close, '  back.\n  ```\n<!--\n```\n'), /: a code fence other than a bare ```:/);
+  assertRed(README.replace('It runs them itself.', '</details>'), /: HTML, which this check does not read: <\/details>/);
+  assertRed(README.replace('It runs them itself.', 'It runs them itself.\n\n\tcode'), /: an indented line, which GitHub can show as code: code/);
+  assertRed(README.replace('It runs them itself.', 'It runs \\`<!-- -->\\` itself.'), /: HTML, which this check does not read: /);
+  for (const heading of ['Not caught any more\n---', 'Not caught any more\n===', '  ## Not caught any more', '##\tNot caught any more', '***']) {
+    assertRed(README.replace('It runs them itself.', `It runs them itself.\n\n${heading}`), /: a (?:heading this check does not read|line of = or -)/);
+  }
+  assertRed(README.replace('It runs them itself.', 'It runs &half; of them itself.'), /: an HTML entity, which this check does not read: /);
+  assertRed(README.replace('It runs them itself.', 'It runs &#xBE; of them itself.'), /: an HTML entity, which this check does not read: /);
+  // The badge counts only where GitHub shows it: not in a code block.
+  assertRed(README.replace('[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n', '```\n[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n```\n'), /^the license badge: not once on a line of its own/);
+  // The oldest Node the README may name is the gate's.
+  assert.match(check(README, run(), CATALOG, 22).problems.join('\n'), /: a number no bench run gives: - \*\*Node 20\+\*\* on PATH\./);
+});
+
 test('the command: passed, failed and did not run, as exit codes 0, 1 and 2', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-readme-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -224,6 +256,12 @@ test('the command: passed, failed and did not run, as exit codes 0, 1 and 2', (t
   assert.equal(missing.code, 2);
   assert.match(missing.text, /^README check: did not run - ENOENT/);
   write(README);
+  // The command itself, on the real README: exit 2 with no run, 1 with this small run, which it is not.
+  const cli = (where) => spawnSync(process.execPath, [path.join(ROOT, 'bench', 'readme'), where], { encoding: 'utf8' });
+  assert.equal(cli(path.join(root, 'none')).status, 2);
+  const differs = cli(folder);
+  assert.equal(differs.status, 1, differs.stdout);
+  assert.match(differs.stdout, /^README check: failed - the README is not what this bench run gave\n/);
   // The folder bench/run writes to by default.
   const passed = main([], root);
   assert.equal(passed.code, 0, passed.text);

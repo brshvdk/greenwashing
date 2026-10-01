@@ -14,10 +14,12 @@
 //                  oldest Node the gate runs on (MIN_NODE) and FRAME;
 //   images       - none but BADGE;
 //   the links    - every GW-NN outside code is a link to its entry's heading in CATALOG.md.
-// Markdown the check cannot read the way GitHub shows it is refused, not guessed at: HTML, a code fence
-// other than a bare ```, an indented line (code to GitHub), a | outside the tables it reads (a row to
-// GitHub), a "## " title twice. A table runs from a line that starts with | to the next blank line, as
-// GitHub reads it.
+// Markdown the check cannot read the way GitHub shows it is refused, not guessed at: HTML and its
+// entities, a code fence other than a bare ```, an indented line (code to GitHub), a | outside the tables
+// it reads (a row to GitHub), a heading it does not see (indented, a tab after its #, a line of = or -
+// under it), a "## " title twice, a character that is no plain space or does not show, the gate's frame
+// outside the scene. Lines end at CRLF, CR or LF, as in Markdown; a table runs from a line that starts
+// with | to the next blank line, as GitHub reads it.
 //
 //   node bench/readme [<folder>]
 //
@@ -57,17 +59,20 @@ const unlinkEntries = (text) => text.replace(GW_LINK, (link, entry, target) => (
 // kept, a hyphen for each space.
 const slug = (heading) => heading.toLowerCase().replace(/[^\p{L}\p{N} _-]/gu, '').replace(/ /g, '-');
 // The first number of a text that the digit rule reads: catalog entries, the targets of their links
-// and the oldest Node go first.
-const numberIn = (text) => text.replace(/\]\(CATALOG\.md#[^()\s]*\)/g, ']').replace(/GW-\p{N}+/gu, '')
-  .replace(new RegExp(`(?<![\\p{L}\\p{N}])Node ${MIN_NODE}\\+`, 'gu'), '').match(/\p{N}/u);
-// Text outside code spans.
-const outsideCode = (line) => line.replace(/`[^`]*`/g, '');
+// and the oldest Node (minNode) go first.
+const numberIn = (text, minNode) => text.replace(/\]\(CATALOG\.md#[^()\s]*\)/g, ']').replace(/GW-\p{N}+/gu, '')
+  .replace(new RegExp(`(?<![\\p{L}\\p{N}])Node ${minNode}\\+`, 'gu'), '').match(/\p{N}/u);
+// Text outside code spans; an escaped backtick opens none.
+const outsideCode = (line) => line.replace(/\\`/g, '').replace(/`[^`]*`/g, '');
+// A character that is no plain space or tab and is a space, a line or paragraph separator, a format or a
+// control character: GitHub shows it as a space, as nothing, or as an end of line.
+const ODD = /(?![ \t])[\p{Z}\p{Cf}\p{Cc}]/u;
 
 // The README's lines, its fenced code blocks ({from, to}: the fence lines; to is null for one never
 // closed, which runs to the end), its "## " sections ({title: [from, to)}, and the titles found twice)
 // and its tables ([from, to)).
 function parse(text) {
-  const lines = text.split(/\r?\n/);
+  const lines = text.split(/\r\n|\r|\n/);
   const blocks = [];
   let open = null;
   for (const [i, line] of lines.entries()) {
@@ -94,7 +99,7 @@ function parse(text) {
   for (let i = 0; i < lines.length; i += 1) {
     if (!lines[i].startsWith('|') || inBlock(i)) continue;
     let end = i;
-    while (end < lines.length && lines[end].trim() && !inBlock(end)) end += 1;
+    while (end < lines.length && !/^[ \t]*$/.test(lines[end]) && !inBlock(end)) end += 1;
     tables.push([i, end]);
     i = end;
   }
@@ -112,8 +117,9 @@ function firstDifference(a, b) {
   return `the README has ${at(a)}, the run ${at(b)}`;
 }
 
-// The checks: {problems, notRun, checked}. run: {resultsMd, results, replies} of one bench run.
-function check(readme, run, catalog) {
+// The checks: {problems, notRun, checked}. run: {resultsMd, results, replies} of one bench run; minNode:
+// the oldest Node the README may name.
+function check(readme, run, catalog, minNode = MIN_NODE) {
   const problems = [];
   const notRun = [];
   const checked = [];
@@ -135,9 +141,16 @@ function check(readme, run, catalog) {
   for (const b of blocks) if (b.to === null) problems.push(`line ${b.from + 1}: a code block that is never closed`);
   for (const title of twice) problems.push(`the section "## ${title}" is there twice`);
   for (const [i, line] of lines.entries()) {
+    const odd = line.match(ODD);
+    if (odd) problems.push(`line ${i + 1}: U+${odd[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}, a character that is no plain space or does not show`);
     if (/^ {0,3}(?:`{3,}|~{3,})/.test(line) && line !== '```') problems.push(`line ${i + 1}: a code fence other than a bare \`\`\`: ${line.trim()}`);
     if (inBlock(i)) continue;
     if (/<(?:!--|\/?[A-Za-z])/.test(outsideCode(line))) problems.push(`line ${i + 1}: HTML, which this check does not read: ${line.trim()}`);
+    if (/&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);/.test(outsideCode(line))) problems.push(`line ${i + 1}: an HTML entity, which this check does not read: ${line.trim()}`);
+    if (/^ {1,3}#{1,6}(?:[ \t]|$)|^#{1,6}\t/.test(line)) problems.push(`line ${i + 1}: a heading this check does not read: ${line.trim()}`);
+    if (!inTable(i) && /^ {0,3}(?:=+|-+|(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$/.test(line)) {
+      problems.push(`line ${i + 1}: a line of = or - (a heading's underline or a break), which this check does not read`);
+    }
     if (/^(?: {4}|\t)\s*\S/.test(line)) problems.push(`line ${i + 1}: an indented line, which GitHub can show as code: ${line.trim()}`);
     if (!inTable(i) && /(?<!\\)\|/.test(outsideCode(line))) problems.push(`line ${i + 1}: a | outside the tables, which GitHub can show as a table row: ${line.trim()}`);
   }
@@ -152,6 +165,9 @@ function check(readme, run, catalog) {
     for (let i = start; i < to; i += 1) decided.set(i, '');
     for (let i = from + 1; i < start; i += 1) if (lines[i] === FRAME) decided.set(i, '');
     const before = lines[start].slice(0, lines[start].indexOf(LABEL));
+    for (const [i, line] of lines.entries()) {
+      if ((i < from || i > to) && /⎿|stop hook error/i.test(line)) problems.push(`line ${i + 1}: the gate's frame outside the scene, where no run checks it: ${line.trim()}`);
+    }
     if (!/^\s*⎿\s*$/.test(before)) problems.push(`the scene: the line of "${LABEL.trim()}" has ${JSON.stringify(before)} before it, not the frame's ⎿`);
     if (reply(SCENE) === null || outcome(SCENE, 'gate') === null) notRun.push(`the scene: this run has no reply of the gate on ${SCENE}`);
     else {
@@ -225,7 +241,7 @@ function check(readme, run, catalog) {
   const headings = new Map([...catalog.matchAll(/^### (GW-\d+) .*$/gm)].map((m) => [m[1], m[0].slice(4)]));
   let links = 0;
   for (const [i, line] of lines.entries()) {
-    if (numberIn(decided.has(i) ? decided.get(i) : line)) problems.push(`line ${i + 1}: a number no bench run gives: ${line.trim()}`);
+    if (numberIn(decided.has(i) ? decided.get(i) : line, minNode)) problems.push(`line ${i + 1}: a number no bench run gives: ${line.trim()}`);
     if (inBlock(i)) continue;
     if (line.includes('![') && line.trim() !== BADGE) problems.push(`line ${i + 1}: an image other than the license badge: ${line.trim()}`);
     for (const m of line.matchAll(GW_LINK)) {
@@ -234,7 +250,7 @@ function check(readme, run, catalog) {
       if (!heading) problems.push(`line ${i + 1}: ${m[1]} is no entry of CATALOG.md`);
       else if (m[2] !== `CATALOG.md#${slug(heading)}`) problems.push(`line ${i + 1}: ${m[1]} links to ${m[2]}, not CATALOG.md#${slug(heading)}`);
     }
-    if (/GW-\p{N}+/u.test(outsideCode(line.replace(GW_LINK, '')))) problems.push(`line ${i + 1}: a catalog entry that is no link to it: ${line.trim()}`);
+    if (/GW-\p{N}+/u.test(line.replace(GW_LINK, ''))) problems.push(`line ${i + 1}: a catalog entry that is no link to it: ${line.trim()}`);
   }
   if (lines.filter((line, i) => !inBlock(i) && line.trim() === BADGE).length !== 1) problems.push('the license badge: not once on a line of its own');
   checked.push(`${links} catalog links`);

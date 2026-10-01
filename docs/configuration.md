@@ -20,7 +20,7 @@ The command that runs your tests, run in the project root by the shell, with `CI
 
 The gate always uses a command set here and reads its output: the counts that pytest, unittest, jest, vitest and `node --test` print. Output with no counts is "did not run". The mutation check runs the same command.
 
-Without `testCommand`, a project whose test command, when the work starts, runs none of these runners (mocha, `go test`, or no test command at all) is not checked: each turn ends with a line that says so. With `testCommand` set, the project is always checked, so point it at a command that runs your tests with one of these runners.
+Without `testCommand`, a project whose test command, when the work starts, runs none of these runners (mocha, `go test` or no test command at all) is not checked: each turn ends with a line that says so, and only a `.greenwashing.json` changed during the turn still blocks it ([GW-114](../CATALOG.md#gw-114-the-checked-code-configures-its-checker)). With `testCommand` set, the project is always checked, so point it at a command that runs your tests with one of these runners.
 
 ## `timeoutSeconds`
 
