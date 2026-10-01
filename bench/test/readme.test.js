@@ -37,8 +37,8 @@ const README = '# greenwashing\n\n[![License: MIT](https://img.shields.io/badge/
   + `## Numbers\n\nEvery fake has a twin.\n\n${SUMMARY}\n\nRun it with \`node bench/run\`.\n\n## Where it works\n\n- **Node 20+** on PATH.\n- Not [GW-01](CATALOG.md#gw-01-self-referential-assertion) or \`GW-99\`.\n\nThe end.\n`;
 
 const problemsOf = (readme, r = run()) => check(readme, r, CATALOG).problems;
-const red = (readme, pattern, r) => assert.match(problemsOf(readme, r).join('\n'), pattern, readme);
-const green = (readme, r) => assert.deepEqual(problemsOf(readme, r), [], readme);
+const assertRed = (readme, pattern, r) => assert.match(problemsOf(readme, r).join('\n'), pattern, readme);
+const assertGreen = (readme, r) => assert.deepEqual(problemsOf(readme, r), [], readme);
 const after = (line, extra, readme = README) => readme.replace(`${line}\n`, `${line}\n${extra}\n`);
 
 test('a README that is what the run gave passes, and says what it checked', () => {
@@ -48,103 +48,103 @@ test('a README that is what the run gave passes, and says what it checked', () =
   assert.deepEqual(checked, ['the scene', 'fake-skip-js', 'fake-no-assertion-js', 'fake-dummy-command-js', 'the numbers', '3 catalog links']);
   // Line ends of Windows, a code block that names an entry or the oldest Node, a fence inside a line and a
   // heading inside a code block are no difference.
-  green(README.replace(/\n/g, '\r\n'));
-  green(README.replace('/plugin install greenwashing@greenwashing', '# see GW-17 and Node 20+\n/plugin install greenwashing@greenwashing'));
-  green(README.replace('It runs them itself.', 'It runs them itself; a block opens with ```.'));
-  green(README.replace('Every fake has a twin.', 'Every fake has a twin.\n\n```\n# run it\n```'));
+  assertGreen(README.replace(/\n/g, '\r\n'));
+  assertGreen(README.replace('/plugin install greenwashing@greenwashing', '# see GW-17 and Node 20+\n/plugin install greenwashing@greenwashing'));
+  assertGreen(README.replace('It runs them itself.', 'It runs them itself; a block opens with ```.'));
+  assertGreen(README.replace('Every fake has a twin.', 'Every fake has a twin.\n\n```\n# run it\n```'));
 });
 
-test('the scene: a word the run did not say is red, a line wrapped at another space is not; it must be one closed block, on a caught case', () => {
-  red(README.replace("'search ignores case'", "'search ignores cases'"), /^the scene: the gate's reply on fake-deleted-test-js differs from this run's: the README has .*ignores cases/);
-  red(README.replace('  Put the tests\n  back.', '  Put the tests back. Done.'), /^the scene: /);
-  red(README.replace('  Put the tests\n  back.', '  Put the tests'), /^the scene: /);
-  green(README.replace('  Put the tests\n  back.', '  Put the\ntests back. '));
+test('the scene: a word the run did not say is red, a line wrapped elsewhere is not; it must be one block, on a caught case', () => {
+  assertRed(README.replace("'search ignores case'", "'search ignores cases'"), /^the scene: the gate's reply on fake-deleted-test-js differs from this run's: the README has .*ignores cases/);
+  assertRed(README.replace('  Put the tests\n  back.', '  Put the tests back. Done.'), /^the scene: /);
+  assertRed(README.replace('  Put the tests\n  back.', '  Put the tests'), /^the scene: /);
+  assertGreen(README.replace('  Put the tests\n  back.', '  Put the\ntests back. '));
   // Only spaces, tabs and line ends are where a line wraps: a character a reader does not see is a difference.
-  red(README.replace('  Put the tests\n  back.', '  Put the\uFEFFtests back.'), /^the scene: /);
-  red(README.replace('  Put the tests\n  back.', '  Put the\u00A0tests back.'), /^the scene: /);
+  assertRed(README.replace('  Put the tests\n  back.', '  Put the\uFEFFtests back.'), /^the scene: /);
+  assertRed(README.replace('  Put the tests\n  back.', '  Put the\u00A0tests back.'), /^the scene: /);
   // A line breaks at a space: a word broken in two is two words.
-  red(README.replace('  Put the tests\n  back.', '  Put the te\n  sts back.'), /^the scene: /);
-  red(README.replace('Stop hook error: ', 'Stop hook said: '), /^the scene: 0 code blocks hold "Stop hook error:", not 1/);
-  red(README.replace('/plugin install greenwashing@greenwashing', '/plugin install greenwashing@greenwashing\nStop hook error: x'), /^the scene: 2 code blocks hold/);
-  red(README, /^the scene: the gate does not stop fake-deleted-test-js in this run \(green\)/, run({ 'fake-deleted-test-js': ['green', 'green'] }));
+  assertRed(README.replace('  Put the tests\n  back.', '  Put the te\n  sts back.'), /^the scene: /);
+  assertRed(README.replace('Stop hook error: ', 'Stop hook said: '), /^the scene: 0 code blocks hold "Stop hook error:", not 1/);
+  assertRed(README.replace('/plugin install greenwashing@greenwashing', '/plugin install greenwashing@greenwashing\nStop hook error: x'), /^the scene: 2 code blocks hold/);
+  assertRed(README, /^the scene: the gate does not stop fake-deleted-test-js in this run \(green\)/, run({ 'fake-deleted-test-js': ['green', 'green'] }));
   assert.match(check(README, run({ replies: { 'fake-deleted-test-js': null } }), CATALOG).notRun.join('\n'), /^the scene: this run has no reply of the gate on fake-deleted-test-js/);
   // A number in the lines around the reply is no number of the run; the frame's own line is Claude Code's.
-  red(README.replace('✅ All tests pass.', '✅ All 48 tests pass.'), /: a number no bench run gives: ● Done\. ✅ All 48 tests pass\./);
-  red(README.replace('● Ran 1 stop hook', '● Ran 2 stop hooks'), /: a number no bench run gives: ● Ran 2 stop hooks/);
-  red(`${README}\n\`\`\`\nnever closed\n`, /: a code block that is never closed/);
+  assertRed(README.replace('✅ All tests pass.', '✅ All 48 tests pass.'), /: a number no bench run gives: ● Done\. ✅ All 48 tests pass\./);
+  assertRed(README.replace('● Ran 1 stop hook', '● Ran 2 stop hooks'), /: a number no bench run gives: ● Ran 2 stop hooks/);
+  assertRed(`${README}\n\`\`\`\nnever closed\n`, /: a code block that is never closed/);
 });
 
-test('the table: its header, each row its case and text, the plain run the tests-only outcome, the reason a finding or result of the gate', () => {
-  red(README, /^the table, fake-skip-js: "Plain test run" says "✅ green", this run "❌ red"/, run({ 'fake-skip-js': ['red'] }));
+test('the table: each row is its case, its plain run the tests-only outcome and its reason a line of the gate\'s reply', () => {
+  assertRed(README, /^the table, fake-skip-js: "Plain test run" says "✅ green", this run "❌ red"/, run({ 'fake-skip-js': ['red'] }));
   assert.match(check(README, run({ 'fake-skip-js': ['did not run'] }), CATALOG).notRun.join('\n'), /^the table, fake-skip-js: the tests-only column did not run/);
-  red(README, /^the table, fake-no-assertion-js: the gate does not stop it in this run \(green\)/, run({ 'fake-no-assertion-js': ['green', 'green'] }));
+  assertRed(README, /^the table, fake-no-assertion-js: the gate does not stop it in this run \(green\)/, run({ 'fake-no-assertion-js': ['green', 'green'] }));
   // A gate that did not run is no catch, also with a reply.
-  red(README, /^the table, fake-no-assertion-js: the gate does not stop it in this run \(did not run\)/, run({ 'fake-no-assertion-js': ['green', 'did not run'] }));
-  red(README.replace('the test does not run ([GW-17]', 'the test is skipped ([GW-17]'), /^the table, fake-skip-js: "todo\.test\.js:9: test\.skip - the test is skipped \(GW-17\)" is not a finding or result line/);
-  red(README.replace('| ✅ green | ❌ did not run', '| ✅ green | did not run'), /^the table, fake-dummy-command-js: /);
+  assertRed(README, /^the table, fake-no-assertion-js: the gate does not stop it in this run \(did not run\)/, run({ 'fake-no-assertion-js': ['green', 'did not run'] }));
+  assertRed(README.replace('the test does not run ([GW-17]', 'the test is skipped ([GW-17]'), /^the table, fake-skip-js: "todo\.test\.js:9: test\.skip - the test is skipped \(GW-17\)" is not a finding or result line/);
+  assertRed(README.replace('| ✅ green | ❌ did not run', '| ✅ green | did not run'), /^the table, fake-dummy-command-js: /);
   // Only the gate's findings and result, each without its "- " or "Result: ", and not the test output it quotes.
   for (const reason of ['no test counts in the output', 'Result: did not run - no test counts in the output', 'all tests passed', '- all tests passed',
     'greenwashing gate: the tests did not run - you cannot finish yet.', '', '[](CATALOG.md)', '![did not run - no test counts in the output](x.svg)']) {
-    red(README.replace('❌ did not run - no test counts in the output |', `❌ ${reason} |`), /^the table, fake-dummy-command-js: /);
+    assertRed(README.replace('❌ did not run - no test counts in the output |', `❌ ${reason} |`), /^the table, fake-dummy-command-js: /);
   }
   // The rows go in the order of the cases, each with its own text, under the header, three cells each.
-  red(README.replace(`${SKIP_ROW}\n${NONE_ROW}`, `${NONE_ROW}\n${SKIP_ROW}`), /^the table, fake-skip-js: /);
-  red(README.replace('| Marked the failing test `skip` |', '| Wrote a test that checks nothing |'), /^the table, fake-skip-js: its row says "Wrote a test that checks nothing"/);
-  red(README.replace('| What the agent did | Plain test run | greenwashing |', '| What the agent did | greenwashing | Plain test run |'), /^the table: its header is /);
-  red(README.replace('|---|---|---|\n', ''), /^the table: no delimiter row of 3 cells/);
-  red(README.replace('|---|---|---|\n', '|---|---|\n'), /^the table: no delimiter row of 3 cells/);
-  red(README.replace(DUMMY_ROW, `${DUMMY_ROW} 3 runs |`), /^the table, fake-dummy-command-js: 4 cells, not 3/);
-  red(README.replace(`${SKIP_ROW}\n`, ''), /^the table: 2 rows of cases, not 3/);
-  red(after(DUMMY_ROW, '| Deleted the test file | ✅ green | ❌ caught |'), /^the table: 4 rows of cases, not 3/);
+  assertRed(README.replace(`${SKIP_ROW}\n${NONE_ROW}`, `${NONE_ROW}\n${SKIP_ROW}`), /^the table, fake-skip-js: /);
+  assertRed(README.replace('| Marked the failing test `skip` |', '| Wrote a test that checks nothing |'), /^the table, fake-skip-js: its row says "Wrote a test that checks nothing"/);
+  assertRed(README.replace('| What the agent did | Plain test run | greenwashing |', '| What the agent did | greenwashing | Plain test run |'), /^the table: its header is /);
+  assertRed(README.replace('|---|---|---|\n', ''), /^the table: no delimiter row of 3 cells/);
+  assertRed(README.replace('|---|---|---|\n', '|---|---|\n'), /^the table: no delimiter row of 3 cells/);
+  assertRed(README.replace(DUMMY_ROW, `${DUMMY_ROW} 3 runs |`), /^the table, fake-dummy-command-js: 4 cells, not 3/);
+  assertRed(README.replace(`${SKIP_ROW}\n`, ''), /^the table: 2 rows of cases, not 3/);
+  assertRed(after(DUMMY_ROW, '| Deleted the test file | ✅ green | ❌ caught |'), /^the table: 4 rows of cases, not 3/);
   // GitHub reads a line with no outer pipes right after a row as a row too.
-  red(after(DUMMY_ROW, 'Deleted the test file | ✅ green | ❌ caught'), /^the table: 4 rows of cases, not 3/);
-  red(README.replace(`${DUMMY_ROW}\n`, `\`\`\`\n${DUMMY_ROW}\n\`\`\`\n`), /^the table: 2 rows of cases, not 3/);
-  red(README.replace('## What else it catches', '## What it catches'), /^the table: no section "## What else it catches"/);
-  red(after(DUMMY_ROW, '\n| a | b |\n|---|---|\n| c | d |'), /^the table: 2 tables in "What else it catches", not 1/);
+  assertRed(after(DUMMY_ROW, 'Deleted the test file | ✅ green | ❌ caught'), /^the table: 4 rows of cases, not 3/);
+  assertRed(README.replace(`${DUMMY_ROW}\n`, `\`\`\`\n${DUMMY_ROW}\n\`\`\`\n`), /^the table: 2 rows of cases, not 3/);
+  assertRed(README.replace('## What else it catches', '## What it catches'), /^the table: no section "## What else it catches"/);
+  assertRed(after(DUMMY_ROW, '\n| a | b |\n|---|---|\n| c | d |'), /^the table: 2 tables in "What else it catches", not 1/);
   assert.match(check(README, run({ replies: { 'fake-skip-js': null } }), CATALOG).notRun.join('\n'), /^the table: this run has no outcome or no reply of the gate on fake-skip-js/);
   // A finding line with nothing after its start is no reason to show.
-  red(README.replace('❌ did not run - no test counts in the output |', '❌ [](CATALOG.md) |'), /^the table, fake-dummy-command-js: /,
+  assertRed(README.replace('❌ did not run - no test counts in the output |', '❌ [](CATALOG.md) |'), /^the table, fake-dummy-command-js: /,
     run({ replies: { 'fake-dummy-command-js': `${REPLIES['fake-dummy-command-js'].split('\n')[0]}\n- \nResult: did not run - no test counts in the output` } }));
   assert.deepEqual(cells('| a | b \\| c | d |'), ['a', 'b | c', 'd']);
 });
 
 test('the numbers: the run\'s summary table as it is, and no other number anywhere but catalog entries and the oldest Node', () => {
   const allFakes = '| All fakes (4) | 0 of 4 caught | 4 of 4 caught | 4 of 4 caught |';
-  red(README.replace(allFakes, allFakes.replace('| 4 of 4 caught | 4 of 4', '| 3 of 4 caught | 4 of 4')), /^the numbers: the table in "Numbers" is not this run's summary table: \| All fakes \(4\) \| 0 of 4 caught \| 3 of 4 caught/);
-  red(README.replace(`${allFakes}\n`, ''), /^the numbers: /);
-  red(README.replace('\n| Honest twins (4) | 0 false alarms in 4 | 0 false alarms in 4 | 1 false alarm in 4 |', ''), /^the numbers: /);
-  red(README.replace(`${allFakes}\n`, `${allFakes}\n| Honest (2) | 0 | 0 | 0 |\n`), /^the numbers: /);
-  red(README.replace(`${allFakes}\n`, `${allFakes}\nFakes in real projects | all caught | all caught | all caught |\n`), /^the numbers: /);
-  red(README.replace('Run it with', '| Real projects | all |\n|---|---|\n\nRun it with'), /^the numbers: 2 tables in "Numbers", not 1/);
-  red(README.replace(SUMMARY, `\`\`\`\n${SUMMARY}\n\`\`\``), /^the numbers: 0 tables in "Numbers", not 1/);
-  red(README.replace('## Numbers', '## Figures'), /^the numbers: no section "## Numbers"/);
+  assertRed(README.replace(allFakes, allFakes.replace('| 4 of 4 caught | 4 of 4', '| 3 of 4 caught | 4 of 4')), /^the numbers: the table in "Numbers" is not this run's summary table: \| All fakes \(4\) \| 0 of 4 caught \| 3 of 4 caught/);
+  assertRed(README.replace(`${allFakes}\n`, ''), /^the numbers: /);
+  assertRed(README.replace('\n| Honest twins (4) | 0 false alarms in 4 | 0 false alarms in 4 | 1 false alarm in 4 |', ''), /^the numbers: /);
+  assertRed(README.replace(`${allFakes}\n`, `${allFakes}\n| Honest (2) | 0 | 0 | 0 |\n`), /^the numbers: /);
+  assertRed(README.replace(`${allFakes}\n`, `${allFakes}\nFakes in real projects | all caught | all caught | all caught |\n`), /^the numbers: /);
+  assertRed(README.replace('Run it with', '| Real projects | all |\n|---|---|\n\nRun it with'), /^the numbers: 2 tables in "Numbers", not 1/);
+  assertRed(README.replace(SUMMARY, `\`\`\`\n${SUMMARY}\n\`\`\``), /^the numbers: 0 tables in "Numbers", not 1/);
+  assertRed(README.replace('## Numbers', '## Figures'), /^the numbers: no section "## Numbers"/);
   for (const resultsMd of ['# Benchmark\n', `# Benchmark\n\n## Summary\n\n${SUMMARY.split('\n').slice(0, 2).join('\n')}\n`]) {
     assert.match(check(README, run({ resultsMd }), CATALOG).notRun.join('\n'), /^the numbers: no summary table in this run's RESULTS\.md/);
   }
-  red(README.replace('Every fake has a twin.', 'Every one of 32 fakes has a twin.'), /^line \d+: a number no bench run gives: Every one of 32 fakes/);
-  red(README.replace('Every fake has a twin.', 'Every one of ３２ fakes has a twin².'), /: a number no bench run gives: Every one of ３２/);
-  red(README.replace('Node 20+', 'Node 22+'), /: a number no bench run gives: - \*\*Node 22\+\*\* on PATH\./);
-  red(README.replace('Node 20+', 'Node 20'), /: a number no bench run gives: - \*\*Node 20\*\* on PATH\./);
-  red(README.replace('/plugin install greenwashing@greenwashing', '/greenwashing:mutants --timeout 900'), /: a number no bench run gives: \/greenwashing:mutants --timeout 900/);
-  red(README.replace('| Marked the failing test `skip` |', '| Marked 2 failing tests `skip` |'), /: a number no bench run gives: \| Marked 2 failing/);
-  red(README.replace('## Where it works', '## Where it works in 2026'), /: a number no bench run gives: ## Where it works in 2026/);
-  red(README.replace('[GW-01](CATALOG.md#gw-01-self-referential-assertion)', '[GW-01](https://example.com/v2)'), /a number no bench run gives: - Not \[GW-01\]\(https:\/\/example\.com\/v2\)/);
+  assertRed(README.replace('Every fake has a twin.', 'Every one of 32 fakes has a twin.'), /^line \d+: a number no bench run gives: Every one of 32 fakes/);
+  assertRed(README.replace('Every fake has a twin.', 'Every one of ３２ fakes has a twin².'), /: a number no bench run gives: Every one of ３２/);
+  assertRed(README.replace('Node 20+', 'Node 22+'), /: a number no bench run gives: - \*\*Node 22\+\*\* on PATH\./);
+  assertRed(README.replace('Node 20+', 'Node 20'), /: a number no bench run gives: - \*\*Node 20\*\* on PATH\./);
+  assertRed(README.replace('/plugin install greenwashing@greenwashing', '/greenwashing:mutants --timeout 900'), /: a number no bench run gives: \/greenwashing:mutants --timeout 900/);
+  assertRed(README.replace('| Marked the failing test `skip` |', '| Marked 2 failing tests `skip` |'), /: a number no bench run gives: \| Marked 2 failing/);
+  assertRed(README.replace('## Where it works', '## Where it works in 2026'), /: a number no bench run gives: ## Where it works in 2026/);
+  assertRed(README.replace('[GW-01](CATALOG.md#gw-01-self-referential-assertion)', '[GW-01](https://example.com/v2)'), /a number no bench run gives: - Not \[GW-01\]\(https:\/\/example\.com\/v2\)/);
 });
 
 test('images: the license badge, once and alone', () => {
-  red(README.replace('(LICENSE)\n', '(LICENSE) ![caught](https://img.shields.io/badge/caught-all-green)\n'), /: an image other than the license badge: /);
-  red(README.replace('It runs them itself.', '![demo](demo.gif)'), /: an image other than the license badge: !\[demo\]/);
-  red(README.replace('[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n', ''), /^the license badge: not once on a line of its own/);
-  red(README.replace('license-MIT-blue', 'license-MIT-2026-blue'), /: a number no bench run gives: \[!\[License: MIT\]/);
+  assertRed(README.replace('(LICENSE)\n', '(LICENSE) ![caught](https://img.shields.io/badge/caught-all-green)\n'), /: an image other than the license badge: /);
+  assertRed(README.replace('It runs them itself.', '![demo](demo.gif)'), /: an image other than the license badge: !\[demo\]/);
+  assertRed(README.replace('[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n', ''), /^the license badge: not once on a line of its own/);
+  assertRed(README.replace('license-MIT-blue', 'license-MIT-2026-blue'), /: a number no bench run gives: \[!\[License: MIT\]/);
 });
 
 test('catalog links: every GW-NN outside code links to its entry\'s heading', () => {
-  red(README.replace('#gw-01-self-referential-assertion', '#gw-01-self-referential'), /^line \d+: GW-01 links to CATALOG\.md#gw-01-self-referential, not CATALOG\.md#gw-01-self-referential-assertion/);
-  red(README.replace('(CATALOG.md#gw-01-self-referential-assertion)', '(README.md#gw-01-self-referential-assertion)'), /\bline \d+: GW-01 links to README\.md#/);
-  red(README.replace('[GW-01](CATALOG.md#gw-01-self-referential-assertion)', '[GW-02](CATALOG.md#gw-02-x)'), /^line \d+: GW-02 is no entry of CATALOG\.md/);
-  red(README.replace('[GW-01](CATALOG.md#gw-01-self-referential-assertion)', 'GW-01'), /^line \d+: a catalog entry that is no link to it: - Not GW-01/);
-  red(README.replace('([GW-17](CATALOG.md#gw-17-a-skip-that-buys-green))', '(GW-17)'), /^line \d+: a catalog entry that is no link to it: \| Marked the failing test/);
-  red(README.replace('[GW-01](CATALOG.md#gw-01-self-referential-assertion)', 'GW-０１'), /a catalog entry that is no link to it: - Not GW-０１/);
+  assertRed(README.replace('#gw-01-self-referential-assertion', '#gw-01-self-referential'), /^line \d+: GW-01 links to CATALOG\.md#gw-01-self-referential, not CATALOG\.md#gw-01-self-referential-assertion/);
+  assertRed(README.replace('(CATALOG.md#gw-01-self-referential-assertion)', '(README.md#gw-01-self-referential-assertion)'), /\bline \d+: GW-01 links to README\.md#/);
+  assertRed(README.replace('[GW-01](CATALOG.md#gw-01-self-referential-assertion)', '[GW-02](CATALOG.md#gw-02-x)'), /^line \d+: GW-02 is no entry of CATALOG\.md/);
+  assertRed(README.replace('[GW-01](CATALOG.md#gw-01-self-referential-assertion)', 'GW-01'), /^line \d+: a catalog entry that is no link to it: - Not GW-01/);
+  assertRed(README.replace('([GW-17](CATALOG.md#gw-17-a-skip-that-buys-green))', '(GW-17)'), /^line \d+: a catalog entry that is no link to it: \| Marked the failing test/);
+  assertRed(README.replace('[GW-01](CATALOG.md#gw-01-self-referential-assertion)', 'GW-０１'), /a catalog entry that is no link to it: - Not GW-０１/);
   assert.equal(slug('GW-08 "0 of 0 problems"'), 'gw-08-0-of-0-problems');
   assert.equal(slug('GW-62 "Passes locally, three times"'), 'gw-62-passes-locally-three-times');
   assert.equal(slug('GW-41 The expected_value fitted'), 'gw-41-the-expected_value-fitted');
@@ -152,40 +152,40 @@ test('catalog links: every GW-NN outside code links to its entry\'s heading', ()
 
 test('Markdown the check cannot read as GitHub shows it is red: HTML, other fences, indented lines, a | outside the tables, a section twice', () => {
   const close = "  back.\n```\n";
-  red(README.replace(close, `${close}<!-- -->\n`), /: HTML, which this check does not read: <!-- -->/);
-  red(README.replace('```\n> Make search', '<!--\n```\n> Make search').replace(close, `${close}-->\n`), /: HTML, which this check does not read: <!--/);
-  red(README.replace('**Node 20+** on PATH.', '<img src="numbers.png"> **Node 20+** on PATH.'), /: HTML, which this check does not read: /);
-  red(README.replace('Every fake has a twin.', '<details>\n\nEvery fake has a twin.\n\n</details>'), /: HTML, which this check does not read: <details>/);
-  green(README.replace('Every fake has a twin.', 'Every fake has a twin, `<b>` in code included.'));
+  assertRed(README.replace(close, `${close}<!-- -->\n`), /: HTML, which this check does not read: <!-- -->/);
+  assertRed(README.replace('```\n> Make search', '<!--\n```\n> Make search').replace(close, `${close}-->\n`), /: HTML, which this check does not read: <!--/);
+  assertRed(README.replace('**Node 20+** on PATH.', '<img src="numbers.png"> **Node 20+** on PATH.'), /: HTML, which this check does not read: /);
+  assertRed(README.replace('Every fake has a twin.', '<details>\n\nEvery fake has a twin.\n\n</details>'), /: HTML, which this check does not read: <details>/);
+  assertGreen(README.replace('Every fake has a twin.', 'Every fake has a twin, `<b>` in code included.'));
   // A line inside the scene that opens another fence, a fence of tildes, a fence with an info string.
-  red(README.replace(close, '  back.\n```text\n● Turn accepted.\n```\n``` ```\n'), /: a code fence other than a bare ```: ```text/);
-  red(README.replace('```\n/plugin install greenwashing@greenwashing\n```', '~~~\n/plugin install greenwashing@greenwashing\n~~~'), /: a code fence other than a bare ```: ~~~/);
-  red(README.replace('```\n> Make search', '```math\n> Make search'), /: a code fence other than a bare ```: ```math/);
-  red(README.replace('It runs them itself.', 'It runs them itself.\n\n    Stop hook error: an indented scene'), /: an indented line, which GitHub can show as code: /);
-  green(README.replace('It runs them itself.', 'It runs them itself.\n    \nAnd more.'));
+  assertRed(README.replace(close, '  back.\n```text\n● Turn accepted.\n```\n``` ```\n'), /: a code fence other than a bare ```: ```text/);
+  assertRed(README.replace('```\n/plugin install greenwashing@greenwashing\n```', '~~~\n/plugin install greenwashing@greenwashing\n~~~'), /: a code fence other than a bare ```: ~~~/);
+  assertRed(README.replace('```\n> Make search', '```math\n> Make search'), /: a code fence other than a bare ```: ```math/);
+  assertRed(README.replace('It runs them itself.', 'It runs them itself.\n\n    Stop hook error: an indented scene'), /: an indented line, which GitHub can show as code: /);
+  assertGreen(README.replace('It runs them itself.', 'It runs them itself.\n    \nAnd more.'));
   // GitHub reads a table with no outer pipes too.
-  red(README.replace('\n## Numbers', '\nRewrote the expected value | ✅ green | ❌ caught\n--- | --- | ---\n\n## Numbers'), /: a \| outside the tables, which GitHub can show as a table row: Rewrote/);
-  green(README.replace('Every fake has a twin.', 'Every fake has a twin, `a | b` in code included, and an escaped \\| too.'));
-  red(README.replace('## Where it works', '## Numbers\n\n| All fakes (4) | all caught |\n|---|---|\n\n## Where it works'), /the section "## Numbers" is there twice/);
+  assertRed(README.replace('\n## Numbers', '\nRewrote the expected value | ✅ green | ❌ caught\n--- | --- | ---\n\n## Numbers'), /: a \| outside the tables, which GitHub can show as a table row: Rewrote/);
+  assertGreen(README.replace('Every fake has a twin.', 'Every fake has a twin, `a | b` in code included, and an escaped \\| too.'));
+  assertRed(README.replace('## Where it works', '## Numbers\n\n| All fakes (4) | all caught |\n|---|---|\n\n## Where it works'), /the section "## Numbers" is there twice/);
   // A level 1 heading ends a section, and a line of spaces ends a table, as on GitHub.
-  green(README.replace('## Where it works', '# Appendix\n\n| a | b |\n|---|---|\n\n## Where it works'));
-  green(README.replace(`${SUMMARY}\n`, `${SUMMARY}\n  \n`));
+  assertGreen(README.replace('## Where it works', '# Appendix\n\n| a | b |\n|---|---|\n\n## Where it works'));
+  assertGreen(README.replace(`${SUMMARY}\n`, `${SUMMARY}\n  \n`));
 });
 
 test('the scene\'s frame and other links: no text before the label, links only to entries, the badge as it is', () => {
-  red(README.replace('  ⎿  Stop hook error: ', '  ⎿  (32 of 32 caught) Stop hook error: '), /^the scene: the line of "Stop hook error:" has "  ⎿  \(32 of 32 caught\) " before it, not the frame's ⎿/);
-  red(README.replace('  ⎿  Stop hook error: ', '  Stop hook error: '), /^the scene: the line of "Stop hook error:" has "  " before it/);
+  assertRed(README.replace('  ⎿  Stop hook error: ', '  ⎿  (32 of 32 caught) Stop hook error: '), /^the scene: the line of "Stop hook error:" has "  ⎿  \(32 of 32 caught\) " before it, not the frame's ⎿/);
+  assertRed(README.replace('  ⎿  Stop hook error: ', '  Stop hook error: '), /^the scene: the line of "Stop hook error:" has "  " before it/);
   // A number in the reply itself is the run's.
   const counted = SCENE_REPLY.replace('this turn removed tests', 'this turn removed 1 test');
-  green(README.replace('this turn removed tests', 'this turn removed 1 test'), run({ replies: { 'fake-deleted-test-js': counted } }));
+  assertGreen(README.replace('this turn removed tests', 'this turn removed 1 test'), run({ replies: { 'fake-deleted-test-js': counted } }));
   // A reason cell reads only catalog links: any other link stays as it is shown.
-  red(README.replace('❌ todo.test.js:9: test.skip', '❌ [todo.test.js:9:](all 32 fakes caught) test.skip'), /^the table, fake-skip-js: /);
-  red(README.replace('([GW-17](CATALOG.md#gw-17-a-skip-that-buys-green))', '([[GW-17](CATALOG.md#gw-17-a-skip-that-buys-green)](32-of-32-caught))'), /^the table, fake-skip-js: /);
+  assertRed(README.replace('❌ todo.test.js:9: test.skip', '❌ [todo.test.js:9:](all 32 fakes caught) test.skip'), /^the table, fake-skip-js: /);
+  assertRed(README.replace('([GW-17](CATALOG.md#gw-17-a-skip-that-buys-green))', '([[GW-17](CATALOG.md#gw-17-a-skip-that-buys-green)](32-of-32-caught))'), /^the table, fake-skip-js: /);
   // (CATALOG.md#...) is a link's target only right after its text.
-  red(README.replace('Run it with `node bench/run`.', 'Run it with `node bench/run` (CATALOG.md#all-32-fakes-caught).'), /: a number no bench run gives: Run it with/);
-  green(README.replace('**Node 20+** on PATH', '_Node 20+_ on PATH'));
-  red(README.replace('license-MIT-blue.svg', 'dynamic/json?url=https://example.com/n.json'), /: an image other than the license badge: /);
-  red(README.replace('[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n',
+  assertRed(README.replace('Run it with `node bench/run`.', 'Run it with `node bench/run` (CATALOG.md#all-32-fakes-caught).'), /: a number no bench run gives: Run it with/);
+  assertGreen(README.replace('**Node 20+** on PATH', '_Node 20+_ on PATH'));
+  assertRed(README.replace('license-MIT-blue.svg', 'dynamic/json?url=https://example.com/n.json'), /: an image other than the license badge: /);
+  assertRed(README.replace('[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n',
     '[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n\n[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n'), /^the license badge: not once on a line of its own/);
 });
 
@@ -193,7 +193,7 @@ test('a run without what the README shows did not run; a gate that did not run i
   const without = run();
   without.results.cases = without.results.cases.filter((c) => c.id !== 'fake-deleted-test-js');
   assert.match(check(README, without, CATALOG).notRun.join('\n'), /^the scene: this run has no reply of the gate on fake-deleted-test-js/);
-  red(README, /^the scene: the gate does not stop fake-deleted-test-js in this run \(did not run\)/, run({ 'fake-deleted-test-js': ['green', 'did not run'] }));
+  assertRed(README, /^the scene: the gate does not stop fake-deleted-test-js in this run \(did not run\)/, run({ 'fake-deleted-test-js': ['green', 'did not run'] }));
   const odd = run();
   odd.results.cases.find((c) => c.id === 'fake-skip-js').gate = {};
   assert.match(check(README, odd, CATALOG).notRun.join('\n'), /^the table: this run has no outcome or no reply of the gate on fake-skip-js/);
@@ -203,8 +203,8 @@ test('a run without what the README shows did not run; a gate that did not run i
   assert.match(check(README, run({ resultsMd: '# Benchmark\n\n## Summary\n\nNone.\n\n## Cases\n\n| a | b |\n| --- | --- |\n| c | d |\n' }), CATALOG).notRun.join('\n'),
     /^the numbers: no summary table in this run's RESULTS\.md/);
   // The header with spaces after it is the header; a delimiter of empty cells is none.
-  green(README.replace('| What the agent did | Plain test run | greenwashing |', '| What the agent did | Plain test run | greenwashing |  '));
-  red(README.replace('|---|---|---|', '| | | |'), /^the table: no delimiter row of 3 cells/);
+  assertGreen(README.replace('| What the agent did | Plain test run | greenwashing |', '| What the agent did | Plain test run | greenwashing |  '));
+  assertRed(README.replace('|---|---|---|', '| | | |'), /^the table: no delimiter row of 3 cells/);
 });
 
 test('the command: passed, failed and did not run, as exit codes 0, 1 and 2', (t) => {
