@@ -18,4 +18,7 @@ assignees: ""
 
 - OS:
 - Python version:
+- Node version:
+- Claude Code version:
+- Tests (pytest, unittest, jest, vitest or node --test):
 - Commit or version:

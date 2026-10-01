@@ -895,3 +895,14 @@ test('python_checks.py lists a test only under the name Python keeps, and withou
   assert.deepEqual(names('import unittest\n\n\nclass A:\n    def test_a(self):\n        assert f()\n\n\nclass B(A):\n    pass\n\n\nclass A(B):\n    pass\n\n\n'
     + 'class TestX(A, unittest.TestCase):\n    pass\n'), []);
 });
+
+test('python_checks.py: a class of any name whose bases reach TestCase, directly or through a class of its file, runs the tests it inherits', () => {
+  const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+    input: JSON.stringify({ files: [], list: [{ key: 'k', file: 'test_k.py', start: false,
+      text: 'import unittest\n\n\nclass Cases:\n    def test_a(self):\n        assert f()\n\n\n'
+        + 'class StoreCases(Cases, unittest.TestCase):\n    pass\n\n\nclass MemoryStore(StoreCases):\n    pass\n' }], entries: CHECKS }),
+    encoding: 'utf8',
+  });
+  assert.equal(run.status, 0, run.stderr);
+  assert.deepEqual(JSON.parse(run.stdout).tests.k.map((one) => one.name).sort(), ['Cases.test_a', 'MemoryStore.test_a', 'StoreCases.test_a']);
+});

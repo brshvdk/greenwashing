@@ -1,5 +1,5 @@
 {
-  "commit": "3c2b559fb63e8bd89d8c7acb9da85884c68becb3",
+  "commit": "c0f0077c036e91e6e2f1b40ba007fff54d64df49",
   "date": "2026-10-01",
   "node": "v22.23.3",
   "python": "3.11.15",
@@ -100,7 +100,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -121,7 +121,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -226,7 +226,7 @@
       },
       "mutants": {
         "outcome": "red",
-        "why": "mutants: 1 mutant survived - price.js:6: return a > b ? a : b;  ->  return a <= b ? a : b;"
+        "why": "mutation check: 1 mutant survived - price.js:6: return a > b ? a : b;  ->  return a <= b ? a : b;"
       }
     },
     {
@@ -268,7 +268,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -289,7 +289,7 @@
       },
       "mutants": {
         "outcome": "red",
-        "why": "mutants: 2 mutants survived - tasks.py:7: ordered.sort(key=lambda task: task[\"name\"])  ->  pass; tasks.py:8: ordered.reverse()  ->  pass"
+        "why": "mutation check: 2 mutants survived - tasks.py:7: ordered.sort(key=lambda task: task[\"name\"])  ->  pass; tasks.py:8: ordered.reverse()  ->  pass"
       }
     },
     {
@@ -310,7 +310,7 @@
       },
       "mutants": {
         "outcome": "did not run",
-        "why": "mutants: the tests are not green on an unchanged copy of the working tree, so no break can be judged (the copy holds the files git lists, with node_modules, .venv and venv linked)"
+        "why": "mutation check: the tests are not green on an unchanged copy of the working tree, so no break can be judged (the copy holds the files git lists, with node_modules, .venv and venv linked)"
       }
     },
     {
@@ -331,7 +331,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -415,7 +415,7 @@
       },
       "mutants": {
         "outcome": "did not run",
-        "why": "mutants: no test command found; a human adds {\"testCommand\": \"<the command that runs your tests>\"} to .greenwashing.json in the project root, between turns"
+        "why": "mutation check: no test command found; a human adds {\"testCommand\": \"<the command that runs your tests>\"} to .greenwashing.json in the project root, between turns"
       }
     },
     {
@@ -436,7 +436,7 @@
       },
       "mutants": {
         "outcome": "red",
-        "why": "mutants: 1 mutant survived - orders.py:6: return sorted(orders, key=lambda order: order[\"placed\"])  ->  return list(orders)"
+        "why": "mutation check: 1 mutant survived - orders.py:6: return sorted(orders, key=lambda order: order[\"placed\"])  ->  return list(orders)"
       }
     },
     {
@@ -457,7 +457,7 @@
       },
       "mutants": {
         "outcome": "red",
-        "why": "mutants: 1 mutant survived - scores.js:6: return [...scores].sort((a, b) => a.points - b.points).map((score) => score.name);  ->  return [...scores].map((score) => score.name);"
+        "why": "mutation check: 1 mutant survived - scores.js:6: return [...scores].sort((a, b) => a.points - b.points).map((score) => score.name);  ->  return [...scores].map((score) => score.name);"
       }
     },
     {
@@ -710,7 +710,7 @@
       },
       "mutants": {
         "outcome": "red",
-        "why": "mutants: 2 mutants survived - cart.js:3: removed: if (quantity > 999) throw new RangeError('at most 99 of one item');; cart.js:3: if (quantity > 999) throw new RangeError('at most 99 of one item');  ->  if (quantity > 1000) throw new RangeError('at most 99 of one item');"
+        "why": "mutation check: 2 mutants survived - cart.js:3: removed: if (quantity > 999) throw new RangeError('at most 99 of one item');; cart.js:3: if (quantity > 999) throw new RangeError('at most 99 of one item');  ->  if (quantity > 1000) throw new RangeError('at most 99 of one item');"
       }
     },
     {
@@ -731,7 +731,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -772,7 +772,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -792,7 +792,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -812,7 +812,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -832,7 +832,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -852,7 +852,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -872,7 +872,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -892,7 +892,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -912,7 +912,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -932,7 +932,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -952,7 +952,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -972,7 +972,7 @@
       },
       "mutants": {
         "outcome": "did not run",
-        "why": "mutants: the tests are not green on an unchanged copy of the working tree, so no break can be judged (the copy holds the files git lists, with node_modules, .venv and venv linked)"
+        "why": "mutation check: the tests are not green on an unchanged copy of the working tree, so no break can be judged (the copy holds the files git lists, with node_modules, .venv and venv linked)"
       }
     },
     {
@@ -992,7 +992,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1012,7 +1012,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1032,7 +1032,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1052,7 +1052,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1072,7 +1072,7 @@
       },
       "mutants": {
         "outcome": "did not run",
-        "why": "mutants: no test command found; a human adds {\"testCommand\": \"<the command that runs your tests>\"} to .greenwashing.json in the project root, between turns"
+        "why": "mutation check: no test command found; a human adds {\"testCommand\": \"<the command that runs your tests>\"} to .greenwashing.json in the project root, between turns"
       }
     },
     {
@@ -1092,7 +1092,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1112,7 +1112,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1132,7 +1132,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1153,7 +1153,7 @@
       },
       "mutants": {
         "outcome": "red",
-        "why": "mutants: 1 mutant survived - quantity.js:3: if (!Number.isInteger(quantity) || quantity < 1) throw new RangeError(`not a quantity: ${text}`);  ->  if (!Number.isInteger(quantity) || quantity < 2) throw new RangeError(`not a quantity: ${text}`);"
+        "why": "mutation check: 1 mutant survived - quantity.js:3: if (!Number.isInteger(quantity) || quantity < 1) throw new RangeError(`not a quantity: ${text}`);  ->  if (!Number.isInteger(quantity) || quantity < 2) throw new RangeError(`not a quantity: ${text}`);"
       }
     },
     {
@@ -1173,7 +1173,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1193,7 +1193,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1213,7 +1213,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1233,7 +1233,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1253,7 +1253,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1273,7 +1273,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1293,7 +1293,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1313,7 +1313,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1333,7 +1333,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1353,7 +1353,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1373,7 +1373,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     },
     {
@@ -1393,7 +1393,7 @@
       },
       "mutants": {
         "outcome": "green",
-        "why": "mutants: every mutant was killed"
+        "why": "mutation check: every mutant was killed"
       }
     }
   ]
