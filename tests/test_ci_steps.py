@@ -212,7 +212,7 @@ RESULTS = """# Benchmark
 - Node: v22.0.0
 - Python: 3.12.3
 
-| Cases | Tests only | Gate | Gate + mutants |
+| Cases | Tests only | Gate | Gate + mutation check |
 | --- | --- | --- | --- |
 | All fakes (22) | 0 of 22 caught | {gate} of 22 caught | 17 of 22 caught |
 | Honest twins (22) | 0 false alarms in 22 | 0 false alarms in 22 | 0 false alarms in 22 |

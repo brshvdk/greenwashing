@@ -176,10 +176,10 @@ test('the gate\'s column: a block for the project is red, an allow green; a hook
 test('the mutation command\'s part: a survivor is red, every break killed green, anything else did not run', () => {
   const run = (code, stdout) => ({ code, stdout, stderr: '' });
   assert.deepEqual(mutantsOutcome(run(1, 'Mutants: 2 tried\n- survived: a.js:3: x  ->  y\nResult: 1 mutant survived\n')),
-    { outcome: 'red', why: 'mutants: 1 mutant survived - a.js:3: x  ->  y' });
-  assert.deepEqual(mutantsOutcome(run(0, 'Result: every mutant was killed\n')), { outcome: 'green', why: 'mutants: every mutant was killed' });
-  assert.deepEqual(mutantsOutcome(run(2, 'Did not run: no place to break\nResult: did not run\n')), { outcome: 'did not run', why: 'mutants: no place to break' });
-  assert.equal(mutantsOutcome(run(2, '- not exercised: a.js: 2 mutants not run - x\nResult: did not run\n')).why, 'mutants: not exercised: a.js: 2 mutants not run - x');
+    { outcome: 'red', why: 'mutation check: 1 mutant survived - a.js:3: x  ->  y' });
+  assert.deepEqual(mutantsOutcome(run(0, 'Result: every mutant was killed\n')), { outcome: 'green', why: 'mutation check: every mutant was killed' });
+  assert.deepEqual(mutantsOutcome(run(2, 'Did not run: no place to break\nResult: did not run\n')), { outcome: 'did not run', why: 'mutation check: no place to break' });
+  assert.equal(mutantsOutcome(run(2, '- not exercised: a.js: 2 mutants not run - x\nResult: did not run\n')).why, 'mutation check: not exercised: a.js: 2 mutants not run - x');
   // An exit code with no result line, or none at all, is no verdict.
   assert.equal(mutantsOutcome(run(1, 'crash')).outcome, 'did not run');
   assert.equal(mutantsOutcome(run(0, '')).outcome, 'did not run');
@@ -206,11 +206,12 @@ test('the counts: a red fake is caught, a red honest case a false alarm, and did
     ['caught', 'missed', 'did not run', 'false alarm', 'passed', 'did not run']);
   const text = render(results, { commit: 'abc', date: '2026-01-01', node: 'v1', python: '3' });
   assert.match(text, /\n- Commit: abc\n- Date: 2026-01-01\n- Node: v1\n- Python: 3\n/);
+  assert.match(text, /\n\| Cases \| Tests only \| Gate \| Gate \+ mutation check \|\n/);
   assert.match(text, /\n\| Fakes the tool claims to catch \(2\) \| 0 of 2 caught \| 1 of 2 caught \(1 did not run\) \| 1 of 2 caught \(1 did not run\) \|\n/);
   assert.match(text, /\n\| All fakes \(3\) \| 1 of 3 caught \| 1 of 3 caught \(1 did not run\) \| 1 of 3 caught \(1 did not run\) \|\n/);
   assert.match(text, /\n\| Honest twins \(3\) \| 1 false alarm in 3 \| 0 false alarms in 3 \(1 did not run\) \| 1 false alarm in 3 \(1 did not run\) \|\n/);
   assert.match(text, /## Fakes the tool claims to catch and misses\n\n- `fake-b` \(GW-17, claim: caught\): m\n/);
-  assert.match(text, /## False alarms: Gate \+ mutants\n\n- `honest-a` \(GW-17\): m\n/);
+  assert.match(text, /## False alarms: Gate \+ mutation check\n\n- `honest-a` \(GW-17\): m\n/);
   assert.match(text, /\n\| `fake-b` \| GW-17 \| js \| missed \| did not run \| did not run \|\n/);
 });
 
