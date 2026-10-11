@@ -2059,6 +2059,23 @@ test('outside git too, a turn that adds the first test command is not checked, a
   assert.match(reason, /\nCommand: python3 -m unittest discover \(Python project\)\n/);
 });
 
+test('in a project in a folder of its repository, the line names the command found in the project\'s folder', (t) => {
+  // A test script added in the project's folder: the repository's root has none.
+  const repo = project(t, { 'app/main.go': 'package main\n' }, null);
+  const app = path.join(repo, 'app');
+  const gate = session(t, app);
+  gate.prompt();
+  write(app, { 'package.json': '{"scripts": {"test": "node --test"}}', 'a.test.js': NODE_PASS });
+  assert.deepEqual(gate.stop().json, { systemMessage: FIRST_COMMAND('npm test (package.json scripts.test)') });
+  // Python tests added there: unittest.
+  const python = project(t, { 'app/main.go': 'package main\n' }, null);
+  const pythonApp = path.join(python, 'app');
+  const other = session(t, pythonApp);
+  other.prompt();
+  write(pythonApp, { 'test_a.py': PY_PASS });
+  assert.deepEqual(other.stop().json, { systemMessage: FIRST_COMMAND('python3 -m unittest discover (Python project)') });
+});
+
 test('a test script that runs one of the five kinds through another script is checked; emptied or removed by the agent it is did not run', (t) => {
   const pkg = (unit) => JSON.stringify({ scripts: { test: 'npm run unit', unit } });
   const dir = project(t, { 'package.json': pkg('node --test --test-reporter=tap'), 't.test.js': NODE_PASS, 'app.js': '1;\n' }, null);
