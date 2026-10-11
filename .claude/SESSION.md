@@ -1,7 +1,7 @@
 # SESSION
 
 ## Current step
-Step closed: English only and the findings of the owner's live check on Windows, one PR from `claude/relaxed-maxwell-tgc64t` (from main at 084ee40). Next: CI on the PR's head and the owner's merge. Safety net is red by design: the PR changes guarded files (CLAUDE.md, `tests/test_leak_check.py`).
+Step closed: English only and the findings of a live check on Windows, one PR from `claude/relaxed-maxwell-tgc64t` (from main at 084ee40). Next: CI on the PR's head and the owner's merge. Safety net is red by design: the PR changes guarded files (CLAUDE.md, `tests/test_leak_check.py`).
 
 ## Progress
 - [x] No Cyrillic in tracked files: `tests/test_leak_check.py` writes its Cyrillic data as `\u` escapes (same values at run time); `tests/test_english_only.py` (paths and lines of `git ls-files`, links as git stores them, images skipped and counted by the leak check's own rule); CLAUDE.md line 5. Leak check tests proven not weaker by breaking UTF-8 in `scripts/leak-check` (old and new test files red on the same tests).
