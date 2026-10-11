@@ -138,7 +138,7 @@ In Claude Code:
 /plugin marketplace remove greenwashing
 ```
 
-If you installed the plugin for one repository only, uninstall it in a terminal with the same scope: `claude plugin uninstall greenwashing@greenwashing --scope local` (or `--scope project`).
+If you installed the plugin for one repository only, uninstall it in a terminal in that repository, with the same scope: `claude plugin uninstall greenwashing@greenwashing --scope local` (or `--scope project`).
 
 Other agents: `npx skills remove greenwashing`.
 

@@ -2059,6 +2059,27 @@ test('outside git too, a turn that adds the first test command is not checked, a
   assert.match(reason, /\nCommand: python3 -m unittest discover \(Python project\)\n/);
 });
 
+test('a project the gate cannot check whose folder is gone at the Stop ends the turn with the line that says why, as before', (t) => {
+  const dir = tempDir(t);
+  write(dir, { 'main.go': 'package main\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  const moved = `${dir}-moved`;
+  fs.renameSync(dir, moved);
+  t.after(() => fs.rmSync(moved, { recursive: true, force: true }));
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+});
+
+test('a test command added only in another worktree is not the project\'s: the line says why the project is not checked', (t) => {
+  const dir = project(t, { 'main.go': 'package main\n', '.gitignore': '.claude/worktrees/\n' }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  write(tree, { 'package.json': '{"scripts": {"test": "node --test"}}', 'a.test.js': NODE_PASS });
+  assert.deepEqual(gate.stop(false, tree).json, { systemMessage: NOT_CHECKED('no test command was found') });
+});
+
 test('in a project in a folder of its repository, the line names the command found in the project\'s folder', (t) => {
   // A test script added in the project's folder: the repository's root has none.
   const repo = project(t, { 'app/main.go': 'package main\n' }, null);
