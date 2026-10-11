@@ -23,8 +23,8 @@ const NO_CHANGES = { systemMessage: 'greenwashing: no files changed this turn - 
 const NOT_CHECKED = (why) => `greenwashing: this turn was NOT checked - ${why}, and the gate reads only the test output of pytest, unittest, jest, vitest and node --test. `
   + 'To have turns checked, a human sets {"testCommand": "<a command that runs your tests with one of them, or prints their output>"} in .greenwashing.json '
   + 'in the project root, between turns.';
-// The line of a turn in a project that had no test command when the turn started and has one the gate checks now.
-const FIRST_COMMAND = (command) => 'greenwashing: this turn was NOT checked - the project had no test command when the turn started. '
+// The line of a turn in a project that had no test command when the work started and has one the gate checks now.
+const FIRST_COMMAND = (command) => 'greenwashing: this turn was NOT checked - the project had no test command when the work started. '
   + `The next turn will be checked with ${command}.`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

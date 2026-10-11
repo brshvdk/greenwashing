@@ -21,7 +21,7 @@ tests/test_ci_steps.py        tests of CI steps (runs them as written in the wor
 tests/test_catalog.py         tests of the catalog structure (unittest)
 skills/greenwashing/SKILL.md  the skill (Agent Skills format)
 tests/test_skill.py           tests of the skill's frontmatter and catalog links (unittest)
-tests/test_english_only.py    no Cyrillic (U+0400-U+04FF) in the path or text of any file git tracks; a file that is not UTF-8 fails it too (unittest)
+tests/test_english_only.py    no Cyrillic (U+0400-U+04FF) in the path or text of any file git tracks; a file that is not UTF-8 fails it too, but an image by scripts/leak-check's rule is skipped and counted (unittest)
 gate/hook.js                  the gate: Claude Code hook entry point (hook JSON, git, state)
 gate/mutate.js                the mutation command's entry point (options, git, the temporary copy, the runs, signals)
 gate/runner.js                I/O both entry points share: the root files the command is chosen from, the test process
@@ -184,7 +184,7 @@ Tests: `tests/test_leak_check.py` - temporary git repositories, made-up patterns
 
 Depends on: git; gitleaks 8.28.0 (optional: missing -> did not run); `.github/public-repos.txt`.
 
-Breaks: CI "Leak check" step; `tests/test_leak_check.py` (output lines and exit codes are its contract). Guarded by: safety net workflow (changes to it are red there).
+Breaks: CI "Leak check" step; `tests/test_leak_check.py` (output lines and exit codes are its contract); `tests/test_english_only.py` (loads the script for its image rule, `is_image()` and `is_real_image()`). Guarded by: safety net workflow (changes to it are red there).
 
 Traps:
 - touching any text decoding - keep UTF-8 explicit (env, files, git output, stdout), otherwise Cyrillic patterns silently match nothing.

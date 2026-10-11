@@ -233,7 +233,7 @@ test('the gate checks a project whose test command is one of the five kinds, or 
 
 test('the line of a turn the gate did not check names the next turn\'s command only when the project had none and has one the gate checks now', () => {
   const none = 'no test command was found';
-  const first = (command) => 'greenwashing: this turn was NOT checked - the project had no test command when the turn started. '
+  const first = (command) => 'greenwashing: this turn was NOT checked - the project had no test command when the work started. '
     + `The next turn will be checked with ${command}.`;
   // The line that says how to set testCommand.
   const assertUnchecked = (line, why) => assert.ok(line.startsWith(`greenwashing: this turn was NOT checked - ${why}, and the gate reads only the test `

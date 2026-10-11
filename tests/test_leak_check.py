@@ -216,6 +216,18 @@ class LeakCheckTest(LeakCheckCase):
         self.repo.commit({CYRILLIC_NAME: f"the {CYRILLIC_OTHER} is here\n"})
         self.assert_result(self.repo.run(patterns=CYRILLIC_PATTERN), 0, patterns="passed")
 
+    def test_cyrillic_name_of_a_file_added_and_removed_in_the_range_fails(self):
+        # Only the patches show the name, and git quotes a non-ASCII name unless core.quotepath is off.
+        name = CYRILLIC_WORD + ".txt"
+        added = self.repo.commit({name: "nothing here\n"})
+        self.repo.git("rm", "-q", "--", name)
+        removed = self.repo.commit({})
+        result = self.repo.run(patterns=CYRILLIC_PATTERN)
+        parts = self.assert_result(result, 1, patterns="failed")
+        for sha in (added, removed):
+            self.assertTrue(any(line.startswith(f"  commit {sha[:12]} patch line ") for line in parts["patterns"][1]), result[1])
+        self.assert_no_echo(result[1])
+
     def test_match_only_in_commit_message_fails(self):
         sha = self.repo.commit({"clean.txt": "nothing here\n"}, f"feat: add a file\n\nMentions {LATIN_WORD}.")
         result = self.repo.run(patterns=LATIN_PATTERN)

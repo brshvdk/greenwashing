@@ -193,7 +193,7 @@ function support(files, hasPythonTests) {
   return found.length ? named(found) : { supported: false, why: `the test command npm test runs ${JSON.stringify(scripts.test)}` };
 }
 
-// The line of a turn in a project the gate cannot check: why, from support() when the turn started;
+// The line of a turn in a project the gate cannot check: why, from support() when the work started;
 // files and hasPythonTests, the project when the turn ends (as support() takes them; none when it cannot
 // be read). A project that had no test command then and has one the gate checks now is still not checked
 // in this turn (the agent cannot give itself the command it is checked with), and the prompt decides
@@ -201,7 +201,7 @@ function support(files, hasPythonTests) {
 function notChecked(why, files, hasPythonTests) {
   const next = why === NO_TEST_COMMAND && files && support(files, hasPythonTests).supported ? chooseCommand(files, hasPythonTests) : {};
   if (next.command) {
-    return 'greenwashing: this turn was NOT checked - the project had no test command when the turn started. '
+    return 'greenwashing: this turn was NOT checked - the project had no test command when the work started. '
       + `The next turn will be checked with ${next.command} (${next.source}).`;
   }
   return `greenwashing: this turn was NOT checked - ${why}, and the gate reads only the test output of ${RUNNER_NAMES}. `
