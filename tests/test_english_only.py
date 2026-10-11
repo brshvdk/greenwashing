@@ -31,8 +31,13 @@ def cyrillic_in(repo):
         name = raw.decode("utf-8")
         if CYRILLIC.search(name):
             found.append(f"{name}: path")
-        with open(os.path.join(os.fsencode(repo), raw), "rb") as f:
-            data = f.read()
+        path = os.path.join(os.fsencode(repo), raw)
+        # Git stores a link as the path it points to: that is its text.
+        if os.path.islink(path):
+            data = os.readlink(path)
+        else:
+            with open(path, "rb") as f:
+                data = f.read()
         try:
             text = data.decode("utf-8")
         except UnicodeDecodeError:
@@ -53,21 +58,24 @@ class EnglishOnlyTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as repo:
             git(repo, "init", "-q")
             files = {
-                # Line 2 has a Cyrillic letter, lines 3 and 4 the first and last of the range,
-                # line 5 the characters just outside it.
-                "notes.txt": "first line\nthe \u0436 is here\n\u0400\n\u04ff\n\u03ff \u0500\n".encode("utf-8"),
-                "\u0437.txt": b"plain\n",
+                # Line 1 has a form feed (lines end only at LF), line 2 a Cyrillic letter,
+                # lines 3 and 4 the first and last of the range, line 5 the characters just outside it.
+                "notes.txt": "first\x0cline\nthe \u0436 is here\n\u0400\n\u04ff\n\u03ff \u0500\n".encode("utf-8"),
+                "\u0437.txt": "\u0436\n".encode("utf-8"),
                 "cp1251.txt": "\u0436\n".encode("cp1251"),
                 "draft.txt": "\u0436\n".encode("utf-8"),
             }
             for name, data in files.items():
                 with open(os.path.join(repo, name), "wb") as f:
                     f.write(data)
+            # A link whose target, the text git stores for it, is Cyrillic (it points nowhere).
+            os.symlink("\u0436", os.path.join(repo, "link"))
             # draft.txt stays untracked: only the files git tracks are read.
-            git(repo, "add", "notes.txt", "\u0437.txt", "cp1251.txt")
+            git(repo, "add", "notes.txt", "\u0437.txt", "cp1251.txt", "link")
             listed, found = cyrillic_in(repo)
-        self.assertEqual(listed, ["cp1251.txt", "notes.txt", "\u0437.txt"])
-        self.assertEqual(found, ["cp1251.txt: not UTF-8", "notes.txt:2", "notes.txt:3", "notes.txt:4", "\u0437.txt: path"])
+        self.assertEqual(listed, ["cp1251.txt", "link", "notes.txt", "\u0437.txt"])
+        self.assertEqual(found, ["cp1251.txt: not UTF-8", "link:1", "notes.txt:2", "notes.txt:3", "notes.txt:4",
+                                 "\u0437.txt: path", "\u0437.txt:1"])
 
 
 if __name__ == "__main__":
