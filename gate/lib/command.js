@@ -30,7 +30,7 @@ const CHECK_NAMES = Object.keys(CHECKS);
 // Why the gate cannot check a project with no test command (support()).
 const NO_TEST_COMMAND = 'no test command was found';
 // Said to the agent too, which must not change the settings during a turn (GW-114).
-const HOW_TO =`a human adds {"testCommand": "<the command that runs your tests>"} to ${CONFIG_FILE} in the project root, between turns`;
+const HOW_TO = `a human adds {"testCommand": "<the command that runs your tests>"} to ${CONFIG_FILE} in the project root, between turns`;
 // How to make the Python checks run when python3 cannot read the project's syntax, or is missing.
 const PYTHON_HOW_TO = `a human sets {"python": "<the project's Python, for example .venv/bin/python>"} in ${CONFIG_FILE} in the project root, `
   + 'or turns the checks off there ({"checks": {"skips": false, "assertions": false, "selfComparisons": false}}, JavaScript too), between turns';
