@@ -26,11 +26,17 @@ REF = OWNER + "/"
 
 LATIN_PATTERN = "(?i)quokka-lantern-417"
 LATIN_WORD = "Quokka-LANTERN-417"
-CYRILLIC_PATTERN = "(?i)ФИОЛЕТОВЫЙЁЖИК"
-CYRILLIC_WORD = "фиолетовыйёжик"
+# Cyrillic is written as \u escapes, so this file stays in English
+# (tests/test_english_only.py); at run time the data is Cyrillic.
+# "Violet hedgehog" in Russian, one word: upper case in the pattern, lower case in the text.
+CYRILLIC_PATTERN = "(?i)\u0424\u0418\u041e\u041b\u0415\u0422\u041e\u0412\u042b\u0419\u0401\u0416\u0418\u041a"
+CYRILLIC_WORD = "\u0444\u0438\u043e\u043b\u0435\u0442\u043e\u0432\u044b\u0439\u0451\u0436\u0438\u043a"
+# "Orange kitten" in Russian, one word.
 # Same UTF-8 byte length as CYRILLIC_WORD: a decoder that is not UTF-8 turns
 # both words into the same replacement characters, so this must stay clean.
-CYRILLIC_OTHER = "оранжевыйкотик"
+CYRILLIC_OTHER = "\u043e\u0440\u0430\u043d\u0436\u0435\u0432\u044b\u0439\u043a\u043e\u0442\u0438\u043a"
+# "Notes" in Russian: a file name in Cyrillic.
+CYRILLIC_NAME = "\u0437\u0430\u043c\u0435\u0442\u043a\u0438.txt"
 FILLER_PATTERN = "(?i)unused-marmot-58"
 SECRETS = (LATIN_WORD, LATIN_PATTERN, CYRILLIC_WORD, CYRILLIC_PATTERN, "zz-unlisted-repo")
 
@@ -200,14 +206,14 @@ class LeakCheckTest(LeakCheckCase):
         self.assert_no_echo(result[1])
 
     def test_cyrillic_pattern_in_file_fails(self):
-        self.repo.commit({"заметки.txt": f"первая строка\nтут {CYRILLIC_WORD} живёт\n"})
+        self.repo.commit({CYRILLIC_NAME: f"first line\nthe {CYRILLIC_WORD} is here\n"})
         result = self.repo.run(patterns=CYRILLIC_PATTERN)
         parts = self.assert_result(result, 1, patterns="failed")
-        self.assertIn("  file заметки.txt line 2 pattern #1", parts["patterns"][1])
+        self.assertIn(f"  file {CYRILLIC_NAME} line 2 pattern #1", parts["patterns"][1])
         self.assert_no_echo(result[1])
 
     def test_cyrillic_pattern_ignores_other_cyrillic_text(self):
-        self.repo.commit({"заметки.txt": f"тут {CYRILLIC_OTHER} живёт\n"})
+        self.repo.commit({CYRILLIC_NAME: f"the {CYRILLIC_OTHER} is here\n"})
         self.assert_result(self.repo.run(patterns=CYRILLIC_PATTERN), 0, patterns="passed")
 
     def test_match_only_in_commit_message_fails(self):
@@ -515,7 +521,7 @@ class HardeningTest(LeakCheckCase):
 
     # --- text that is not UTF-8 ---
 
-    CP1251 = f"тут {CYRILLIC_WORD}\n".encode("cp1251")
+    CP1251 = f"the {CYRILLIC_WORD}\n".encode("cp1251")
 
     def test_tracked_file_not_utf8_did_not_run(self):
         self.repo.commit({"notes.txt": self.CP1251})

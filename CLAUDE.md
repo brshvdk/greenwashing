@@ -2,7 +2,7 @@
 
 Rules for Claude Code in **greenwashing** - a catalog, a skill and a Claude Code gate that catch AI coding agents faking a green test suite, for developers who work with coding agents. Public open source, MIT. Planning is done by the owner with a separate planning assistant; this repo is where Claude Code executes. This file loads on every start, so it holds only what is always needed.
 
-**Talk to the owner in Russian. Everything committed is in English:** code, comments, docs, commit messages, PR descriptions.
+**Talk to the owner in the language they write in. Everything committed is in English:** code, comments, docs, commit messages, PR descriptions.
 
 Map of the project - `ARCHITECTURE.md` (read first before any task). Working memory - `.claude/SESSION.md`.
 

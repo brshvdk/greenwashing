@@ -470,7 +470,7 @@ async function onStop(input) {
     const unreadable = inCheckout(project);
     if (unsupported && !unreadable) {
       // With no tests to run with the settings the turn started with, a change during the turn blocks (GW-114).
-      if (seenSettings === settings) return allow(file, next, notChecked(state.support.why));
+      if (seenSettings === settings) return allow(file, next, notChecked(state.support.why, rootFiles(project, settings), hasPythonTests(project)));
       return settle(file, next, [{ kind: 'config', command: 'greenwashing checks', source: CHECKS_SOURCE, timeoutSeconds: 0, output: '', files: [CONFIG_FILE] }], active);
     }
     // Outside git nothing tells what changed, so the tests run whenever there are any, and also when a
@@ -556,7 +556,8 @@ async function onStop(input) {
   const prompted = 'settings' in state;
   if (unsupported) {
     const problem = settingsProblem(checked);
-    return problem ? settle(file, next, [problem], active) : allow(file, next, notChecked(state.support.why));
+    return problem ? settle(file, next, [problem], active)
+      : allow(file, next, notChecked(state.support.why, rootFiles(project, settings), hasPythonTests(project)));
   }
   if (pending.length === 0 && removed.length === 0) {
     return allow(file, next, docs === 0 ? 'greenwashing: no files changed this turn - tests not run'
