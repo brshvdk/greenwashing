@@ -147,7 +147,8 @@ test('the banner: docs/banner.png alone on its line, once, its alt text holding 
   const noReply = run({ replies: { 'fake-deleted-test-js': null } });
   // Spaces and line ends are squashed on both sides, as in the scene; the line may stand anywhere in the alt text.
   assertGreen(README.replace('reply: greenwashing gate: this', 'reply:  greenwashing gate:\tthis'));
-  assertGreen(README, run({ replies: { 'fake-deleted-test-js': SCENE_REPLY.replace('gate: this turn', 'gate:   this turn') } }));
+  assertGreen(README, run({ replies: { 'fake-deleted-test-js': SCENE_REPLY.replace('gate: this turn', 'gate: \t this turn') } }));
+  assertGreen(README.replace('finish yet.](', 'finish yet. Under the green paint.]('));
   assertGreen(README.replace('![Your AI agent is greenwashing your test suite. The gate\'s real reply: ', '![').replace('finish yet.](', 'finish yet. Your AI agent is greenwashing your test suite.]('));
   assertGreen(README.replace(`${BANNER}\n`, ` ${BANNER}  \n`));
   // None, twice, another path, or not alone on its line; with no reply in the run too, a broken banner is red.
@@ -158,6 +159,7 @@ test('the banner: docs/banner.png alone on its line, once, its alt text holding 
   for (const target of ['docs/banner.jpg', 'docs/banner_png', 'docs/Banner.PNG', './docs/banner.png', 'docs/banner.png "the banner"', 'https://example.com/docs/banner.png']) {
     assertRed(README.replace('(docs/banner.png)', `(${target})`), /^the banner: 0 lines outside code hold only [^]*\nline \d+: an image other than the license badge and the banner: /);
   }
+  assertRed(README.replace('.](docs/banner.png)', '.] (docs/banner.png)'), /^the banner: 0 lines outside code hold only [^]*\nline \d+: an image other than the license badge and the banner: /);
   for (const shown of [`It shows ${BANNER}`, `[${BANNER}](LICENSE)`, `${BANNER} and more`]) {
     assertRed(README.replace(`${BANNER}\n`, `${shown}\n`), /^the banner: 0 lines outside code hold only [^]*\nline \d+: an image other than the license badge and the banner: /);
   }
@@ -177,12 +179,23 @@ test('the banner: docs/banner.png alone on its line, once, its alt text holding 
   assertRed(README.replace('you cannot finish yet.](', 'you cannot finish yet]('), without);
   assertRed(README.replace('greenwashing gate: this turn removed tests - you cannot finish yet.](', 'GREENWASHING GATE: THIS TURN REMOVED TESTS - YOU CANNOT FINISH YET.]('), without);
   assertRed(README.replace('greenwashing gate: this turn removed tests - you cannot finish yet.](', 'Removed tests:]('), without);
+  // The whole first line, not its first sentence.
+  const sentences = run({ replies: { 'fake-deleted-test-js': SCENE_REPLY.replace('tests - you cannot', 'tests. You cannot') } });
+  assert.deepEqual(problemsOf(README.replace('removed tests - you cannot finish yet.\n', 'removed tests. You cannot finish yet.\n').replace('removed tests - you cannot finish yet.](', 'removed tests.]('), sentences),
+    [`line ${line}: the banner's alt text does not hold the first line of the gate's reply on fake-deleted-test-js in this run: "greenwashing gate: this turn removed tests. You cannot finish yet."`]);
   const changed = run({ replies: { 'fake-deleted-test-js': SCENE_REPLY.replace('finish yet.', 'finish yet, really.') } });
   assertRed(README, /\nline \d+: the banner's alt text does not hold the first line of the gate's reply on fake-deleted-test-js in this run: "greenwashing gate: this turn removed tests - you cannot finish yet, really\."$/, changed);
   // The digits of the gate's line in the alt text are the run's, spaced as the alt text spaces them; any other digit is not.
   const counted = README.replaceAll('this turn removed tests', 'this turn removed 1 test');
-  assertGreen(counted.replace('reply: greenwashing gate: this', 'reply: greenwashing gate:  this'), run({ replies: { 'fake-deleted-test-js': SCENE_REPLY.replace('this turn removed tests', 'this turn removed 1 test') } }));
+  const countedRun = run({ replies: { 'fake-deleted-test-js': SCENE_REPLY.replace('this turn removed tests', 'this turn removed 1 test') } });
+  assertGreen(counted.replace('reply: greenwashing gate: this', 'reply: greenwashing gate:  this'), countedRun);
+  assertGreen(counted.replace('finish yet.](', 'finish yet. Again: greenwashing gate: this turn removed 1 test - you cannot finish yet.]('), countedRun);
   assertRed(README.replace('![Your AI agent', '![Your 1 AI agent'), /^line \d+: a number no bench run gives: !\[Your 1 AI agent/);
+  // Digits on both sides of the gate's line stay apart: no catalog entry or oldest Node is made of them.
+  assertRed(README.replace('reply: greenwashing gate:', 'reply: GW-greenwashing gate:').replace('finish yet.](', 'finish yet.17]('), /^line \d+: a number no bench run gives: /);
+  assertRed(README.replace('reply: greenwashing gate:', 'reply: Node 2greenwashing gate:').replace('finish yet.](', 'finish yet.0+]('), /^line \d+: a number no bench run gives: /);
+  // An alt text without the gate's line has all its digits read.
+  assertRed(README.replace('![Your AI agent', '![Your 1 AI agent').replace('reply: greenwashing gate: this', 'reply: gate: this'), /^line \d+: the banner's alt text does not hold [^]*\nline \d+: a number no bench run gives: !\[Your 1 AI agent/);
   // A run with no first line of the reply: did not run, never a pass, and the alt text's digits did not run either.
   for (const reply of [null, '', '\nPut the tests back.']) {
     const outcome = check(README, run({ replies: { 'fake-deleted-test-js': reply } }), CATALOG);

@@ -52,7 +52,8 @@ const PLAIN = { green: '✅ green', red: '❌ red' };
 // The images: the license badge, linked to the license, and the banner, with its alt text. An alt text
 // with a bracket or a backslash is refused: GitHub can read the line as text and a link, not the image.
 const BADGE = '[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)';
-const BANNER = /^!\[([^[\]\\]*)\]\(docs\/banner\.png\)$/;
+const BANNER_PATH = 'docs/banner.png';
+const BANNER = new RegExp(`^!\\[([^[\\]\\\\]*)\\]\\(${BANNER_PATH.replace(/\./g, '\\.')}\\)$`);
 
 // Spaces, tabs and line ends as one space: where lines wrap is the frame's.
 const squash = (text) => text.replace(/[ \t\r\n]+/g, ' ').trim();
@@ -189,7 +190,7 @@ function check(readme, run, catalog, minNode = MIN_NODE) {
   const first = reply(SCENE) === null ? '' : squash(reply(SCENE).split('\n')[0]);
   if (banners.length !== 1) {
     const at = banners.map(([i]) => i + 1).join(', ');
-    problems.push(`the banner: ${banners.length} lines outside code hold only ![alt text](docs/banner.png) with no [, ] or \\ in the alt text, not 1${at ? ` (lines ${at})` : ''}`);
+    problems.push(`the banner: ${banners.length} lines outside code hold only ![alt text](${BANNER_PATH}) with no [, ] or \\ in the alt text, not 1${at ? ` (lines ${at})` : ''}`);
   } else if (!first) {
     decided.set(banners[0][0], '');
     notRun.push(`the banner: this run has no first line of the gate's reply on ${SCENE}`);
@@ -197,7 +198,7 @@ function check(readme, run, catalog, minNode = MIN_NODE) {
     const [i, line] = banners[0];
     if (!squash(line.trim().match(BANNER)[1]).includes(first)) {
       problems.push(`line ${i + 1}: the banner's alt text does not hold the first line of the gate's reply on ${SCENE} in this run: ${JSON.stringify(first)}`);
-    } else decided.set(i, squash(line).replace(first, ''));
+    } else decided.set(i, squash(line).replaceAll(first, ' '));
     checked.push('the banner');
   }
 
