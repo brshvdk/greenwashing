@@ -15,31 +15,60 @@ const {
 const ROOT = path.join(__dirname, '..', '..');
 const PLUGIN = path.join(ROOT, 'plugin');
 const readJson = (file) => JSON.parse(fs.readFileSync(path.join(ROOT, file), 'utf8'));
-// What the plugin folder holds, apart from the gate's modules in gate/lib/: only what works for the
-// user. The plugin directory reads and checks this folder alone; tests, CI and the benchmark stay out.
+// What the plugin folder holds: only what works for the user. The plugin directory reads and checks
+// this folder alone; tests, CI and the benchmark stay out.
 const SHIPPED = [
   '.claude-plugin/plugin.json', '.claude-plugin/icon.png', 'hooks/hooks.json', 'commands/mutants.md', 'skills/greenwashing/SKILL.md',
-  'gate/hook.js', 'gate/mutate.js', 'gate/runner.js', 'LICENSE', 'README.md',
+  'gate/hook.js', 'gate/mutate.js', 'gate/runner.js', 'gate/lib/changes.js', 'gate/lib/checks.js', 'gate/lib/command.js', 'gate/lib/diff.js',
+  'gate/lib/mutants.js', 'gate/lib/parse.js', 'gate/lib/verdict.js', 'gate/lib/python_checks.py', 'gate/lib/python_mutants.py', 'LICENSE', 'README.md',
 ];
+// The files git holds or would add (an ignored file never reaches a user; a nested checkout is one entry).
+function gitFiles(...where) {
+  const listed = spawnSync('git', ['-C', ROOT, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', ...where], { encoding: 'utf8' });
+  return { status: listed.status, stderr: listed.stderr, files: listed.stdout.split('\0').filter(Boolean) };
+}
+// CRC-32 as PNG uses it, for the icon's chunks.
+const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
+  let c = n;
+  for (let k = 0; k < 8; k += 1) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
+const crc32 = (bytes) => {
+  let c = 0xffffffff;
+  for (const byte of bytes) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+};
+// A PNG's chunks after the signature, [type, data], and the first problem: a chunk cut off, or one that fails its CRC.
+function chunksOf(png) {
+  const chunks = [];
+  for (let at = 8; at < png.length;) {
+    if (at + 12 > png.length || at + 12 + png.readUInt32BE(at) > png.length) return { chunks, problem: `a chunk cut off at byte ${at}` };
+    const end = at + 12 + png.readUInt32BE(at);
+    const type = png.toString('latin1', at + 4, at + 8);
+    if (png.readUInt32BE(end - 4) !== crc32(png.subarray(at + 4, end - 4))) return { chunks, problem: `${type} at byte ${at} fails its CRC` };
+    chunks.push([type, png.subarray(at + 8, end - 4)]);
+    at = end;
+  }
+  return { chunks, problem: null };
+}
 
 test('the marketplace has one plugin, greenwashing, whose root is the folder plugin/', () => {
   const marketplace = readJson('.claude-plugin/marketplace.json');
   assert.equal(marketplace.name, 'greenwashing');
   assert.equal(marketplace.owner.name, 'brshvdk');
   assert.deepEqual(marketplace.plugins.map(({ name, source }) => [name, source]), [['greenwashing', './plugin']]);
-  assert.equal(readJson('plugin/.claude-plugin/plugin.json').name, 'greenwashing');
+  const manifest = readJson('plugin/.claude-plugin/plugin.json');
+  assert.equal(manifest.name, 'greenwashing');
+  // No version: users get each commit (the owner's decision). No icon: it sits where the plugin directory looks for it.
+  assert.deepEqual(['version', 'icon'].filter((key) => key in manifest), []);
 });
 
 test('the plugin folder holds only what works for the user: the manifest and icon, the hooks, the command, the skill, the gate, LICENSE, README.md', () => {
-  // The files git holds there or would add (an ignored file never reaches a user).
-  const listed = spawnSync('git', ['-C', ROOT, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', 'plugin'], { encoding: 'utf8' });
-  assert.equal(listed.status, 0, listed.stderr);
-  const files = listed.stdout.split('\0').filter(Boolean).map((file) => path.posix.relative('plugin', file));
-  const lib = files.filter((file) => /^gate\/lib\/[^/]+$/.test(file));
-  assert.ok(lib.length > 0, `no module of the gate in plugin/gate/lib: ${files.join(', ')}`);
-  assert.deepEqual(files.filter((file) => !lib.includes(file)).sort(), [...SHIPPED].sort());
+  const { status, stderr, files } = gitFiles('plugin');
+  assert.equal(status, 0, stderr);
+  assert.deepEqual(files.map((file) => path.posix.relative('plugin', file)).sort(), [...SHIPPED].sort());
   // Plain files: a link could point out of the folder, which the plugin cache does not hold.
-  for (const file of files) assert.ok(fs.lstatSync(path.join(PLUGIN, file)).isFile(), `plugin/${file} is no plain file`);
+  for (const file of files) assert.ok(fs.lstatSync(path.join(ROOT, file)).isFile(), `${file} is no plain file`);
 });
 
 test("plugin/LICENSE is the repository's LICENSE, byte for byte", () => {
@@ -49,8 +78,11 @@ test("plugin/LICENSE is the repository's LICENSE, byte for byte", () => {
 test('the icon is a square PNG of 512 to 2048 pixels a side, under 2 MB', () => {
   const icon = fs.readFileSync(path.join(PLUGIN, '.claude-plugin', 'icon.png'));
   assert.ok(icon.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])), 'no PNG signature');
-  assert.equal(icon.toString('latin1', 12, 16), 'IHDR');
-  const [width, height] = [icon.readUInt32BE(16), icon.readUInt32BE(20)];
+  // A whole PNG: every chunk there and its CRC right, IHDR first and 13 bytes long, IEND last.
+  const { chunks, problem } = chunksOf(icon);
+  assert.equal(problem, null);
+  assert.deepEqual([chunks[0]?.[0], chunks[0]?.[1].length, chunks.at(-1)?.[0], chunks.at(-1)?.[1].length], ['IHDR', 13, 'IEND', 0]);
+  const [width, height] = [chunks[0][1].readUInt32BE(0), chunks[0][1].readUInt32BE(4)];
   assert.equal(width, height, `${width}x${height} is not square`);
   assert.ok(width >= 512 && width <= 2048, `${width} px a side`);
   assert.ok(icon.length < 2000000, `${icon.length} bytes`);
@@ -60,31 +92,25 @@ test('every path the hooks and the command give under ${CLAUDE_PLUGIN_ROOT} is a
   const hooks = Object.values(readJson('plugin/hooks/hooks.json').hooks).flat().flatMap((group) => group.hooks).map((hook) => hook.command);
   const texts = { 'plugin/hooks/hooks.json': hooks.join('\n'), 'plugin/commands/mutants.md': fs.readFileSync(path.join(PLUGIN, 'commands', 'mutants.md'), 'utf8') };
   for (const [file, text] of Object.entries(texts)) {
-    const paths = [...text.matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/([^"'\s]+)/g)].map((m) => m[1]);
+    // The rest of the shell word after the variable, its quotes taken out as the shell does.
+    const paths = [...text.matchAll(/\$\{CLAUDE_PLUGIN_ROOT\}\/(\S*)/g)].map((m) => m[1].replace(/["'`]/g, ''));
     // Every use of the variable is one of these paths, and there is at least one.
     assert.ok(paths.length > 0, `${file} names no path under \${CLAUDE_PLUGIN_ROOT}`);
     assert.equal(paths.length, text.split('CLAUDE_PLUGIN_ROOT').length - 1, `${file} uses CLAUDE_PLUGIN_ROOT another way`);
     for (const rel of paths) {
+      // Installed, the plugin's folder has another name: a path through .. leaves it even when it comes back here.
+      assert.ok(!rel.split('/').includes('..'), `${file}: ${rel} goes out of the plugin's folder`);
       const full = path.join(PLUGIN, rel);
-      assert.ok(!path.relative(PLUGIN, full).startsWith('..'), `${file}: ${rel} is outside plugin/`);
       assert.ok(fs.existsSync(full) && fs.statSync(full).isFile(), `${file}: ${rel} is no file in plugin/`);
     }
   }
 });
 
 test('the repository holds exactly one skill file: the plugin loads plugin/skills/greenwashing/SKILL.md', () => {
-  const found = [];
-  // A folder with its own .git (a worktree, a nested checkout) is another copy, not this repository.
-  const walk = (dir) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.name === '.git' || entry.name === 'node_modules') continue;
-      const full = path.join(dir, entry.name);
-      if (entry.isDirectory() && !fs.existsSync(path.join(full, '.git'))) walk(full);
-      else if (entry.isFile() && entry.name.toLowerCase() === 'skill.md') found.push(path.relative(ROOT, full));
-    }
-  };
-  walk(ROOT);
-  assert.deepEqual(found, [path.join('plugin', 'skills', 'greenwashing', 'SKILL.md')]);
+  // Links and node_modules too; a folder with its own .git (a worktree, a nested checkout) is another copy.
+  const { status, stderr, files } = gitFiles();
+  assert.equal(status, 0, stderr);
+  assert.deepEqual(files.filter((file) => path.posix.basename(file).toLowerCase() === 'skill.md'), ['plugin/skills/greenwashing/SKILL.md']);
 });
 
 // The plugin runs the gate from its own folder, this repository from plugin/ in the project.

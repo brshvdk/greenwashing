@@ -214,9 +214,16 @@ test('the banner\'s picture: a file at docs/banner.png in the repository read, w
   const missing = 'the banner: docs/banner.png is not a file in the repository';
   assert.deepEqual(check(README, run(), CATALOG, undefined, repo).problems, [missing]);
   assert.deepEqual(check(README, run({ replies: { 'fake-deleted-test-js': null } }), CATALOG, undefined, repo).problems, [missing]);
+  // Said also when the README's banner line is wrong: each difference is printed.
+  assert.deepEqual(check(README.replace(`${BANNER}\n\n`, ''), run(), CATALOG, undefined, repo).problems,
+    [missing, 'the banner: 0 lines outside code hold only ![alt text](docs/banner.png) with no [, ] or \\ in the alt text, not 1']);
+  // A folder or a device of that name is no file.
   fs.mkdirSync(path.join(repo, 'docs', 'banner.png'), { recursive: true });
   assert.deepEqual(check(README, run(), CATALOG, undefined, repo).problems, [missing]);
   fs.rmdirSync(path.join(repo, 'docs', 'banner.png'));
+  fs.symlinkSync('/dev/null', path.join(repo, 'docs', 'banner.png'));
+  assert.deepEqual(check(README, run(), CATALOG, undefined, repo).problems, [missing]);
+  fs.unlinkSync(path.join(repo, 'docs', 'banner.png'));
   fs.writeFileSync(path.join(repo, 'docs', 'banner.png'), 'png');
   assert.deepEqual(check(README, run(), CATALOG, undefined, repo).problems, []);
 });
@@ -253,6 +260,10 @@ test('Markdown the check cannot read as GitHub shows it is red: HTML, other fenc
   assertRed(README.replace('**Node 20+** on PATH.', '<img src="numbers.png"> **Node 20+** on PATH.'), /: HTML, which this check does not read: /);
   assertRed(README.replace('Every fake has a twin.', '<details>\n\nEvery fake has a twin.\n\n</details>'), /: HTML, which this check does not read: <details>/);
   assertGreen(README.replace('Every fake has a twin.', 'Every fake has a twin, `<b>` in code included.'));
+  // Tag names in any case, and in a table row too; in a code block HTML is text.
+  assertRed(README.replace('It runs them itself.', 'It runs <IMG SRC="demo.gif"> them itself.'), /: HTML, which this check does not read: It runs <IMG /);
+  assertRed(README.replace('The end.', '| a | b |\n|---|---|\n| <img src="demo.gif"> | x |\n\nThe end.'), /: HTML, which this check does not read: \| <img /);
+  assertGreen(README.replace('/plugin install greenwashing@greenwashing', '<b>x</b> <?php ?> <!DOCTYPE html>\n/plugin install greenwashing@greenwashing'));
   // A line inside the scene that opens another fence, a fence of tildes, a fence with an info string.
   assertRed(README.replace(close, '  back.\n```text\n● Turn accepted.\n```\n``` ```\n'), /: a code fence other than a bare ```: ```text/);
   assertRed(README.replace('```\n/plugin install greenwashing@greenwashing\n```', '~~~\n/plugin install greenwashing@greenwashing\n~~~'), /: a code fence other than a bare ```: ~~~/);
