@@ -60,12 +60,13 @@ test('the marketplace has one plugin, greenwashing, whose root is the folder plu
   assert.equal(readJson('plugin/.claude-plugin/plugin.json').name, 'greenwashing');
 });
 
-// The plugin directory shows a card from plugin.json. A link of it: the value of homepage, repository or a
-// key ending in url (any case), and a URL written inside any other text. Returns [key, link].
+// The plugin directory shows a card from plugin.json. A link of it: the value of homepage, repository, bugs
+// or a key ending in url (any case), and a link inside any other text as GitHub finds one there (a scheme and
+// ://, or www.; the punctuation that ends a sentence left out). Returns [key, link].
 function linksIn(value, key = '') {
   if (typeof value === 'string') {
-    if (/^(?:homepage|repository)$|url$/i.test(key)) return [[key, value]];
-    return [...value.matchAll(/[a-z][\w+.-]*:\/\/\S*/gi)].map((m) => [key, m[0]]);
+    if (/^(?:homepage|repository|bugs)$|url$/i.test(key)) return [[key, value]];
+    return [...value.matchAll(/(?:[a-z][\w+.-]*:\/\/|www\.)\S*/gi)].map((m) => [key, m[0].replace(/[.,:;!?'")\]}*_~]+$/, '')]);
   }
   if (value === null || typeof value !== 'object') return [];
   return Object.entries(value).flatMap(([name, item]) => linksIn(item, Array.isArray(value) ? key : name));
