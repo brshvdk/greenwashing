@@ -31,7 +31,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { MIN_NODE } = require('../gate/lib/command');
+const { MIN_NODE } = require('../plugin/gate/lib/command');
 
 const ROOT = path.resolve(__dirname, '..');
 // The case whose gate reply the README's scene shows, and the rows of its table, in order: each case

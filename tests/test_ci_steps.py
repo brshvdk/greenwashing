@@ -162,25 +162,25 @@ class GateTestsStepTest(StepCase):
         return self.run_step("ci.yml", "Gate tests", self.make_dir(files))
 
     def test_passing_suite_passes_and_prints_the_node_version(self):
-        code, out = self.run_gate_step({"gate/test/ok.test.js": NODE_PASSING})
+        code, out = self.run_gate_step({"tests/gate/ok.test.js": NODE_PASSING})
         self.assertEqual(code, 0, out)
         self.assertRegex(out.splitlines()[0], r"^v\d+\.\d+\.\d+$")
         self.assertIn("# pass 1", out)
 
     def test_failing_test_fails(self):
-        code, out = self.run_gate_step({"gate/test/ok.test.js": NODE_PASSING, "gate/test/bad.test.js": NODE_FAILING})
+        code, out = self.run_gate_step({"tests/gate/ok.test.js": NODE_PASSING, "tests/gate/bad.test.js": NODE_FAILING})
         self.assertNotEqual(code, 0, out)
         self.assertIn("# fail 1", out)
 
     def test_no_test_files_fail(self):
         # Node 22 reads the unmatched glob itself: "# tests 0" and exit 0; Node 20: "Could not find".
-        code, out = self.run_gate_step({"gate/lib/x.js": "module.exports = 1;\n"})
+        code, out = self.run_gate_step({"plugin/gate/lib/x.js": "module.exports = 1;\n"})
         self.assertNotEqual(code, 0, out)
         self.assertRegex(out, r"gate tests did not run: (0|no) tests ran")
 
     def test_run_without_a_summary_line_fails(self):
         # A test file that kills the runner: no "# tests N" line.
-        code, out = self.run_gate_step({"gate/test/kill.test.js": "process.kill(process.ppid, 'SIGKILL');\n"})
+        code, out = self.run_gate_step({"tests/gate/kill.test.js": "process.kill(process.ppid, 'SIGKILL');\n"})
         self.assertNotEqual(code, 0, out)
         self.assertIn("gate tests did not run: no tests ran", out)
 

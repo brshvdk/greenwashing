@@ -56,7 +56,7 @@ The words `allow test removal` in your prompt let that turn remove tests: any te
 
 ## Options of the mutation check
 
-`/greenwashing:mutants` takes the first four after its name, for example `/greenwashing:mutants --limit 40 --timeout 1800`; it gives `--project` itself, so a second one is refused. `node gate/mutate.js`, run by hand, takes all five:
+`/greenwashing:mutants` takes the first four after its name, for example `/greenwashing:mutants --limit 40 --timeout 1800`; it gives `--project` itself, so a second one is refused. `node plugin/gate/mutate.js`, run by hand, takes all five:
 
 - `--base <ref>`: the branch or commit the change is measured from (the lines added since the merge base of `HEAD` with it). When not given: `origin/HEAD`, else the first of `origin/main`, `origin/master`, `main` and `master` that exists.
 - `--limit <n>`: how many breaks to try at most; `limit` in `mutants`, else 20.

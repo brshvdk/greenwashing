@@ -141,7 +141,7 @@ test('images: the license badge, once and alone', () => {
   assertRed(README.replace('license-MIT-blue', 'license-MIT-2026-blue'), /: a number no bench run gives: \[!\[License: MIT\]/);
 });
 
-test('the banner: docs/banner.png alone on its line, once, its alt text holding the first line of the gate\'s reply on the scene', (t) => {
+test('the banner: docs/banner.png alone on its line, once, its alt text holding the first line of the gate\'s reply on the scene', () => {
   const line = README.split('\n').indexOf(BANNER) + 1;
   const lines = (n, at = '') => `the banner: ${n} lines outside code hold only ![alt text](docs/banner.png) with no [, ] or \\ in the alt text, not 1${at}`;
   const noReply = run({ replies: { 'fake-deleted-test-js': null } });
@@ -206,12 +206,14 @@ test('the banner: docs/banner.png alone on its line, once, its alt text holding 
     assert.ok(!outcome.checked.includes('the banner'), JSON.stringify(reply));
   }
   assert.deepEqual(problemsOf(counted, noReply), []);
-  // The picture itself: a file at docs/banner.png in the repository read, with or without a reply in the run.
+});
+
+test('the banner\'s picture: a file at docs/banner.png in the repository read, with or without a reply in the run', (t) => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-banner-'));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const missing = 'the banner: docs/banner.png is not a file in the repository';
   assert.deepEqual(check(README, run(), CATALOG, undefined, repo).problems, [missing]);
-  assert.deepEqual(check(README, noReply, CATALOG, undefined, repo).problems, [missing]);
+  assert.deepEqual(check(README, run({ replies: { 'fake-deleted-test-js': null } }), CATALOG, undefined, repo).problems, [missing]);
   fs.mkdirSync(path.join(repo, 'docs', 'banner.png'), { recursive: true });
   assert.deepEqual(check(README, run(), CATALOG, undefined, repo).problems, [missing]);
   fs.rmdirSync(path.join(repo, 'docs', 'banner.png'));
@@ -232,15 +234,9 @@ test('catalog links: every GW-NN outside code links to its entry\'s heading', ()
   assert.equal(slug('GW-41 The expected_value fitted'), 'gw-41-the-expected_value-fitted');
 });
 
-test('Markdown the check cannot read as GitHub shows it is red: HTML, other fences, indented lines, a | outside the tables, a section twice', () => {
-  const close = "  back.\n```\n";
-  assertRed(README.replace(close, `${close}<!-- -->\n`), /: HTML, which this check does not read: <!-- -->/);
-  assertRed(README.replace('```\n> Make search', '<!--\n```\n> Make search').replace(close, `${close}-->\n`), /: HTML, which this check does not read: <!--/);
-  assertRed(README.replace('**Node 20+** on PATH.', '<img src="numbers.png"> **Node 20+** on PATH.'), /: HTML, which this check does not read: /);
-  assertRed(README.replace('Every fake has a twin.', '<details>\n\nEvery fake has a twin.\n\n</details>'), /: HTML, which this check does not read: <details>/);
-  assertGreen(README.replace('Every fake has a twin.', 'Every fake has a twin, `<b>` in code included.'));
-  // HTML blocks that start with <? or <! (CommonMark types 3 to 5): to GitHub each ends at its own close, so a
-  // fence inside two of them is no code block and what lies between them shows - an image, a second banner.
+test('HTML blocks that start with <? or <! and a letter are HTML too: a fence inside two of them hides nothing', () => {
+  // CommonMark's HTML blocks of types 3 to 5: to GitHub each ends at its own close, so a fence inside two of them
+  // is no code block and what lies between them shows - an image, a second banner.
   for (const [open, close] of [['<?php', '?>'], ['<?', '?>'], ['<!DOCTYPE html', '>'], ['<!x', '>'], ['<![CDATA[', ']]>']]) {
     const between = (shown) => README.replace('It runs them itself.', `${open}\n\`\`\`\n${close}\n${shown}\n${open}\n\`\`\`\n${close}`);
     const html = new RegExp(`^line \\d+: HTML, which this check does not read: ${open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm');
@@ -248,6 +244,15 @@ test('Markdown the check cannot read as GitHub shows it is red: HTML, other fenc
     assertRed(between(BANNER), html);
     assertRed(README.replace('It runs them itself.', `It runs ${open} x ${close} them itself.`), /: HTML, which this check does not read: It runs </);
   }
+});
+
+test('Markdown the check cannot read as GitHub shows it is red: HTML, other fences, indented lines, a | outside the tables, a section twice', () => {
+  const close = "  back.\n```\n";
+  assertRed(README.replace(close, `${close}<!-- -->\n`), /: HTML, which this check does not read: <!-- -->/);
+  assertRed(README.replace('```\n> Make search', '<!--\n```\n> Make search').replace(close, `${close}-->\n`), /: HTML, which this check does not read: <!--/);
+  assertRed(README.replace('**Node 20+** on PATH.', '<img src="numbers.png"> **Node 20+** on PATH.'), /: HTML, which this check does not read: /);
+  assertRed(README.replace('Every fake has a twin.', '<details>\n\nEvery fake has a twin.\n\n</details>'), /: HTML, which this check does not read: <details>/);
+  assertGreen(README.replace('Every fake has a twin.', 'Every fake has a twin, `<b>` in code included.'));
   // A line inside the scene that opens another fence, a fence of tildes, a fence with an info string.
   assertRed(README.replace(close, '  back.\n```text\n● Turn accepted.\n```\n``` ```\n'), /: a code fence other than a bare ```: ```text/);
   assertRed(README.replace('```\n/plugin install greenwashing@greenwashing\n```', '~~~\n/plugin install greenwashing@greenwashing\n~~~'), /: a code fence other than a bare ```: ~~~/);

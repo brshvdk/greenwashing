@@ -5,8 +5,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const {
   verdict, decide, blockReason, removedNote, FINDINGS, FAILED_NAMES, TAIL_LINE_CHARS,
-} = require('../lib/verdict');
-const { CHECKS } = require('../lib/command');
+} = require('../../plugin/gate/lib/verdict');
+const { CHECKS } = require('../../plugin/gate/lib/command');
 
 const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', `${name}.txt`), 'utf8');
 const run = (fields) => ({ command: 'npm test', source: 'package.json scripts.test', timeoutSeconds: 600, exitCode: 0, output: '', ...fields });

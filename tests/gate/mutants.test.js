@@ -9,8 +9,10 @@ const path = require('node:path');
 const vm = require('node:vm');
 const {
   codeKind, addedLines, ownLines, jsMutants, fromLines, apply, controlBreak, stillParses, describe, choose, byPlace, estimate, report, OUTCOMES, HINTS, NOT_EXERCISED, CONTROL_MESSAGE,
-} = require('../lib/mutants');
-const { CATALOG } = require('../lib/verdict');
+} = require('../../plugin/gate/lib/mutants');
+const { CATALOG } = require('../../plugin/gate/lib/verdict');
+
+const GATE = path.join(__dirname, '..', '..', 'plugin', 'gate');
 
 const everyLine = (source) => new Set(source.split(/\r\n|\r|\n/).map((_, i) => i + 1));
 // The breaks of a JavaScript text on every line: [op, the first changed line after].
@@ -153,10 +155,10 @@ test('JavaScript order: a sort or a reverse is removed with its call, and the it
 });
 
 test('every JavaScript break of this repository\'s own code still parses', () => {
-  const files = ['gate/hook.js', 'gate/mutate.js', 'gate/runner.js', ...fs.readdirSync(path.join(__dirname, '..', 'lib')).filter((f) => f.endsWith('.js')).map((f) => `gate/lib/${f}`)];
+  const files = ['hook.js', 'mutate.js', 'runner.js', ...fs.readdirSync(path.join(GATE, 'lib')).filter((f) => f.endsWith('.js')).map((f) => `lib/${f}`)];
   let count = 0;
   for (const file of files) {
-    const source = fs.readFileSync(path.join(__dirname, '..', '..', file), 'utf8').replace(/^#!.*/, '');
+    const source = fs.readFileSync(path.join(GATE, file), 'utf8').replace(/^#!.*/, '');
     for (const mutant of jsMutants(source, everyLine(source))) {
       count += 1;
       assert.equal(stillParses(file, source, apply(source, mutant)), true, `${file}: ${describe(source, mutant).change}`);
@@ -339,7 +341,7 @@ test('three outcomes: failed tests kill a break, passing tests let it survive, d
 // Python breaks, from python_mutants.py as the command runs it.
 function python(text, lines = null) {
   const request = { files: [{ file: 'a.py', text, lines: [...(lines || everyLine(text))] }] };
-  const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_mutants.py')], { input: JSON.stringify(request), encoding: 'utf8' });
+  const run = spawnSync('python3', ['-I', path.join(GATE, 'lib', 'python_mutants.py')], { input: JSON.stringify(request), encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   const out = JSON.parse(run.stdout);
   if (out.errors.length) return out.errors;
@@ -398,7 +400,7 @@ test('Python: an elif is no guard, a guard alone in its block becomes pass, f-st
 function controlled(text, kind) {
   if (kind === 'js') return apply(text, controlBreak(text, 'js'));
   const request = { files: [{ file: 'a.py', text, lines: [1] }] };
-  const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_mutants.py')], { input: JSON.stringify(request), encoding: 'utf8' });
+  const run = spawnSync('python3', ['-I', path.join(GATE, 'lib', 'python_mutants.py')], { input: JSON.stringify(request), encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   const [control] = JSON.parse(run.stdout).controls;
   assert.equal(control.file, 'a.py');

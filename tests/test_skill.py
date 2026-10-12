@@ -1,4 +1,4 @@
-"""Tests for skills/greenwashing/SKILL.md: the frontmatter and the links to CATALOG.md.
+"""Tests for plugin/skills/greenwashing/SKILL.md: the frontmatter and the links to CATALOG.md.
 
 The checker runs on the real skill, which must pass, and on mutants of it,
 each of which must report exactly the rules it breaks.
@@ -9,7 +9,7 @@ import re
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SKILL_DIR = os.path.join(ROOT, "skills", "greenwashing")
+SKILL_DIR = os.path.join(ROOT, "plugin", "skills", "greenwashing")
 SKILL = os.path.join(SKILL_DIR, "SKILL.md")
 CATALOG = os.path.join(ROOT, "CATALOG.md")
 # Limits of the Agent Skills format for the name and description fields.

@@ -6,7 +6,7 @@ const path = require('node:path');
 const CONFIG_FILE = '.greenwashing.json';
 const DEFAULT_TIMEOUT_SECONDS = 600;
 // The Stop hook's own timeout in hooks/hooks.json and .claude/settings.json is this plus 60 s:
-// Claude Code cancels a hook that runs longer and lets the agent stop (gate/test/plugin.test.js).
+// Claude Code cancels a hook that runs longer and lets the agent stop (tests/gate/plugin.test.js).
 const MAX_TIMEOUT_SECONDS = 3600;
 // The oldest Node the gate runs on: the oldest one CI tests (.github/workflows/ci.yml). On an older one
 // the gate does not run and says so (gateOff): in runs, Node 14 and 16 blocked every turn.

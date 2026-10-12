@@ -17,9 +17,9 @@
 //   tests only     - the project's test command on the change - the tree it leaves, or for a change
 //                    committed in a worktree, a checkout of that commit - judged by its exit code, as
 //                    CI judges it;
-//   gate           - gate/hook.js as Claude Code runs it: the prompt, the change, the Stop;
-//   gate + mutation check - the gate, and when it lets the turn end, gate/mutate.js on the change (the
-//                    same tree as tests only).
+//   gate           - plugin/gate/hook.js as Claude Code runs it: the prompt, the change, the Stop;
+//   gate + mutation check - the gate, and when it lets the turn end, plugin/gate/mutate.js on the change
+//                    (the same tree as tests only).
 // A column is red when it stops the change: a failing exit code, a block, a break that survived. A
 // red fake is caught; a red honest case is a false alarm. "Did not run" is never caught.
 //
@@ -34,13 +34,13 @@ const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { chooseCommand } = require('../gate/lib/command');
-const { readRootFiles, hasPythonTests, runTests } = require('../gate/runner');
+const { chooseCommand } = require('../plugin/gate/lib/command');
+const { readRootFiles, hasPythonTests, runTests } = require('../plugin/gate/runner');
 
 const ROOT = path.resolve(__dirname, '..');
 const CASES = path.join(__dirname, 'cases');
-const HOOK = path.join(ROOT, 'gate', 'hook.js');
-const MUTATE = path.join(ROOT, 'gate', 'mutate.js');
+const HOOK = path.join(ROOT, 'plugin', 'gate', 'hook.js');
+const MUTATE = path.join(ROOT, 'plugin', 'gate', 'mutate.js');
 const SUFFIX = '.txt';
 const COLUMNS = { tests: 'Tests only', gate: 'Gate', mutants: 'Gate + mutation check' };
 const FIELDS = { kind: ['fake', 'honest'], language: ['js', 'python'], claim: ['caught', 'not caught'], scenario: ['worktree'] };

@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { lineChanges, MAX_EDITS } = require('../lib/diff');
+const { lineChanges, MAX_EDITS } = require('../../plugin/gate/lib/diff');
 
 const changes = (before, after) => {
   const { added, gaps } = lineChanges(before, after);

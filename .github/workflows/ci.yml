@@ -139,7 +139,7 @@ jobs:
         run: |
           node --version
           status=0
-          node --test --test-reporter=tap gate/test/*.test.js > "$RUNNER_TEMP/gate-tests.log" 2>&1 || status=$?
+          node --test --test-reporter=tap tests/gate/*.test.js > "$RUNNER_TEMP/gate-tests.log" 2>&1 || status=$?
           cat "$RUNNER_TEMP/gate-tests.log"
           ran=$(sed -n 's/^# tests \([0-9][0-9]*\)$/\1/p' "$RUNNER_TEMP/gate-tests.log" | tail -n 1)
           if [ -z "$ran" ] || [ "$ran" -eq 0 ]; then

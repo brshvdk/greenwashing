@@ -8,7 +8,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const HOOK = path.join(__dirname, '..', 'hook.js');
+const HOOK = path.join(__dirname, '..', '..', 'plugin', 'gate', 'hook.js');
 const NODE_PASS = "const test = require('node:test');\nconst assert = require('node:assert');\ntest('ok', () => assert.equal(1 + 1, 2));\n";
 // The same test as NODE_PASS, failing: a test edited in place, not one removed and another added (GW-17).
 const NODE_FAIL = "const test = require('node:test');\nconst assert = require('node:assert');\ntest('ok', () => assert.equal(1, 2));\n";

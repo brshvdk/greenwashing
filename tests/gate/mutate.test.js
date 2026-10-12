@@ -9,7 +9,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const MUTATE = path.join(__dirname, '..', 'mutate.js');
+const GATE = path.join(__dirname, '..', '..', 'plugin', 'gate');
+const MUTATE = path.join(GATE, 'mutate.js');
 const NODE_CMD = 'node --test --test-reporter=tap';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -267,7 +268,7 @@ test('a folder the tests leave read-only goes with the copy, and the report is s
   delete env.NODE_TEST_CONTEXT;
   let run;
   if (root) {
-    fs.cpSync(path.join(__dirname, '..'), path.join(base, 'gate'), { recursive: true });
+    fs.cpSync(GATE, path.join(base, 'gate'), { recursive: true });
     for (const folder of [dir, tmp]) assert.equal(spawnSync('chown', ['-R', '65534:65534', folder]).status, 0);
     run = spawnSync('setpriv', ['--reuid=65534', '--regid=65534', '--clear-groups', process.execPath, path.join(base, 'gate', 'mutate.js')], { cwd: dir, env, encoding: 'utf8' });
     assert.equal(run.error, undefined, 'setpriv is needed to run this test as root');
