@@ -136,7 +136,8 @@ function check(readme, run, catalog, minNode = MIN_NODE) {
     return c && c[column] && typeof c[column].outcome === 'string' ? c[column].outcome : null;
   };
   // The lines a run decides, with the part of each that the digit rule below still reads: nothing of
-  // the scene's reply, of FRAME or of the numbers table; the first two cells of a row of the table.
+  // the scene's reply, of FRAME or of the numbers table; the first two cells of a row of the table; the
+  // banner's line without the first line of the reply on SCENE (nothing of it when the run has none).
   const decided = new Map();
   const inTable = (i) => tables.some(([from, to]) => i >= from && i < to);
   const tablesIn = (title) => (sections[title] ? tables.filter(([from]) => from >= sections[title][0] && from < sections[title][1]) : []);
@@ -186,9 +187,13 @@ function check(readme, run, catalog, minNode = MIN_NODE) {
   // The banner: the picture of the social preview, whose alt text holds the gate's first line on SCENE.
   const banners = [...lines.entries()].filter(([i, line]) => !inBlock(i) && BANNER.test(line.trim()));
   const first = reply(SCENE) === null ? '' : squash(reply(SCENE).split('\n')[0]);
-  if (banners.length !== 1) problems.push(`the banner: ${banners.length} lines of their own hold ![...](docs/banner.png), not 1`);
-  else if (!first) notRun.push(`the banner: this run has no first line of the gate's reply on ${SCENE}`);
-  else {
+  if (banners.length !== 1) {
+    const at = banners.map(([i]) => i + 1).join(', ');
+    problems.push(`the banner: ${banners.length} lines outside code hold only ![alt text](docs/banner.png) with no [, ] or \\ in the alt text, not 1${at ? ` (lines ${at})` : ''}`);
+  } else if (!first) {
+    decided.set(banners[0][0], '');
+    notRun.push(`the banner: this run has no first line of the gate's reply on ${SCENE}`);
+  } else {
     const [i, line] = banners[0];
     if (!squash(line.trim().match(BANNER)[1]).includes(first)) {
       problems.push(`line ${i + 1}: the banner's alt text does not hold the first line of the gate's reply on ${SCENE} in this run: ${JSON.stringify(first)}`);
@@ -261,7 +266,7 @@ function check(readme, run, catalog, minNode = MIN_NODE) {
     if (numberIn(decided.has(i) ? decided.get(i) : line, minNode)) problems.push(`line ${i + 1}: a number no bench run gives: ${line.trim()}`);
     if (inBlock(i)) continue;
     if (line.includes('![') && line.trim() !== BADGE && !BANNER.test(line.trim())) {
-      problems.push(`line ${i + 1}: an image other than the license badge and the banner (docs/banner.png): ${line.trim()}`);
+      problems.push(`line ${i + 1}: an image other than the license badge and the banner: ${line.trim()}`);
     }
     for (const m of line.matchAll(GW_LINK)) {
       links += 1;

@@ -135,33 +135,39 @@ test('the numbers: the run\'s summary table as it is, and no other number anywhe
 });
 
 test('images: the license badge, once and alone', () => {
-  assertRed(README.replace('(LICENSE)\n', '(LICENSE) ![caught](https://img.shields.io/badge/caught-all-green)\n'), /: an image other than the license badge and the banner \(docs\/banner\.png\): /);
-  assertRed(README.replace('It runs them itself.', '![demo](demo.gif)'), /: an image other than the license badge and the banner \(docs\/banner\.png\): !\[demo\]/);
+  assertRed(README.replace('(LICENSE)\n', '(LICENSE) ![caught](https://img.shields.io/badge/caught-all-green)\n'), /: an image other than the license badge and the banner: /);
+  assertRed(README.replace('It runs them itself.', '![demo](demo.gif)'), /: an image other than the license badge and the banner: !\[demo\]/);
   assertRed(README.replace('[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n', ''), /^the license badge: not once on a line of its own/);
   assertRed(README.replace('license-MIT-blue', 'license-MIT-2026-blue'), /: a number no bench run gives: \[!\[License: MIT\]/);
 });
 
 test('the banner: docs/banner.png alone on its line, once, its alt text holding the first line of the gate\'s reply on the scene', () => {
   const line = README.split('\n').indexOf(BANNER) + 1;
+  const lines = (n, at = '') => `the banner: ${n} lines outside code hold only ![alt text](docs/banner.png) with no [, ] or \\ in the alt text, not 1${at}`;
+  const noReply = run({ replies: { 'fake-deleted-test-js': null } });
   // Spaces and line ends are squashed on both sides, as in the scene; the line may stand anywhere in the alt text.
   assertGreen(README.replace('reply: greenwashing gate: this', 'reply:  greenwashing gate:\tthis'));
   assertGreen(README, run({ replies: { 'fake-deleted-test-js': SCENE_REPLY.replace('gate: this turn', 'gate:   this turn') } }));
   assertGreen(README.replace('![Your AI agent is greenwashing your test suite. The gate\'s real reply: ', '![').replace('finish yet.](', 'finish yet. Your AI agent is greenwashing your test suite.]('));
   assertGreen(README.replace(`${BANNER}\n`, ` ${BANNER}  \n`));
-  // None, twice, another path, or not alone on its line.
-  assertRed(README.replace(`${BANNER}\n\n`, ''), /^the banner: 0 lines of their own hold !\[\.\.\.\]\(docs\/banner\.png\), not 1$/);
-  assertRed(README.replace('The end.', BANNER), /^the banner: 2 lines of their own hold !\[\.\.\.\]\(docs\/banner\.png\), not 1$/);
-  for (const target of ['docs/banner.jpg', './docs/banner.png', 'docs/banner.png "the banner"', 'https://example.com/docs/banner.png']) {
-    assertRed(README.replace('(docs/banner.png)', `(${target})`), /^the banner: 0 lines of their own hold [^]*\nline \d+: an image other than the license badge and the banner \(docs\/banner\.png\): /);
+  // None, twice, another path, or not alone on its line; with no reply in the run too, a broken banner is red.
+  assert.deepEqual(problemsOf(README.replace(`${BANNER}\n\n`, '')), [lines(0)]);
+  assert.deepEqual(problemsOf(README.replace(`${BANNER}\n\n`, ''), noReply), [lines(0)]);
+  const twice = README.replace('The end.', BANNER);
+  assert.deepEqual(problemsOf(twice), [lines(2, ` (lines ${line}, ${twice.split('\n').lastIndexOf(BANNER) + 1})`)]);
+  for (const target of ['docs/banner.jpg', 'docs/banner_png', 'docs/Banner.PNG', './docs/banner.png', 'docs/banner.png "the banner"', 'https://example.com/docs/banner.png']) {
+    assertRed(README.replace('(docs/banner.png)', `(${target})`), /^the banner: 0 lines outside code hold only [^]*\nline \d+: an image other than the license badge and the banner: /);
   }
   for (const shown of [`It shows ${BANNER}`, `[${BANNER}](LICENSE)`, `${BANNER} and more`]) {
-    assertRed(README.replace(`${BANNER}\n`, `${shown}\n`), /^the banner: 0 lines of their own hold [^]*\nline \d+: an image other than the license badge and the banner/);
+    assertRed(README.replace(`${BANNER}\n`, `${shown}\n`), /^the banner: 0 lines outside code hold only [^]*\nline \d+: an image other than the license badge and the banner: /);
   }
+  // A link to the picture is no image.
+  assert.deepEqual(problemsOf(README.replace(BANNER, BANNER.slice(1))), [lines(0)]);
   // Only where GitHub shows it as that image: not in a code block, not as HTML, not with a bracket or a backslash in its alt text.
-  assertRed(README.replace(`${BANNER}\n`, `\`\`\`\n${BANNER}\n\`\`\`\n`), /^the banner: 0 lines of their own hold /);
+  assert.deepEqual(problemsOf(README.replace(`${BANNER}\n`, `\`\`\`\n${BANNER}\n\`\`\`\n`)), [lines(0)]);
   assertRed(README.replace(BANNER, '<img src="docs/banner.png" alt="greenwashing gate: this turn removed tests - you cannot finish yet.">'), /: HTML, which this check does not read: <img [^]*\nthe banner: 0 lines/);
   for (const alt of ['![Your [AI agent', '![Your AI] agent', '![Your AI agent\\']) {
-    assertRed(README.replace('![Your AI agent', alt), /^the banner: 0 lines of their own hold [^]*\nline \d+: an image other than the license badge and the banner/);
+    assertRed(README.replace('![Your AI agent', alt), /^the banner: 0 lines outside code hold only [^]*\nline \d+: an image other than the license badge and the banner: /);
   }
   // An alt text without the gate's first line on the scene, as this run gave it, word for word.
   const without = new RegExp(`^line ${line}: the banner's alt text does not hold the first line of the gate's reply on fake-deleted-test-js in this run: "greenwashing gate: this turn removed tests - you cannot finish yet\\."$`);
@@ -169,17 +175,21 @@ test('the banner: docs/banner.png alone on its line, once, its alt text holding 
   assertRed(README.replace('reply: greenwashing gate: this', 'reply: gate: this'), without);
   assertRed(README.replace('you cannot finish yet.](', 'you cannot finish.]('), without);
   assertRed(README.replace('you cannot finish yet.](', 'you cannot finish yet]('), without);
+  assertRed(README.replace('greenwashing gate: this turn removed tests - you cannot finish yet.](', 'GREENWASHING GATE: THIS TURN REMOVED TESTS - YOU CANNOT FINISH YET.]('), without);
   assertRed(README.replace('greenwashing gate: this turn removed tests - you cannot finish yet.](', 'Removed tests:]('), without);
   const changed = run({ replies: { 'fake-deleted-test-js': SCENE_REPLY.replace('finish yet.', 'finish yet, really.') } });
   assertRed(README, /\nline \d+: the banner's alt text does not hold the first line of the gate's reply on fake-deleted-test-js in this run: "greenwashing gate: this turn removed tests - you cannot finish yet, really\."$/, changed);
-  // A digit of the alt text outside the gate's line is no number of the run.
+  // The digits of the gate's line in the alt text are the run's, spaced as the alt text spaces them; any other digit is not.
+  const counted = README.replaceAll('this turn removed tests', 'this turn removed 1 test');
+  assertGreen(counted.replace('reply: greenwashing gate: this', 'reply: greenwashing gate:  this'), run({ replies: { 'fake-deleted-test-js': SCENE_REPLY.replace('this turn removed tests', 'this turn removed 1 test') } }));
   assertRed(README.replace('![Your AI agent', '![Your 1 AI agent'), /^line \d+: a number no bench run gives: !\[Your 1 AI agent/);
-  // A run with no first line of the reply: did not run, never a pass.
+  // A run with no first line of the reply: did not run, never a pass, and the alt text's digits did not run either.
   for (const reply of [null, '', '\nPut the tests back.']) {
     const outcome = check(README, run({ replies: { 'fake-deleted-test-js': reply } }), CATALOG);
     assert.match(outcome.notRun.join('\n'), /\bthe banner: this run has no first line of the gate's reply on fake-deleted-test-js$/m, JSON.stringify(reply));
     assert.ok(!outcome.checked.includes('the banner'), JSON.stringify(reply));
   }
+  assert.deepEqual(problemsOf(counted, noReply), []);
 });
 
 test('catalog links: every GW-NN outside code links to its entry\'s heading', () => {
@@ -229,7 +239,7 @@ test('the scene\'s frame and other links: no text before the label, links only t
   // (CATALOG.md#...) is a link's target only right after its text.
   assertRed(README.replace('Run it with `node bench/run`.', 'Run it with `node bench/run` (CATALOG.md#all-32-fakes-caught).'), /: a number no bench run gives: Run it with/);
   assertGreen(README.replace('**Node 20+** on PATH', '_Node 20+_ on PATH'));
-  assertRed(README.replace('license-MIT-blue.svg', 'dynamic/json?url=https://example.com/n.json'), /: an image other than the license badge and the banner \(docs\/banner\.png\): /);
+  assertRed(README.replace('license-MIT-blue.svg', 'dynamic/json?url=https://example.com/n.json'), /: an image other than the license badge and the banner: /);
   assertRed(README.replace('[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n',
     '[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n\n[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n'), /^the license badge: not once on a line of its own/);
 });
