@@ -1594,6 +1594,24 @@ test('the new file the state is written to is made, never opened: a link at its 
   assert.equal(fs.readFileSync(victim, 'utf8'), 'untouched\n');
 });
 
+test('a state file with a second name - a hard link to a file elsewhere - is not read', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  const [name] = fs.readdirSync(stateDir(gate));
+  const file = path.join(stateDir(gate), name);
+  // Elsewhere, the same state as the gate's, but one that lets the turn end unchecked; its other name is the state file's.
+  const forged = path.join(tempDir(t), 'state.json');
+  fs.writeFileSync(forged, JSON.stringify({ ...JSON.parse(fs.readFileSync(file, 'utf8')), support: { supported: false, why: 'no test command was found' } }));
+  fs.rmSync(file);
+  fs.linkSync(forged, file);
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.equal(gate.stop().json.decision, 'block');
+  // The state is a file of its own again; the other name's file is as it was.
+  assert.equal(fs.lstatSync(file).nlink, 1);
+  assert.match(fs.readFileSync(forged, 'utf8'), /"supported":false/);
+});
+
 test("a pipe in the state file's place does not hold the hook: it is replaced by the state", (t) => {
   const dir = project(t, { 't.test.js': NODE_PASS });
   const gate = session(t, dir);

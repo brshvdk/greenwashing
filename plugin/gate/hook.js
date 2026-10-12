@@ -99,11 +99,18 @@ function stateFile(folder, input, dir) {
   return path.join(folder, `${key.slice(0, 32)}.json`);
 }
 
-// Never read through a link: only a file of its own in the state folder is the state (not a link, put
-// there before the check or after it, nor a pipe that would hold the hook).
+// Never read through a link: only a file of its own in the state folder is the state - not a symbolic
+// link, put there before the check or after it, nor a pipe that would hold the hook, nor a hard link
+// to a file elsewhere (the gate's files have one name).
 function readState(file) {
   if (!fs.lstatSync(file).isFile()) return null;
-  return fs.readFileSync(file, { encoding: 'utf8', flag: fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) });
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    const stat = fs.fstatSync(fd);
+    return stat.isFile() && stat.nlink === 1 ? fs.readFileSync(fd, 'utf8') : null;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function loadState(file) {

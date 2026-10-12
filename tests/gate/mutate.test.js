@@ -234,14 +234,14 @@ test('the copy is private to the user (0700) while the tests run in it', (t) => 
 // A project whose tests, run in the copy, put a link where code of the change is (thing: 'file' or
 // 'folder', a file or a folder of the project made a link to outside, where the same code sits with a
 // comment more; 'hard', the file made a hard link to that one; 'late', the file made a link only from
-// the second run on, after the first break is in it).
+// the third run on - the control run, the control break, then a break - after the break is in it).
 function linkedAway(t, thing) {
   const outside = tempDir(t);
   const code = `${CART}${ADD}`;
   const at = thing === 'folder' ? 'lib' : 'cart.js';
   const moved = thing === 'folder' ? outside : path.join(outside, 'cart.js');
   fs.writeFileSync(path.join(outside, 'cart.js'), `${code}// outside the copy\n`);
-  const runs = thing === 'late' ? "fs.appendFileSync('.runs', 'x');\nif (fs.readFileSync('.runs', 'utf8').length > 1 && " : 'if (';
+  const runs = thing === 'late' ? "fs.appendFileSync('.runs', 'x');\nif (fs.readFileSync('.runs', 'utf8').length > 2 && " : 'if (';
   const linked = thing === 'hard' ? 'nlink > 1' : 'isSymbolicLink()';
   const swap = `const fs = require('node:fs');\n${runs}!(fs.lstatSync(${JSON.stringify(at)}).${linked})) {\n`
     + `  fs.rmSync(${JSON.stringify(at)}, { recursive: true });\n  fs.${thing === 'hard' ? 'linkSync' : 'symlinkSync'}(process.argv[2], ${JSON.stringify(at)});\n}\n`;
@@ -260,8 +260,8 @@ test('a break is never written through a link: a code file or folder the tests m
     assert.deepEqual(fs.readdirSync(outside), ['cart.js'], thing);
     assert.equal(run.code, 2, run.out);
     const name = file.replace(/[./]/g, '\\$&');
-    assert.match(run.out, new RegExp(`\\n- did not run: ${name}: 4 mutants not run - its control break did not run \\(the command could not start: `
-      + `${name} is no longer a plain file in the copy \\(a link now, behind one, or gone\\), and a break is never written outside the copy\\), so whether the tests run this file is not known\\n`));
+    assert.match(run.out, new RegExp(`\\n- did not run: ${name}: 4 mutants not run - its control break did not run \\(`
+      + `${name} is no longer a plain file of the copy \\(a link, behind one, or gone\\), and a break is never written outside the copy\\), so whether the tests run this file is not known\\n`));
     assert.deepEqual(run.copies, [], thing);
   }
 });
@@ -272,6 +272,10 @@ test('a file the tests make a link only after a break is in it is not put back t
   const { dir, outside } = linkedAway(t, 'late');
   const run = mutate(t, dir);
   assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, run.out);
+  // The tests of that run loaded the file outside, not the break: no survivor.
+  assert.match(run.out, /\nMutants: 4 tried - 0 killed, 0 survived, 4 did not run\n/);
+  assert.match(run.out, /stopped being a plain file of the copy during the run \(a link, behind one, or gone\), so the tests may not have run the break/);
+  assert.equal(run.code, 2, run.out);
   assert.deepEqual(fs.readdirSync(outside), ['cart.js']);
   assert.deepEqual(run.copies, []);
 });

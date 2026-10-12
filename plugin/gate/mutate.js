@@ -428,17 +428,22 @@ async function run(argv) {
   // Each run with a break: the time the estimate gives it, within the time left.
   const runSeconds = () => Math.min(estimated.perRun, timeLeft());
   // One file broken, the tests run, the file back as it was: the run. Never through a link: a file the
-  // tests made a link, put behind one or removed is not broken (its run did not start), nor put back.
+  // tests made a link, put behind one or removed is not broken, nor put back, and a run during which it
+  // became one tells nothing (the tests may have loaded a file that is not the broken one); refused:
+  // why such a run did not run.
   const runBroken = async (file, source, edit, seconds) => {
+    const refused = (why) => ({ command: choice.command, source: choice.source, timeoutSeconds: seconds, exitCode: null, output: '', refused: why });
     if (!writeInCopy(file, apply(source, edit))) {
-      return { command: choice.command, source: choice.source, timeoutSeconds: seconds, exitCode: null, output: '',
-        startError: `${file} is no longer a plain file in the copy (a link now, behind one, or gone), and a break is never written outside the copy` };
+      return refused(`${file} is no longer a plain file of the copy (a link, behind one, or gone), and a break is never written outside the copy`);
     }
+    let run;
+    let back = false;
     try {
-      return await runIn(seconds);
+      run = await runIn(seconds);
     } finally {
-      writeInCopy(file, source);
+      back = writeInCopy(file, source);
     }
+    return back ? run : refused(`${file} stopped being a plain file of the copy during the run (a link, behind one, or gone), so the tests may not have run the break`);
   };
   const named = (file) => path.relative(project, path.join(home, file));
   // The control breaks, before the breaks: each file with a break chosen fails as soon as it runs.
@@ -455,8 +460,8 @@ async function run(argv) {
     const { text, kind } = files.find((f) => f.file === file);
     const run = await runBroken(file, text, controlBreak(text, kind, python.controls && python.controls[file]), seconds);
     const count = chosen.filter((m) => m.file === file).length;
-    if (run.timedOut || run.startError) {
-      unrun.set(file, { file: named(file), count, outcome: 'did not run', why: `its control break did not run (${verdict(run).why}), so whether the tests run this file is not known` });
+    if (run.timedOut || run.startError || run.refused) {
+      unrun.set(file, { file: named(file), count, outcome: 'did not run', why: `its control break did not run (${run.refused || verdict(run).why}), so whether the tests run this file is not known` });
     } else if (verdict(run).outcome === 'passed') unrun.set(file, { file: named(file), count, outcome: 'not exercised', why: NOT_EXERCISED });
     else exercised.add(file);
   }
@@ -477,7 +482,8 @@ async function run(argv) {
       continue;
     }
     const source = files.find((f) => f.file === mutant.file).text;
-    const result = verdict(await runBroken(mutant.file, source, mutant, seconds));
+    const run = await runBroken(mutant.file, source, mutant, seconds);
+    const result = run.refused ? { outcome: 'did not run', why: run.refused } : verdict(run);
     outcomes.set(mutant, {
       file: named(mutant.file), op: mutant.op, ...describe(source, mutant),
       outcome: OUTCOMES[result.outcome], why: result.outcome === 'did not run' ? result.why : '',
