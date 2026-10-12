@@ -111,6 +111,10 @@ test('the repository holds exactly one skill file: the plugin loads plugin/skill
   const { status, stderr, files } = gitFiles();
   assert.equal(status, 0, stderr);
   assert.deepEqual(files.filter((file) => path.posix.basename(file).toLowerCase() === 'skill.md'), ['plugin/skills/greenwashing/SKILL.md']);
+  // A link to a folder could bring a skill in a second time: there is none.
+  const linked = files.filter((file) => fs.lstatSync(path.join(ROOT, file), { throwIfNoEntry: false })?.isSymbolicLink()
+    && fs.statSync(path.join(ROOT, file), { throwIfNoEntry: false })?.isDirectory());
+  assert.deepEqual(linked, []);
 });
 
 // The plugin runs the gate from its own folder, this repository from plugin/ in the project.
