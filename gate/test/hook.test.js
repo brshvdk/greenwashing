@@ -23,6 +23,9 @@ const NO_CHANGES = { systemMessage: 'greenwashing: no files changed this turn - 
 const NOT_CHECKED = (why) => `greenwashing: this turn was NOT checked - ${why}, and the gate reads only the test output of pytest, unittest, jest, vitest and node --test. `
   + 'To have turns checked, a human sets {"testCommand": "<a command that runs your tests with one of them, or prints their output>"} in .greenwashing.json '
   + 'in the project root, between turns.';
+// The line of a turn in a project that had no test command when the work started and has one the gate checks now.
+const FIRST_COMMAND = (command) => 'greenwashing: this turn was NOT checked - the project had no test command when the work started. '
+  + `The next turn will be checked with ${command}.`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function tempDir(t) {
@@ -2009,20 +2012,89 @@ test('a project with no test command, or a test script of another kind, ends eac
   // Also a turn that changed nothing: the gate says it is not checking.
   gate.prompt();
   assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
-  // Tests the agent adds in the turn do not make that turn checked: the start decides.
+  // Tests the agent adds in the turn do not make that turn checked: the start decides. The line names
+  // the command the next turn is checked with.
   gate.prompt();
   write(none, { 'a.test.js': NODE_FAIL, 'package.json': '{"scripts": {"test": "node --test"}}' });
-  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
-  // From the next turn on the project has them, so the gate checks it.
+  assert.deepEqual(gate.stop().json, { systemMessage: FIRST_COMMAND('npm test (package.json scripts.test)') });
+  // From the next turn on the project has them, so the gate checks it, with that command.
   gate.prompt();
   write(none, { 'a.test.js': `${NODE_FAIL}// more\n` });
-  assert.match(gate.stop().json.reason, /the tests failed/);
+  const { reason } = gate.stop().json;
+  assert.match(reason, /the tests failed/);
+  assert.match(reason, /\nCommand: npm test \(package\.json scripts\.test\)\n/);
 
   const mocha = project(t, { 'package.json': MOCHA_PKG, 'test/cart.js': "it('adds', () => {});\n", 'cart.js': '1;\n' }, null);
   const other = session(t, mocha);
   other.prompt();
   write(mocha, { 'cart.js': '2;\n' });
   assert.deepEqual(other.stop().json, { systemMessage: NOT_CHECKED('the test command npm test runs "mocha"') });
+});
+
+test('a turn that adds a test command the gate cannot check, or that started with one of another kind, keeps the line that says how to set testCommand', (t) => {
+  // No test command at the start, and a mocha script added: the next turn is not checked either.
+  const none = project(t, { 'main.go': 'package main\n' }, null);
+  const gate = session(t, none);
+  gate.prompt();
+  write(none, { 'package.json': MOCHA_PKG, 'test/a.js': "it('a', () => {});\n" });
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+  // A mocha script at the start, swapped for node --test: the project had a test command when the turn started.
+  const mocha = project(t, { 'package.json': MOCHA_PKG, 'cart.js': '1;\n' }, null);
+  const other = session(t, mocha);
+  other.prompt();
+  write(mocha, { 'package.json': '{"scripts": {"test": "node --test"}}', 'a.test.js': NODE_PASS });
+  assert.deepEqual(other.stop().json, { systemMessage: NOT_CHECKED('the test command npm test runs "mocha"') });
+});
+
+test('outside git too, a turn that adds the first test command is not checked, and its line names the command the next turn is checked with', (t) => {
+  const dir = tempDir(t);
+  write(dir, { 'main.go': 'package main\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  write(dir, { 'test_a.py': PY_FAIL });
+  assert.deepEqual(gate.stop().json, { systemMessage: FIRST_COMMAND('python3 -m unittest discover (Python project)') });
+  gate.prompt();
+  const { reason } = gate.stop().json;
+  assert.match(reason, /the tests failed/);
+  assert.match(reason, /\nCommand: python3 -m unittest discover \(Python project\)\n/);
+});
+
+test('a project the gate cannot check whose folder is gone at the Stop ends the turn with the line that says why, as before', (t) => {
+  const dir = tempDir(t);
+  write(dir, { 'main.go': 'package main\n' });
+  const gate = session(t, dir);
+  gate.prompt();
+  const moved = `${dir}-moved`;
+  fs.renameSync(dir, moved);
+  t.after(() => fs.rmSync(moved, { recursive: true, force: true }));
+  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+});
+
+test('a test command added only in another worktree is not the project\'s: the line says why the project is not checked', (t) => {
+  const dir = project(t, { 'main.go': 'package main\n', '.gitignore': '.claude/worktrees/\n' }, null);
+  const gate = session(t, dir);
+  gate.prompt();
+  const tree = path.join(dir, '.claude', 'worktrees', 'feat');
+  git(dir, 'worktree', 'add', '-q', tree, '-b', 'feat');
+  write(tree, { 'package.json': '{"scripts": {"test": "node --test"}}', 'a.test.js': NODE_PASS });
+  assert.deepEqual(gate.stop(false, tree).json, { systemMessage: NOT_CHECKED('no test command was found') });
+});
+
+test('in a project in a folder of its repository, the line names the command found in the project\'s folder', (t) => {
+  // A test script added in the project's folder: the repository's root has none.
+  const repo = project(t, { 'app/main.go': 'package main\n' }, null);
+  const app = path.join(repo, 'app');
+  const gate = session(t, app);
+  gate.prompt();
+  write(app, { 'package.json': '{"scripts": {"test": "node --test"}}', 'a.test.js': NODE_PASS });
+  assert.deepEqual(gate.stop().json, { systemMessage: FIRST_COMMAND('npm test (package.json scripts.test)') });
+  // Python tests added there: unittest.
+  const python = project(t, { 'app/main.go': 'package main\n' }, null);
+  const pythonApp = path.join(python, 'app');
+  const other = session(t, pythonApp);
+  other.prompt();
+  write(pythonApp, { 'test_a.py': PY_PASS });
+  assert.deepEqual(other.stop().json, { systemMessage: FIRST_COMMAND('python3 -m unittest discover (Python project)') });
 });
 
 test('a test script that runs one of the five kinds through another script is checked; emptied or removed by the agent it is did not run', (t) => {
@@ -2448,10 +2520,11 @@ test('a project the gate cannot check is decided again only after a turn the gat
   const dir = project(t, { 'main.go': 'package main\n' }, null);
   const gate = session(t, dir);
   gate.prompt();
-  // Cut off before its Stop: tests and a test script added; the next turn is still not checked.
+  // Cut off before its Stop: tests and a test script added; the next turn is still not checked, and its
+  // line names the command the turn after it is checked with.
   write(dir, { 'package.json': '{"scripts": {"test": "node --test --test-reporter=tap"}}', 't.test.js': NODE_FAIL });
   gate.prompt();
-  assert.deepEqual(gate.stop().json, { systemMessage: NOT_CHECKED('no test command was found') });
+  assert.deepEqual(gate.stop().json, { systemMessage: FIRST_COMMAND('npm test (package.json scripts.test)') });
   // Let end: the next turn is checked.
   gate.prompt();
   write(dir, { 'main.go': 'package main\n\nfunc main() {}\n' });

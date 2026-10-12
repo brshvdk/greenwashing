@@ -81,6 +81,7 @@ Each of these has a fake in the bench and is counted in the numbers above as not
 - **Other agents:** the skill only.
 - **Tests:** JavaScript, TypeScript and Python projects whose tests run with pytest, unittest, jest, vitest or `node --test`.
 - **Node 20+** on PATH: the gate and the mutation check are Node scripts.
+- **Windows:** checked live with Git Bash: the install from this README, the gate and the mutation check. CI runs on Linux; PowerShell without Git Bash has not been checked.
 - **A git repository:** outside git the gate cannot tell what a turn changed, so it runs the tests at every stop, skips the checks of changed test lines and does not block a turn that changes its settings.
 - **Other projects:** the gate ends each turn with one line saying the turn was not checked, and lets the agent finish.
 - **Your own test command:** the gate picks `npm test`, pytest or unittest by itself. When your tests run another way, set `testCommand` in `.greenwashing.json` to a command that runs them with one of these runners.
@@ -94,6 +95,8 @@ A test can run, pass and still not notice when the code is wrong. The mutation c
 ```
 
 It runs your tests once for each break, so with a big test suite it is slow. Right after the first run it says how many breaks fit in the time it has, and with which `--timeout` all of them would run.
+
+It compares your change with the main branch (`main` or `master`, your own or on `origin`), so that branch needs at least one commit. Without one, it says it did not run because no main branch was found, and asks you to give one with `--base`.
 
 ## How it works
 
@@ -134,6 +137,8 @@ In Claude Code:
 /plugin uninstall greenwashing@greenwashing
 /plugin marketplace remove greenwashing
 ```
+
+If you installed the plugin for one repository only, uninstall it in a terminal in that repository, with the same scope: `claude plugin uninstall greenwashing@greenwashing --scope local` (or `--scope project`).
 
 Other agents: `npx skills remove greenwashing`.
 

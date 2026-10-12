@@ -2,7 +2,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  chooseCommand, readConfig, support, isPythonTest, ROOT_FILES, CHECKS, MUTANT_LIMITS,
+  chooseCommand, readConfig, support, notChecked, isPythonTest, ROOT_FILES, CHECKS, MUTANT_LIMITS,
 } = require('../lib/command');
 
 // Every root file the rules look at is absent unless the case names it.
@@ -229,6 +229,26 @@ test('the gate checks a project whose test command is one of the five kinds, or 
   // A broken setup: checked, and did not run.
   assert.deepEqual(support(files({ 'package.json': '{' }), false), { supported: true, runners: null });
   assert.deepEqual(support(files({ 'package.json': '{"scripts": {"test": "mocha"}}' }), true), { supported: true, runners: null });
+});
+
+test('the line of a turn the gate did not check names the next turn\'s command only when the project had none and has one the gate checks now', () => {
+  const none = 'no test command was found';
+  const first = (command) => 'greenwashing: this turn was NOT checked - the project had no test command when the work started. '
+    + `The next turn will be checked with ${command}.`;
+  // The line that says how to set testCommand.
+  const assertUnchecked = (line, why) => assert.ok(line.startsWith(`greenwashing: this turn was NOT checked - ${why}, and the gate reads only the test `
+    + 'output of pytest, unittest, jest, vitest and node --test. To have turns checked, a human sets {"testCommand"'), line);
+  assert.equal(notChecked(none, files({ 'package.json': '{"scripts": {"test": "vitest run"}}' }), false), first('npm test (package.json scripts.test)'));
+  assert.equal(notChecked(none, files({ 'pytest.ini': '' }), false), first('python3 -m pytest (pytest configured)'));
+  assert.equal(notChecked(none, files(), true), first('python3 -m unittest discover (Python project)'));
+  // Still none, a script of another kind, or a broken setup: the line says how to set testCommand.
+  for (const [present, hasTests] of [[{}, false], [{ 'package.json': '{"scripts": {"test": "mocha"}}' }, false], [{ 'package.json': '{' }, false],
+    [{ 'package.json': '{"scripts": {"test": "jest"}}' }, true]]) {
+    assertUnchecked(notChecked(none, files(present), hasTests), none);
+  }
+  // A project that started with a test command of another kind had one: its line stays.
+  const mocha = 'the test command npm test runs "mocha"';
+  assertUnchecked(notChecked(mocha, files({ 'package.json': '{"scripts": {"test": "jest"}}' }), false), mocha);
 });
 
 test('support() reads a runner only as a word of its own and follows every form of a script call; a BOM or scripts: null in package.json', () => {

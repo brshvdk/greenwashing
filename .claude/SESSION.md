@@ -1,17 +1,22 @@
 # SESSION
 
 ## Current step
-Step 1, PR 10 - README and demo: on `claude/eloquent-lovelace-in9flj` (from main at c6e216e), PR open. The architect's review (guarded files checked by diff, README accepted) and the owner's "Install" heading go in one more push; next: CI on that head, then the owner's merge. Safety net is red by design: the PR changes guarded files (CLAUDE.md, `.github/workflows/ci.yml`, `tests/test_ci_steps.py`).
+Step closed: English only and the findings of a live check on Windows, one PR from `claude/relaxed-maxwell-tgc64t` (from main at 084ee40). Next: CI on the PR's head and the owner's merge. Safety net is red by design: the PR changes guarded files (CLAUDE.md, `tests/test_leak_check.py`).
 
 ## Progress
-- [x] Part 1: PR 15 closed (CI green on 39f748c, merged as c6e216e); tests for the two breaks that survived PR 9's self-run (each red with its break); the owner's two CLAUDE.md lines; CONTRIBUTING and the bug report; the column "Gate + mutation check" (results.json keys unchanged, numbers the same on Node 20.20.2, 22.23.3 and 24.21.0).
-- [x] Part 2: the scene from a live run of Claude Code 2.1.286 (a local stand-in for the Messages API, no model, a terminal 100 columns wide); README with the owner's texts 1-6 word for word and the architect's two later lines (GW-74 tested on data that hides it; no Go among the unchecked projects); `bench/run` writes `replies.json` (ignored by git); `bench/readme` and the CI step "README check"; `docs/configuration.md`; the term and the scene's frame in `docs/limitations.md`; the map. Install and uninstall commands checked live from a local clone, against code.claude.com and the `skills` 1.7.0 README (skills.sh is blocked here).
-- [x] Checks: a review and two mutation waves on 3d1d2bc and 983c2b7, a fresh review on 241f8c3 (a lone CR hid the scene's reply), each in its own worktree and each finding reproduced before the fix; this repository's gate blocked one turn (helpers it could not read as assertions, tests renamed while rewritten), fixed; my last sweep of `bench/readme`: 66 mutants, 63 killed, 3 equivalent in outcome; every ci.yml step as GitHub runs it on fresh clones; the README check proven both ways through its CI step.
-- [x] CI on 9f92840: leak-check, checks and node 20.20.2, 22.23.3, 24.21.0 green; Safety net red by design (the three guarded files).
-- [x] Review round: the architect's git line in "Where it works", "mutation check" in `bench/README.md`, the owner's "Install" heading. No restart line under the install block: in live runs of Claude Code 2.1.287 (a fresh session, and one with a turn behind it) `/plugin install` printed "Plugin is now active." and the gate blocked the next turn; code.claude.com (discover-plugins) says that summary needs no reload.
-- [ ] CI on the new head, the owner's merge.
+- [x] No Cyrillic in tracked files: `tests/test_leak_check.py` writes its Cyrillic data as `\u` escapes (same values at run time); `tests/test_english_only.py` (paths and lines of `git ls-files`, links as git stores them, images skipped and counted by the leak check's own rule); CLAUDE.md line 5. Leak check tests proven not weaker by breaking UTF-8 in `scripts/leak-check` (old and new test files red on the same tests).
+- [x] The gate's line on a turn that added the first test command: "... had no test command when the work started. The next turn will be checked with <command> (<source>)." (`notChecked()`, `uncheckedLine()`).
+- [x] A test of `core.quotepath=off` in the leak check (red without the option, live).
+- [x] README: Uninstall with `--scope` (run in that repository), what the mutation check compares with, Windows with Git Bash.
+- [x] Checks: own mutation waves, a fresh-context review of three reviewers (each finding reproduced before its fix), every ci.yml step run as written on fresh clones on Node 20.20.2, 22.23.3 and 24.21.0; a final fresh-context review before the PR.
+- [ ] CI on the PR's head; the owner's merge.
+
+## Next
+- Separate task (owner): `gate/mutate.js` stops with "refs/remotes/origin/master is not a commit" when origin/HEAD points at a pruned branch, without the `--base` hint.
 
 ## Decisions made (and why)
+- English-only step, chosen here: the new line only for a turn whose project had no test command when the work started (`why` is `NO_TEST_COMMAND`) and has one the gate checks at the Stop, chosen by `support()` and `chooseCommand()` in the project's folder with the turn's settings, as the next prompt decides; a project folder gone at the Stop keeps the old line, as before. The owner accepted (with the diff) that a broken setup at the Stop and a project that started with a script of another kind keep the old line, and chose "when the work started" (right also after a turn cut off before its Stop).
+- English-only step, owner: `tests/test_english_only.py` fails on a tracked file that is not UTF-8, except an image by `scripts/leak-check`'s rule (an image name and an image's bytes; PNG, JPEG, GIF, WebP and ICO), which it skips and counts; the test loads the script for `is_image()` and `is_real_image()`, so the two checks share one rule.
 - PR 10, chosen here: the gate's replies of a bench run go to `replies.json`, not into `results.json` (its keys stay, the owner's rule) and not committed (a reply can end in the tests' output with their timings, so it differs run to run); CI's "README check" reads the three files of the run "Bench numbers" just made, in the same job.
 - PR 10, chosen here: the scene is compared word for word with whitespace squashed (Claude Code wraps lines to the terminal; its frame is another program's output, in `docs/limitations.md`); a table cell is a whole line of the reply without one leading `- ` or `Result: `; the README's cases are fixed in `bench/readme` (`SCENE`, `ROWS`); besides what the owner listed, the check refuses any other digit in the README (only `GW-NN` and `Node <MIN_NODE>+`) and checks that every `GW-NN` outside code links to its heading's anchor (the owner's text rules "no numbers outside the bench" and "GW-NN as links", made checkable).
 - PR 10 second wave, chosen here: the README check does not model GitHub's Markdown; it refuses what it cannot read (HTML, fences other than a bare ```, indented lines, a `|` outside its tables, a title twice), like the catalog checker's conservative markup rule. Numbers in words stay a limit (`docs/limitations.md`).
@@ -92,10 +97,9 @@ Step 1, PR 10 - README and demo: on `claude/eloquent-lovelace-in9flj` (from main
 - CI steps are tested under `bash -e` - what GitHub runs for a step without `shell:` (the CI log shows `shell: /usr/bin/bash -e {0}`); the first version assumed pipefail and piped into `tee`, which hid failing tests.
 - The safety net runs as `python3 -I` (workflow and shebang) - not in the owner's list, but a merged `scripts/json.py` turned it into a permanent fake pass (proven by runs); same technique as item 1.
 
-## Where we stopped
-PR 10: the review round (the architect's decisions, the "Install" heading) pushed in one push with the PR's "What remains"; next: CI on that head, then the owner's merge.
-
 ## Known issues / traps
+- Open, owner decision (English-only step, live run): after the turn that adds the first test command, a turn with no prompt of the user (a background task) is not checked either and repeats "The next turn will be checked with ...": support is decided only at a prompt. The next prompted turn is checked with that command.
+- Unit tests in a session: put CI's ruff 0.15.8 first on PATH (a venv in the scratchpad); with the preinstalled ruff 0.16.8, `test_ci_steps` LintStepTest fails on its changed output (seen on main at 084ee40).
 - Tests in this repository: a helper that asserts must be named `assert...` or `expect...`, or the repository's own gate reads its tests as having no assertion (GW-18) and blocks the turn; a test renamed and rewritten in the same turn reads as removed (GW-17): keep its name while its body changes.
 - This repository's `.greenwashing.json` runs the Python tests and `gate/test/*.test.js`, not `bench/test/*.test.js`: the gate on this repository does not run the benchmark's tests at a Stop (CI does). The file is guarded; the owner decides.
 - Adding or changing a benchmark case: keep every stored file `<name>.txt`, run `node bench/run` on Node 20, 22 and 24 (`/opt/node20/bin` and `/opt/node22/bin` in this environment; Node 24 from the nodejs.org tarball, checked against its SHASUMS256.txt) and commit `bench/RESULTS.md` and `bench/results.json`, or CI "Bench numbers" goes red.

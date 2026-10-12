@@ -27,6 +27,8 @@ const MUTANT_MAX = 86400;
 // reports; a project turns one off with "checks": {"skips": false}.
 const CHECKS = { skips: 'GW-17', assertions: 'GW-18', selfComparisons: 'GW-01' };
 const CHECK_NAMES = Object.keys(CHECKS);
+// Why the gate cannot check a project with no test command (support()).
+const NO_TEST_COMMAND = 'no test command was found';
 // Said to the agent too, which must not change the settings during a turn (GW-114).
 const HOW_TO = `a human adds {"testCommand": "<the command that runs your tests>"} to ${CONFIG_FILE} in the project root, between turns`;
 // How to make the Python checks run when python3 cannot read the project's syntax, or is missing.
@@ -180,7 +182,7 @@ function packageScripts(text) {
 // kinds the command runs, null when it names none) or {supported: false, why}.
 function support(files, hasPythonTests) {
   const choice = chooseCommand(files, hasPythonTests);
-  if (choice.none) return { supported: false, why: 'no test command was found' };
+  if (choice.none) return { supported: false, why: NO_TEST_COMMAND };
   const scripts = files['package.json'] === null ? {} : packageScripts(files['package.json']);
   const named = (found) => ({ supported: true, runners: found.length ? found : null });
   if (choice.error) return named([]);
@@ -191,10 +193,21 @@ function support(files, hasPythonTests) {
   return found.length ? named(found) : { supported: false, why: `the test command npm test runs ${JSON.stringify(scripts.test)}` };
 }
 
-// The line of a turn in a project the gate cannot check.
-const notChecked = (why) => `greenwashing: this turn was NOT checked - ${why}, and the gate reads only the test output of ${RUNNER_NAMES}. `
-  + `To have turns checked, a human sets {"testCommand": "<a command that runs your tests with one of them, or prints their output>"} in ${CONFIG_FILE} `
-  + 'in the project root, between turns.';
+// The line of a turn in a project the gate cannot check: why, from support() when the work started;
+// files and hasPythonTests, the project when the turn ends (as support() takes them; none when it cannot
+// be read). A project that had no test command then and has one the gate checks now is still not checked
+// in this turn (the agent cannot give itself the command it is checked with), and the prompt decides
+// again after a turn the gate let end: the line names the command the next turn is checked with.
+function notChecked(why, files, hasPythonTests) {
+  const next = why === NO_TEST_COMMAND && files && support(files, hasPythonTests).supported ? chooseCommand(files, hasPythonTests) : {};
+  if (next.command) {
+    return 'greenwashing: this turn was NOT checked - the project had no test command when the work started. '
+      + `The next turn will be checked with ${next.command} (${next.source}).`;
+  }
+  return `greenwashing: this turn was NOT checked - ${why}, and the gate reads only the test output of ${RUNNER_NAMES}. `
+    + `To have turns checked, a human sets {"testCommand": "<a command that runs your tests with one of them, or prints their output>"} in ${CONFIG_FILE} `
+    + 'in the project root, between turns.';
+}
 
 module.exports = {
   chooseCommand, readConfig, support, notChecked, pytestConfigured, pythonOf, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS,
