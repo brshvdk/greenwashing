@@ -1575,6 +1575,25 @@ test("a link put in the state file's place just after the gate checked it is not
   assert.equal(fs.readFileSync(`${forged}.swapped`, 'utf8'), 'x');
 });
 
+test('the new file the state is written to is made, never opened: a link at its name is not written through', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  const [name] = fs.readdirSync(stateDir(gate));
+  // The hook draws the same bytes for the new file's name every time, and a link is already there.
+  const preload = path.join(tempDir(t), 'same-name.js');
+  fs.writeFileSync(preload, "require('node:crypto').randomBytes = (size) => Buffer.alloc(size, 0x61);\n");
+  const outside = tempDir(t);
+  const victim = path.join(outside, 'victim.txt');
+  fs.writeFileSync(victim, 'untouched\n');
+  fs.symlinkSync(victim, path.join(stateDir(gate), `${name}.6161616161616161.tmp`));
+  const same = session(t, dir, { tmp: gate.tmp, env: { NODE_OPTIONS: `--require ${preload}` } });
+  const prompt = same.prompt();
+  assert.deepEqual([prompt.code, prompt.stdout], [0, '']);
+  assert.match(prompt.stderr, /could not record the start of the turn: EEXIST/);
+  assert.equal(fs.readFileSync(victim, 'utf8'), 'untouched\n');
+});
+
 test("a pipe in the state file's place does not hold the hook: it is replaced by the state", (t) => {
   const dir = project(t, { 't.test.js': NODE_PASS });
   const gate = session(t, dir);

@@ -293,6 +293,24 @@ test('a link put where a break goes just after the command checked the file is n
   assert.deepEqual(run.copies, []);
 });
 
+test('a file already in the copy when the command copies one there is not written over: a link there is not followed', (t) => {
+  const { dir, outside } = linkedAway(t, 'file');
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  git(dir, 'commit', '-qam', 'no swap');
+  // Just before cart.js is copied, a link to the outside file is put where the copy goes.
+  const preload = path.join(tempDir(t), 'link-before-copy.js');
+  fs.writeFileSync(preload, "const fs = require('node:fs');\nconst os = require('node:os');\nconst path = require('node:path');\nconst lstat = fs.lstatSync;\n"
+    + 'fs.lstatSync = (at, ...rest) => {\n  const stat = lstat(at, ...rest);\n'
+    + "  if (at === path.join(process.env.GW_HOME, 'cart.js')) {\n"
+    + "    for (const name of fs.readdirSync(os.tmpdir()).filter((one) => one.startsWith('greenwashing-mutants-'))) {\n"
+    + "      const to = path.join(os.tmpdir(), name, 'cart.js');\n      if (!fs.existsSync(to)) fs.symlinkSync(process.env.GW_OUTSIDE, to);\n    }\n  }\n  return stat;\n};\n");
+  const run = mutate(t, dir, [], tempDir(t), { NODE_OPTIONS: `--require ${preload}`, GW_HOME: fs.realpathSync(dir), GW_OUTSIDE: path.join(outside, 'cart.js') });
+  assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, run.out);
+  assert.match(run.out, /\nControl: .* on the unchanged copy: passed/);
+  assert.equal(run.code, 2, run.out);
+  assert.deepEqual(run.copies, []);
+});
+
 test('the copy is made without writing through a link: a folder the working tree has as a link, its files still in the index', (t) => {
   const base = tempDir(t);
   const dir = project(t, { 'lib/x.js': 'module.exports = 1;\n', 'lib/node_modules/dep/index.js': 'module.exports = 1;\n', 'app.js': 'module.exports = (a) => a;\n', 'x.test.js': APP_TEST },
