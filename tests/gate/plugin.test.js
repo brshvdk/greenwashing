@@ -60,6 +60,52 @@ test('the marketplace has one plugin, greenwashing, whose root is the folder plu
   assert.equal(readJson('plugin/.claude-plugin/plugin.json').name, 'greenwashing');
 });
 
+// The plugin directory shows a card from plugin.json. A link of it: the value of homepage, repository, bugs
+// or a key ending in url (any case), and a link inside any other text as GitHub finds one there (a scheme and
+// ://, or www.; the punctuation that ends a sentence left out). Returns [key, link].
+function linksIn(value, key = '') {
+  if (typeof value === 'string') {
+    if (/^(?:homepage|repository|bugs)$|url$/i.test(key)) return [[key, value]];
+    return [...value.matchAll(/(?:[a-z][\w+.-]*:\/\/|www\.)\S*/gi)].map((m) => [key, m[0].replace(/[.,:;!?'")\]}*_~]+$/, '')]);
+  }
+  if (value === null || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([name, item]) => linksIn(item, Array.isArray(value) ? key : name));
+}
+// A link into this repository on GitHub, read as a browser reads it (a .. resolved), with no port or user name.
+function leadsHere(link) {
+  if (!URL.canParse(link)) return false;
+  const url = new URL(link);
+  return url.origin === 'https://github.com' && !url.username && !url.password && /^\/brshvdk\/greenwashing(?:\/|$)/.test(url.pathname);
+}
+
+test("the marketplace's entry of the plugin has the description of the plugin's manifest", () => {
+  const { description } = readJson('plugin/.claude-plugin/plugin.json');
+  assert.equal(typeof description, 'string');
+  assert.notEqual(description.trim(), '');
+  const entries = readJson('.claude-plugin/marketplace.json').plugins.filter(({ source }) => source === './plugin');
+  assert.deepEqual(entries.map((entry) => entry.description), [description]);
+});
+
+test("every link of the plugin's card leads into this repository on GitHub", () => {
+  const links = linksIn(readJson('plugin/.claude-plugin/plugin.json'));
+  assert.ok(links.length > 0, 'plugin.json has no link');
+  assert.deepEqual(links.filter(([, link]) => !leadsHere(link)), []);
+});
+
+test("the privacy policy the card links is a file of this repository's main branch", () => {
+  const { privacyPolicyUrl } = readJson('plugin/.claude-plugin/plugin.json');
+  assert.equal(typeof privacyPolicyUrl, 'string');
+  const url = new URL(privacyPolicyUrl);
+  // GitHub shows a file of the branch main at blob/main/<its path>.
+  const shown = `${url.origin}${url.pathname}`.match(/^https:\/\/github\.com\/brshvdk\/greenwashing\/blob\/main\/(.+)$/);
+  assert.ok(shown, `${privacyPolicyUrl} shows no file of the branch main`);
+  const file = decodeURIComponent(shown[1]);
+  const { status, stderr, files } = gitFiles(file);
+  assert.equal(status, 0, stderr);
+  assert.deepEqual(files, [file]);
+  assert.ok(fs.lstatSync(path.join(ROOT, file)).isFile(), `${file} is no plain file`);
+});
+
 test('the plugin folder holds only what works for the user: the manifest and icon, the hooks, the command, the skill, the gate, LICENSE, README.md', () => {
   const { status, stderr, files } = gitFiles('plugin');
   assert.equal(status, 0, stderr);

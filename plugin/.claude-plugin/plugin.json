@@ -1,8 +1,15 @@
 {
   "name": "greenwashing",
-  "description": "A gate that runs your tests when the agent changed code and blocks the end of the turn unless they passed, a command that breaks the changed code to show what the tests miss, and a skill for reporting done with evidence.",
+  "displayName": "greenwashing",
+  "description": "A Claude Code plugin that won't take \"done\" for an answer until the tests really pass. It runs them itself and catches tests that were deleted, skipped or made to check nothing.",
   "author": {
     "name": "brshvdk"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "keywords": ["testing", "test-quality", "mutation-testing", "reward-hacking", "coding-agents", "ai-agents", "code-quality", "quality-gate"],
+  "homepage": "https://github.com/brshvdk/greenwashing",
+  "repository": "https://github.com/brshvdk/greenwashing",
+  "documentationUrl": "https://github.com/brshvdk/greenwashing#readme",
+  "supportUrl": "https://github.com/brshvdk/greenwashing/issues",
+  "privacyPolicyUrl": "https://github.com/brshvdk/greenwashing/blob/main/PRIVACY.md"
 }

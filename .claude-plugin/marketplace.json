@@ -8,7 +8,7 @@
     {
       "name": "greenwashing",
       "source": "./plugin",
-      "description": "A gate that runs your tests when the agent changed code and blocks the end of the turn unless they passed, a command that breaks the changed code to show what the tests miss, and a skill for reporting done with evidence."
+      "description": "A Claude Code plugin that won't take \"done\" for an answer until the tests really pass. It runs them itself and catches tests that were deleted, skipped or made to check nothing."
     }
   ]
 }
