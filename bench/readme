@@ -12,7 +12,9 @@
 //   the numbers  - the summary table of the run's RESULTS.md stands in "Numbers" as it is;
 //   other digits - no other number in the README, apart from catalog entries (GW-NN, their links), the
 //                  oldest Node the gate runs on (MIN_NODE) and FRAME;
-//   images       - none but BADGE;
+//   images       - none but BADGE and the banner: BANNER alone on a line, once, its alt text holding the
+//                  first line of the run's reply on SCENE (spaces and line ends squashed, as in the scene;
+//                  the digits of that line are the run's);
 //   the links    - every GW-NN outside code is a link to its entry's heading in CATALOG.md.
 // Markdown the check cannot read the way GitHub shows it is refused, not guessed at: HTML and its
 // entities, a code fence other than a bare ```, an indented line (code to GitHub), a | outside the tables
@@ -47,8 +49,10 @@ const FRAME = '● Ran 1 stop hook';
 const LABEL = 'Stop hook error: ';
 // The "Plain test run" cell for each tests-only outcome.
 const PLAIN = { green: '✅ green', red: '❌ red' };
-// The one image: the license badge, linked to the license.
+// The images: the license badge, linked to the license, and the banner, with its alt text. An alt text
+// with a bracket or a backslash is refused: GitHub can read the line as text and a link, not the image.
 const BADGE = '[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)';
+const BANNER = /^!\[([^[\]\\]*)\]\(docs\/banner\.png\)$/;
 
 // Spaces, tabs and line ends as one space: where lines wrap is the frame's.
 const squash = (text) => text.replace(/[ \t\r\n]+/g, ' ').trim();
@@ -179,6 +183,19 @@ function check(readme, run, catalog, minNode = MIN_NODE) {
     }
   }
 
+  // The banner: the picture of the social preview, whose alt text holds the gate's first line on SCENE.
+  const banners = [...lines.entries()].filter(([i, line]) => !inBlock(i) && BANNER.test(line.trim()));
+  const first = reply(SCENE) === null ? '' : squash(reply(SCENE).split('\n')[0]);
+  if (banners.length !== 1) problems.push(`the banner: ${banners.length} lines of their own hold ![...](docs/banner.png), not 1`);
+  else if (!first) notRun.push(`the banner: this run has no first line of the gate's reply on ${SCENE}`);
+  else {
+    const [i, line] = banners[0];
+    if (!squash(line.trim().match(BANNER)[1]).includes(first)) {
+      problems.push(`line ${i + 1}: the banner's alt text does not hold the first line of the gate's reply on ${SCENE} in this run: ${JSON.stringify(first)}`);
+    } else decided.set(i, squash(line).replace(first, ''));
+    checked.push('the banner');
+  }
+
   // The table of what else it catches.
   const table = tablesIn('What else it catches');
   if (!sections['What else it catches']) problems.push('the table: no section "## What else it catches"');
@@ -243,7 +260,9 @@ function check(readme, run, catalog, minNode = MIN_NODE) {
   for (const [i, line] of lines.entries()) {
     if (numberIn(decided.has(i) ? decided.get(i) : line, minNode)) problems.push(`line ${i + 1}: a number no bench run gives: ${line.trim()}`);
     if (inBlock(i)) continue;
-    if (line.includes('![') && line.trim() !== BADGE) problems.push(`line ${i + 1}: an image other than the license badge: ${line.trim()}`);
+    if (line.includes('![') && line.trim() !== BADGE && !BANNER.test(line.trim())) {
+      problems.push(`line ${i + 1}: an image other than the license badge and the banner (docs/banner.png): ${line.trim()}`);
+    }
     for (const m of line.matchAll(GW_LINK)) {
       links += 1;
       const heading = headings.get(m[1]);

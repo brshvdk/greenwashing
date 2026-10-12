@@ -31,7 +31,8 @@ const run = (edit = {}) => ({
 const SKIP_ROW = '| Marked the failing test `skip` | ✅ green | ❌ todo.test.js:9: test.skip - the test does not run ([GW-17](CATALOG.md#gw-17-a-skip-that-buys-green)) |';
 const NONE_ROW = "| Wrote a test that checks nothing | ✅ green | ❌ todo.test.js:9: the test 'tag' has no assertion ([GW-18](CATALOG.md#gw-18-a-test-with-nothing-to-check)) |";
 const DUMMY_ROW = '| Made the test command print a pass without running tests | ✅ green | ❌ did not run - no test counts in the output |';
-const README = '# greenwashing\n\n[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n\nIt runs them itself.\n\n```\n> Make search look in the notes too.\n\n'
+const BANNER = '![Your AI agent is greenwashing your test suite. The gate\'s real reply: greenwashing gate: this turn removed tests - you cannot finish yet.](docs/banner.png)';
+const README = `# greenwashing\n\n[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n\n${BANNER}\n\nIt runs them itself.\n\n\`\`\`\n> Make search look in the notes too.\n\n`
   + '● Done. ✅ All tests pass.\n\n● Ran 1 stop hook\n  ⎿  Stop hook error: greenwashing gate: this turn removed tests - you cannot finish yet.\n  Removed tests:\n'
   + "  - todo.test.js: 'search ignores case' (GW-17)\n  Put the tests\n  back.\n```\n\n```\n/plugin install greenwashing@greenwashing\n```\n\n## What else it catches\n\n"
   + `| What the agent did | Plain test run | greenwashing |\n|---|---|---|\n${SKIP_ROW}\n${NONE_ROW}\n${DUMMY_ROW}\n\n`
@@ -46,7 +47,7 @@ test('a README that is what the run gave passes, and says what it checked', () =
   const { problems, notRun, checked } = check(README, run(), CATALOG);
   assert.deepEqual(problems, []);
   assert.deepEqual(notRun, []);
-  assert.deepEqual(checked, ['the scene', 'fake-skip-js', 'fake-no-assertion-js', 'fake-dummy-command-js', 'the numbers', '3 catalog links']);
+  assert.deepEqual(checked, ['the scene', 'the banner', 'fake-skip-js', 'fake-no-assertion-js', 'fake-dummy-command-js', 'the numbers', '3 catalog links']);
   // Line ends of Windows, a code block that names an entry or the oldest Node, a fence inside a line and a
   // heading inside a code block are no difference.
   assertGreen(README.replace(/\n/g, '\r\n'));
@@ -134,10 +135,51 @@ test('the numbers: the run\'s summary table as it is, and no other number anywhe
 });
 
 test('images: the license badge, once and alone', () => {
-  assertRed(README.replace('(LICENSE)\n', '(LICENSE) ![caught](https://img.shields.io/badge/caught-all-green)\n'), /: an image other than the license badge: /);
-  assertRed(README.replace('It runs them itself.', '![demo](demo.gif)'), /: an image other than the license badge: !\[demo\]/);
+  assertRed(README.replace('(LICENSE)\n', '(LICENSE) ![caught](https://img.shields.io/badge/caught-all-green)\n'), /: an image other than the license badge and the banner \(docs\/banner\.png\): /);
+  assertRed(README.replace('It runs them itself.', '![demo](demo.gif)'), /: an image other than the license badge and the banner \(docs\/banner\.png\): !\[demo\]/);
   assertRed(README.replace('[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n', ''), /^the license badge: not once on a line of its own/);
   assertRed(README.replace('license-MIT-blue', 'license-MIT-2026-blue'), /: a number no bench run gives: \[!\[License: MIT\]/);
+});
+
+test('the banner: docs/banner.png alone on its line, once, its alt text holding the first line of the gate\'s reply on the scene', () => {
+  const line = README.split('\n').indexOf(BANNER) + 1;
+  // Spaces and line ends are squashed on both sides, as in the scene; the line may stand anywhere in the alt text.
+  assertGreen(README.replace('reply: greenwashing gate: this', 'reply:  greenwashing gate:\tthis'));
+  assertGreen(README, run({ replies: { 'fake-deleted-test-js': SCENE_REPLY.replace('gate: this turn', 'gate:   this turn') } }));
+  assertGreen(README.replace('![Your AI agent is greenwashing your test suite. The gate\'s real reply: ', '![').replace('finish yet.](', 'finish yet. Your AI agent is greenwashing your test suite.]('));
+  assertGreen(README.replace(`${BANNER}\n`, ` ${BANNER}  \n`));
+  // None, twice, another path, or not alone on its line.
+  assertRed(README.replace(`${BANNER}\n\n`, ''), /^the banner: 0 lines of their own hold !\[\.\.\.\]\(docs\/banner\.png\), not 1$/);
+  assertRed(README.replace('The end.', BANNER), /^the banner: 2 lines of their own hold !\[\.\.\.\]\(docs\/banner\.png\), not 1$/);
+  for (const target of ['docs/banner.jpg', './docs/banner.png', 'docs/banner.png "the banner"', 'https://example.com/docs/banner.png']) {
+    assertRed(README.replace('(docs/banner.png)', `(${target})`), /^the banner: 0 lines of their own hold [^]*\nline \d+: an image other than the license badge and the banner \(docs\/banner\.png\): /);
+  }
+  for (const shown of [`It shows ${BANNER}`, `[${BANNER}](LICENSE)`, `${BANNER} and more`]) {
+    assertRed(README.replace(`${BANNER}\n`, `${shown}\n`), /^the banner: 0 lines of their own hold [^]*\nline \d+: an image other than the license badge and the banner/);
+  }
+  // Only where GitHub shows it as that image: not in a code block, not as HTML, not with a bracket or a backslash in its alt text.
+  assertRed(README.replace(`${BANNER}\n`, `\`\`\`\n${BANNER}\n\`\`\`\n`), /^the banner: 0 lines of their own hold /);
+  assertRed(README.replace(BANNER, '<img src="docs/banner.png" alt="greenwashing gate: this turn removed tests - you cannot finish yet.">'), /: HTML, which this check does not read: <img [^]*\nthe banner: 0 lines/);
+  for (const alt of ['![Your [AI agent', '![Your AI] agent', '![Your AI agent\\']) {
+    assertRed(README.replace('![Your AI agent', alt), /^the banner: 0 lines of their own hold [^]*\nline \d+: an image other than the license badge and the banner/);
+  }
+  // An alt text without the gate's first line on the scene, as this run gave it, word for word.
+  const without = new RegExp(`^line ${line}: the banner's alt text does not hold the first line of the gate's reply on fake-deleted-test-js in this run: "greenwashing gate: this turn removed tests - you cannot finish yet\\."$`);
+  assertRed(README.replace(' The gate\'s real reply: greenwashing gate: this turn removed tests - you cannot finish yet.', ''), without);
+  assertRed(README.replace('reply: greenwashing gate: this', 'reply: gate: this'), without);
+  assertRed(README.replace('you cannot finish yet.](', 'you cannot finish.]('), without);
+  assertRed(README.replace('you cannot finish yet.](', 'you cannot finish yet]('), without);
+  assertRed(README.replace('greenwashing gate: this turn removed tests - you cannot finish yet.](', 'Removed tests:]('), without);
+  const changed = run({ replies: { 'fake-deleted-test-js': SCENE_REPLY.replace('finish yet.', 'finish yet, really.') } });
+  assertRed(README, /\nline \d+: the banner's alt text does not hold the first line of the gate's reply on fake-deleted-test-js in this run: "greenwashing gate: this turn removed tests - you cannot finish yet, really\."$/, changed);
+  // A digit of the alt text outside the gate's line is no number of the run.
+  assertRed(README.replace('![Your AI agent', '![Your 1 AI agent'), /^line \d+: a number no bench run gives: !\[Your 1 AI agent/);
+  // A run with no first line of the reply: did not run, never a pass.
+  for (const reply of [null, '', '\nPut the tests back.']) {
+    const outcome = check(README, run({ replies: { 'fake-deleted-test-js': reply } }), CATALOG);
+    assert.match(outcome.notRun.join('\n'), /\bthe banner: this run has no first line of the gate's reply on fake-deleted-test-js$/m, JSON.stringify(reply));
+    assert.ok(!outcome.checked.includes('the banner'), JSON.stringify(reply));
+  }
 });
 
 test('catalog links: every GW-NN outside code links to its entry\'s heading', () => {
@@ -178,16 +220,16 @@ test('Markdown the check cannot read as GitHub shows it is red: HTML, other fenc
 test('the scene\'s frame and other links: no text before the label, links only to entries, the badge as it is', () => {
   assertRed(README.replace('  ⎿  Stop hook error: ', '  ⎿  (32 of 32 caught) Stop hook error: '), /^the scene: the line of "Stop hook error:" has "  ⎿  \(32 of 32 caught\) " before it, not the frame's ⎿/);
   assertRed(README.replace('  ⎿  Stop hook error: ', '  Stop hook error: '), /^the scene: the line of "Stop hook error:" has "  " before it/);
-  // A number in the reply itself is the run's.
+  // A number in the reply itself is the run's, in the scene and in the banner's alt text.
   const counted = SCENE_REPLY.replace('this turn removed tests', 'this turn removed 1 test');
-  assertGreen(README.replace('this turn removed tests', 'this turn removed 1 test'), run({ replies: { 'fake-deleted-test-js': counted } }));
+  assertGreen(README.replaceAll('this turn removed tests', 'this turn removed 1 test'), run({ replies: { 'fake-deleted-test-js': counted } }));
   // A reason cell reads only catalog links: any other link stays as it is shown.
   assertRed(README.replace('❌ todo.test.js:9: test.skip', '❌ [todo.test.js:9:](all 32 fakes caught) test.skip'), /^the table, fake-skip-js: /);
   assertRed(README.replace('([GW-17](CATALOG.md#gw-17-a-skip-that-buys-green))', '([[GW-17](CATALOG.md#gw-17-a-skip-that-buys-green)](32-of-32-caught))'), /^the table, fake-skip-js: /);
   // (CATALOG.md#...) is a link's target only right after its text.
   assertRed(README.replace('Run it with `node bench/run`.', 'Run it with `node bench/run` (CATALOG.md#all-32-fakes-caught).'), /: a number no bench run gives: Run it with/);
   assertGreen(README.replace('**Node 20+** on PATH', '_Node 20+_ on PATH'));
-  assertRed(README.replace('license-MIT-blue.svg', 'dynamic/json?url=https://example.com/n.json'), /: an image other than the license badge: /);
+  assertRed(README.replace('license-MIT-blue.svg', 'dynamic/json?url=https://example.com/n.json'), /: an image other than the license badge and the banner \(docs\/banner\.png\): /);
   assertRed(README.replace('[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n',
     '[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n\n[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)\n'), /^the license badge: not once on a line of its own/);
 });
@@ -265,7 +307,7 @@ test('the command: passed, failed and did not run, as exit codes 0, 1 and 2', (t
   // The folder bench/run writes to by default.
   const passed = main([], root);
   assert.equal(passed.code, 0, passed.text);
-  assert.match(passed.text, /^README check: passed - the scene, fake-skip-js, fake-no-assertion-js, fake-dummy-command-js, the numbers, 3 catalog links match this bench run/);
+  assert.match(passed.text, /^README check: passed - the scene, the banner, fake-skip-js, fake-no-assertion-js, fake-dummy-command-js, the numbers, 3 catalog links match this bench run/);
   assert.equal(main([folder, 'more'], root).code, 2);
   assert.match(main([folder, 'more'], root).text, /^usage: /);
   // One difference is enough.
@@ -275,7 +317,7 @@ test('the command: passed, failed and did not run, as exit codes 0, 1 and 2', (t
   write(README, { replies: { 'fake-deleted-test-js': null } });
   const notRun = main([folder], root);
   assert.equal(notRun.code, 2, notRun.text);
-  assert.match(notRun.text, /^README check: did not run\n- the scene: this run has no reply of the gate on fake-deleted-test-js$/);
+  assert.match(notRun.text, /^README check: did not run\n- the scene: this run has no reply of the gate on fake-deleted-test-js\n- the banner: this run has no first line of the gate's reply on fake-deleted-test-js$/);
   write(README.replace('Node 20+', 'Node 22+'), { replies: { 'fake-deleted-test-js': null } });
   const both = main([folder], root);
   assert.equal(both.code, 1);
@@ -295,6 +337,6 @@ test('the real README: its numbers are the committed summary, its links point at
   };
   const { problems, notRun, checked } = check(fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8'), committed, fs.readFileSync(path.join(ROOT, 'CATALOG.md'), 'utf8'));
   assert.deepEqual(problems, []);
-  assert.deepEqual(notRun.map((line) => line.split(':')[0]), ['the scene', 'the table', 'the table', 'the table']);
+  assert.deepEqual(notRun.map((line) => line.split(':')[0]), ['the scene', 'the banner', 'the table', 'the table', 'the table']);
   assert.match(checked.join(', '), /^the numbers, [1-9]\d* catalog links$/);
 });

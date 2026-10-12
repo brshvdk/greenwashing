@@ -2,7 +2,7 @@
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**Your AI agent is greenwashing your test suite.**
+![Your AI agent is greenwashing your test suite. A Claude Code plugin that won't take "done" for an answer until the tests really pass. Under the scraped green paint, the gate's real reply: greenwashing gate: this turn removed tests - you cannot finish yet.](docs/banner.png)
 
 greenwashing is a Claude Code plugin that won't take "done" for an answer until the tests really pass. It runs them itself and catches tests that were deleted, skipped or made to check nothing.
 
