@@ -3,8 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   checkJs, jsTests, removedTests, carries, collectedBy, testFileKind, mask,
-} = require('../lib/checks');
-const { lineChanges } = require('../lib/diff');
+} = require('../../plugin/gate/lib/checks');
+const { lineChanges } = require('../../plugin/gate/lib/diff');
 
 const ALL = { skips: true, assertions: true, selfComparisons: true };
 const brief = (findings) => findings.map(({ line, gw }) => [line, gw]);
@@ -360,12 +360,14 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
-const { CHECKS } = require('../lib/command');
+const { CHECKS } = require('../../plugin/gate/lib/command');
+
+const GATE = path.join(__dirname, '..', '..', 'plugin', 'gate');
 
 function python(before, after, checks = ALL) {
   const { added, gaps } = lineChanges(before, after);
   const request = { files: [{ file: 'test_x.py', text: after, before, added: [...added], gaps: [...gaps], checks }], entries: CHECKS };
-  const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], { input: JSON.stringify(request), encoding: 'utf8' });
+  const run = spawnSync('python3', ['-I', path.join(GATE, 'lib', 'python_checks.py')], { input: JSON.stringify(request), encoding: 'utf8' });
   assert.equal(run.status, 0, run.stderr);
   const out = JSON.parse(run.stdout);
   return out.errors.length ? out.errors : out.findings.map(({ line, gw }) => [line, gw]);
@@ -554,7 +556,7 @@ test('Python GW-17: a class or module that a condition on CI skips never runs un
   // The finding says why.
   const mark0 = '@pytest.mark.skipif(os.getenv("CI"), reason="x")';
   const request = { files: [{ file: 'test_x.py', text: cls(mark0, two), before: cls(mark0, ''), ...(() => { const c = lineChanges(cls(mark0, ''), cls(mark0, two)); return { added: [...c.added], gaps: [...c.gaps] }; })(), checks: ALL }], entries: CHECKS };
-  const out = JSON.parse(spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], { input: JSON.stringify(request), encoding: 'utf8' }).stdout);
+  const out = JSON.parse(spawnSync('python3', ['-I', path.join(GATE, 'lib', 'python_checks.py')], { input: JSON.stringify(request), encoding: 'utf8' }).stdout);
   assert.equal(out.findings[0].what, 'a test inside a class marked pytest.mark.skipif on CI - whether it runs depends on CI (the gate runs the tests with CI=true)');
   const honest = {
     '@pytest.mark.skipif(sys.platform == "win32", reason="flaky on CI")': '', '@pytest.mark.skipif(sys.version_info < (3, 12), reason="x")': '',
@@ -585,13 +587,13 @@ test('Python edges: markers and messages, an old comment, removed lines above a 
   assert.deepEqual(python(`import os\n${bare}`, bare), []);
   const comment = 'def test_a():\n    assert f()\n\n# def test_old():\n';
   assert.deepEqual(python(comment, `${comment}\n\ndef test_b():\n    assert g()\n`), []);
-  const words = (source) => JSON.parse(spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+  const words = (source) => JSON.parse(spawnSync('python3', ['-I', path.join(GATE, 'lib', 'python_checks.py')], {
     input: JSON.stringify({ files: [{ file: 't.py', text: source, added: [...lineChanges(null, source).added], gaps: [], checks: ALL }], entries: CHECKS }),
     encoding: 'utf8',
   }).stdout).findings.map((f) => f.what);
   assert.deepEqual(words('import pytest\n\n\n@pytest.mark.xfail\ndef test_a():\n    assert f()\n'), ['pytest.mark.xfail - the test passes when it fails']);
   assert.deepEqual(words('import pytest\n\n\n@pytest.mark.skip\ndef test_a():\n    assert f()\n'), ['pytest.mark.skip - the test does not run']);
-  const inside = (before, after) => JSON.parse(spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+  const inside = (before, after) => JSON.parse(spawnSync('python3', ['-I', path.join(GATE, 'lib', 'python_checks.py')], {
     input: JSON.stringify({ files: [{ file: 't.py', text: after, added: [...lineChanges(before, after).added], gaps: [], checks: ALL }], entries: CHECKS }),
     encoding: 'utf8',
   }).stdout).findings.map((f) => f.what);
@@ -799,7 +801,7 @@ test('removedTests: each test left over now stands for one removed test, and quo
 
 test('python_checks.py lists the tests of a text with their classes; a start text Python cannot read has none', () => {
   const list = (items) => {
-    const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+    const run = spawnSync('python3', ['-I', path.join(GATE, 'lib', 'python_checks.py')], {
       input: JSON.stringify({ files: [], list: items, entries: CHECKS }), encoding: 'utf8',
     });
     assert.equal(run.status, 0, run.stderr);
@@ -824,7 +826,7 @@ test('python_checks.py lists the tests of a text with their classes; a start tex
   assert.notEqual(fixtures[0].body, fixtures[1].body);
   // A file both checked and listed that Python cannot read is named once; a start text Python
   // refuses (a NUL byte) has no tests.
-  const both = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+  const both = spawnSync('python3', ['-I', path.join(GATE, 'lib', 'python_checks.py')], {
     input: JSON.stringify({ files: [{ file: 'test_d.py', text: 'def test_(:\n', added: [1], gaps: [], checks: ALL }], list: [{ key: 'd', file: 'test_d.py', text: 'def test_(:\n', start: false }], entries: CHECKS }),
     encoding: 'utf8',
   });
@@ -836,7 +838,7 @@ test('python_checks.py lists the tests of a text with their classes; a start tex
 
 test('python_checks.py lists a test only under the name Python keeps, and without the self of a method in its body', () => {
   const list = (text) => {
-    const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+    const run = spawnSync('python3', ['-I', path.join(GATE, 'lib', 'python_checks.py')], {
       input: JSON.stringify({ files: [], list: [{ key: 'k', file: 'test_k.py', text, start: false }], entries: CHECKS }), encoding: 'utf8',
     });
     assert.equal(run.status, 0, run.stderr);
@@ -897,7 +899,7 @@ test('python_checks.py lists a test only under the name Python keeps, and withou
 });
 
 test('python_checks.py: a class of any name whose bases reach TestCase, directly or through a class of its file, runs the tests it inherits', () => {
-  const run = spawnSync('python3', ['-I', path.join(__dirname, '..', 'lib', 'python_checks.py')], {
+  const run = spawnSync('python3', ['-I', path.join(GATE, 'lib', 'python_checks.py')], {
     input: JSON.stringify({ files: [], list: [{ key: 'k', file: 'test_k.py', start: false,
       text: 'import unittest\n\n\nclass Cases:\n    def test_a(self):\n        assert f()\n\n\n'
         + 'class StoreCases(Cases, unittest.TestCase):\n    pass\n\n\nclass MemoryStore(StoreCases):\n    pass\n' }], entries: CHECKS }),

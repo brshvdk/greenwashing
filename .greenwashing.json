@@ -1,3 +1,3 @@
 {
-  "testCommand": "python3 -I -m unittest discover -s tests && node --test --test-reporter=tap gate/test/*.test.js"
+  "testCommand": "python3 -I -m unittest discover -s tests && node --test --test-reporter=tap tests/gate/*.test.js"
 }

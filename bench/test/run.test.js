@@ -9,7 +9,7 @@ const path = require('node:path');
 const {
   main, readCases, catalogEntries, gateOutcome, mutantsOutcome, summarize, render, verdictOf, CASES,
 } = require('../run');
-const { testFileKind } = require('../../gate/lib/checks');
+const { testFileKind } = require('../../plugin/gate/lib/checks');
 
 const ENTRIES = catalogEntries(fs.readFileSync(path.join(__dirname, '..', '..', 'CATALOG.md'), 'utf8'));
 

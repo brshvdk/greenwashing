@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { parseSummaries, failedTests } = require('../lib/parse');
+const { parseSummaries, failedTests } = require('../../plugin/gate/lib/parse');
 
 const fixture = (name) => fs.readFileSync(path.join(__dirname, 'fixtures', `${name}.txt`), 'utf8');
 const counts = (list) => list.map(({ runner, passed, failed, skipped, brokenFiles, errors }) => [runner, passed, failed, skipped, brokenFiles, errors]);

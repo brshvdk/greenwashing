@@ -3,7 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
   chooseCommand, readConfig, support, notChecked, isPythonTest, ROOT_FILES, CHECKS, MUTANT_LIMITS,
-} = require('../lib/command');
+} = require('../../plugin/gate/lib/command');
 
 // Every root file the rules look at is absent unless the case names it.
 const files = (present = {}) => ({ ...Object.fromEntries(ROOT_FILES.map((name) => [name, null])), ...present });
@@ -223,7 +223,7 @@ test('the gate checks a project whose test command is one of the five kinds, or 
   // Set by a human: whatever it is, with the runners it names, also through npm test and the scripts after it.
   const human = (command, pkg = null) => support(files({ '.greenwashing.json': JSON.stringify({ testCommand: command }), 'package.json': pkg }), false);
   assert.deepEqual(human('go test ./...', '{"scripts": {"test": "mocha"}}'), { supported: true, runners: null });
-  assert.deepEqual(human('python3 -I -m unittest discover -s tests && node --test gate/test/*.test.js'), { supported: true, runners: ['unittest', 'node --test'] });
+  assert.deepEqual(human('python3 -I -m unittest discover -s tests && node --test tests/gate/*.test.js'), { supported: true, runners: ['unittest', 'node --test'] });
   assert.deepEqual(human('npm test', '{"scripts": {"test": "npm run unit", "unit": "vitest"}}'), { supported: true, runners: ['vitest'] });
   assert.deepEqual(human('npm t', '{'), { supported: true, runners: null });
   // A broken setup: checked, and did not run.

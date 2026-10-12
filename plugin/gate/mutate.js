@@ -111,15 +111,17 @@ function commitOf(root, name) {
 // repository's main branch (origin/HEAD, else the first of MAIN_BRANCHES that exists).
 function baseOf(home, given) {
   let name = given;
+  let origin = false;
   if (!name) {
     try {
       name = git(home, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']).toString('utf8').trim();
+      origin = true;
     } catch {
       name = MAIN_BRANCHES.find((branch) => commitOf(home, branch));
     }
   }
   if (!name) return { error: `no main branch found (${MAIN_BRANCHES.join(', ')}); give one with --base` };
-  if (!commitOf(home, name)) return { error: `${name} is not a commit` };
+  if (!commitOf(home, name)) return { error: origin ? `${name} is not a commit (origin/HEAD points at it); give one with --base` : `${name} is not a commit` };
   if (!commitOf(home, 'HEAD')) return { error: 'the repository has no commit yet' };
   try {
     const commit = git(home, ['merge-base', name, 'HEAD']).toString('utf8').trim();

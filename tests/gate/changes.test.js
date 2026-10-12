@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { isDocumentation, candidatePaths, changedPaths, classify } = require('../lib/changes');
+const { isDocumentation, candidatePaths, changedPaths, classify } = require('../../plugin/gate/lib/changes');
 
 test('documentation is told by the file extension, in any case', () => {
   for (const file of ['README.md', 'docs/guide.MD', 'index.rst', 'manual.adoc', 'a/b.markdown']) {

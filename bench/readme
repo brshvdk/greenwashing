@@ -14,7 +14,7 @@
 //                  oldest Node the gate runs on (MIN_NODE) and FRAME;
 //   images       - none but BADGE and the banner: BANNER alone on a line, once, its alt text holding the
 //                  first line of the run's reply on SCENE (spaces and line ends squashed, as in the scene;
-//                  the digits of that line are the run's);
+//                  the digits of that line are the run's), and BANNER_PATH a file in the repository;
 //   the links    - every GW-NN outside code is a link to its entry's heading in CATALOG.md.
 // Markdown the check cannot read the way GitHub shows it is refused, not guessed at: HTML and its
 // entities, a code fence other than a bare ```, an indented line (code to GitHub), a | outside the tables
@@ -31,7 +31,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
-const { MIN_NODE } = require('../gate/lib/command');
+const { MIN_NODE } = require('../plugin/gate/lib/command');
 
 const ROOT = path.resolve(__dirname, '..');
 // The case whose gate reply the README's scene shows, and the rows of its table, in order: each case
@@ -123,8 +123,8 @@ function firstDifference(a, b) {
 }
 
 // The checks: {problems, notRun, checked}. run: {resultsMd, results, replies} of one bench run; minNode:
-// the oldest Node the README may name.
-function check(readme, run, catalog, minNode = MIN_NODE) {
+// the oldest Node the README may name; root: the repository the README's banner is read from.
+function check(readme, run, catalog, minNode = MIN_NODE, root = ROOT) {
   const problems = [];
   const notRun = [];
   const checked = [];
@@ -151,7 +151,7 @@ function check(readme, run, catalog, minNode = MIN_NODE) {
     if (odd) problems.push(`line ${i + 1}: U+${odd[0].codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}, a character that is no plain space or does not show`);
     if (/^ {0,3}(?:`{3,}|~{3,})/.test(line) && line !== '```') problems.push(`line ${i + 1}: a code fence other than a bare \`\`\`: ${line.trim()}`);
     if (inBlock(i)) continue;
-    if (/<(?:!--|\/?[A-Za-z])/.test(outsideCode(line))) problems.push(`line ${i + 1}: HTML, which this check does not read: ${line.trim()}`);
+    if (/<(?:[!?]|\/?[A-Za-z])/.test(outsideCode(line))) problems.push(`line ${i + 1}: HTML, which this check does not read: ${line.trim()}`);
     if (/&(?:#[0-9]+|#[xX][0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]*);/.test(outsideCode(line))) problems.push(`line ${i + 1}: an HTML entity, which this check does not read: ${line.trim()}`);
     if (/^ {1,3}#{1,6}(?:[ \t]|$)|^#{1,6}\t/.test(line)) problems.push(`line ${i + 1}: a heading this check does not read: ${line.trim()}`);
     if (!inTable(i) && /^ {0,3}(?:=+|-+|(?:-[ \t]*){3,}|(?:\*[ \t]*){3,}|(?:_[ \t]*){3,})[ \t]*$/.test(line)) {
@@ -188,6 +188,13 @@ function check(readme, run, catalog, minNode = MIN_NODE) {
   // The banner: the picture of the social preview, whose alt text holds the gate's first line on SCENE.
   const banners = [...lines.entries()].filter(([i, line]) => !inBlock(i) && BANNER.test(line.trim()));
   const first = reply(SCENE) === null ? '' : squash(reply(SCENE).split('\n')[0]);
+  let picture = false;
+  try {
+    picture = fs.statSync(path.join(root, BANNER_PATH)).isFile();
+  } catch {
+    // Said below: no such file.
+  }
+  if (!picture) problems.push(`the banner: ${BANNER_PATH} is not a file in the repository`);
   if (banners.length !== 1) {
     const at = banners.map(([i]) => i + 1).join(', ');
     problems.push(`the banner: ${banners.length} lines outside code hold only ![alt text](${BANNER_PATH}) with no [, ] or \\ in the alt text, not 1${at ? ` (lines ${at})` : ''}`);
@@ -302,7 +309,7 @@ function main(argv, root = ROOT) {
   }
   let outcome;
   try {
-    outcome = check(readme, run, catalog);
+    outcome = check(readme, run, catalog, MIN_NODE, root);
   } catch (error) {
     // A run whose files hold something else than bench/run writes.
     return { code: 2, text: `README check: did not run - the run's files cannot be read as bench/run writes them: ${error.message}` };

@@ -208,6 +208,26 @@ test('the banner: docs/banner.png alone on its line, once, its alt text holding 
   assert.deepEqual(problemsOf(counted, noReply), []);
 });
 
+test('the banner\'s picture: a file at docs/banner.png in the repository read, with or without a reply in the run', (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'gw-banner-'));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const missing = 'the banner: docs/banner.png is not a file in the repository';
+  assert.deepEqual(check(README, run(), CATALOG, undefined, repo).problems, [missing]);
+  assert.deepEqual(check(README, run({ replies: { 'fake-deleted-test-js': null } }), CATALOG, undefined, repo).problems, [missing]);
+  // Said also when the README's banner line is wrong: each difference is printed.
+  assert.deepEqual(check(README.replace(`${BANNER}\n\n`, ''), run(), CATALOG, undefined, repo).problems,
+    [missing, 'the banner: 0 lines outside code hold only ![alt text](docs/banner.png) with no [, ] or \\ in the alt text, not 1']);
+  // A folder or a device of that name is no file.
+  fs.mkdirSync(path.join(repo, 'docs', 'banner.png'), { recursive: true });
+  assert.deepEqual(check(README, run(), CATALOG, undefined, repo).problems, [missing]);
+  fs.rmdirSync(path.join(repo, 'docs', 'banner.png'));
+  fs.symlinkSync('/dev/null', path.join(repo, 'docs', 'banner.png'));
+  assert.deepEqual(check(README, run(), CATALOG, undefined, repo).problems, [missing]);
+  fs.unlinkSync(path.join(repo, 'docs', 'banner.png'));
+  fs.writeFileSync(path.join(repo, 'docs', 'banner.png'), 'png');
+  assert.deepEqual(check(README, run(), CATALOG, undefined, repo).problems, []);
+});
+
 test('catalog links: every GW-NN outside code links to its entry\'s heading', () => {
   assertRed(README.replace('#gw-01-self-referential-assertion', '#gw-01-self-referential'), /^line \d+: GW-01 links to CATALOG\.md#gw-01-self-referential, not CATALOG\.md#gw-01-self-referential-assertion/);
   assertRed(README.replace('(CATALOG.md#gw-01-self-referential-assertion)', '(README.md#gw-01-self-referential-assertion)'), /\bline \d+: GW-01 links to README\.md#/);
@@ -221,6 +241,18 @@ test('catalog links: every GW-NN outside code links to its entry\'s heading', ()
   assert.equal(slug('GW-41 The expected_value fitted'), 'gw-41-the-expected_value-fitted');
 });
 
+test('HTML blocks that start with <? or <! and a letter are HTML too: a fence inside two of them hides nothing', () => {
+  // CommonMark's HTML blocks of types 3 to 5: to GitHub each ends at its own close, so a fence inside two of them
+  // is no code block and what lies between them shows - an image, a second banner.
+  for (const [open, close] of [['<?php', '?>'], ['<?', '?>'], ['<!DOCTYPE html', '>'], ['<!x', '>'], ['<![CDATA[', ']]>']]) {
+    const between = (shown) => README.replace('It runs them itself.', `${open}\n\`\`\`\n${close}\n${shown}\n${open}\n\`\`\`\n${close}`);
+    const html = new RegExp(`^line \\d+: HTML, which this check does not read: ${open.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm');
+    assertRed(between('![demo](demo.gif)'), html);
+    assertRed(between(BANNER), html);
+    assertRed(README.replace('It runs them itself.', `It runs ${open} x ${close} them itself.`), /: HTML, which this check does not read: It runs </);
+  }
+});
+
 test('Markdown the check cannot read as GitHub shows it is red: HTML, other fences, indented lines, a | outside the tables, a section twice', () => {
   const close = "  back.\n```\n";
   assertRed(README.replace(close, `${close}<!-- -->\n`), /: HTML, which this check does not read: <!-- -->/);
@@ -228,6 +260,10 @@ test('Markdown the check cannot read as GitHub shows it is red: HTML, other fenc
   assertRed(README.replace('**Node 20+** on PATH.', '<img src="numbers.png"> **Node 20+** on PATH.'), /: HTML, which this check does not read: /);
   assertRed(README.replace('Every fake has a twin.', '<details>\n\nEvery fake has a twin.\n\n</details>'), /: HTML, which this check does not read: <details>/);
   assertGreen(README.replace('Every fake has a twin.', 'Every fake has a twin, `<b>` in code included.'));
+  // Tag names in any case, and in a table row too; in a code block HTML is text.
+  assertRed(README.replace('It runs them itself.', 'It runs <IMG SRC="demo.gif"> them itself.'), /: HTML, which this check does not read: It runs <IMG /);
+  assertRed(README.replace('The end.', '| a | b |\n|---|---|\n| <img src="demo.gif"> | x |\n\nThe end.'), /: HTML, which this check does not read: \| <img /);
+  assertGreen(README.replace('/plugin install greenwashing@greenwashing', '<b>x</b> <?php ?> <!DOCTYPE html>\n/plugin install greenwashing@greenwashing'));
   // A line inside the scene that opens another fence, a fence of tildes, a fence with an info string.
   assertRed(README.replace(close, '  back.\n```text\n● Turn accepted.\n```\n``` ```\n'), /: a code fence other than a bare ```: ```text/);
   assertRed(README.replace('```\n/plugin install greenwashing@greenwashing\n```', '~~~\n/plugin install greenwashing@greenwashing\n~~~'), /: a code fence other than a bare ```: ~~~/);
@@ -313,6 +349,8 @@ test('the command: passed, failed and did not run, as exit codes 0, 1 and 2', (t
   const folder = path.join(root, 'bench');
   fs.mkdirSync(folder);
   fs.writeFileSync(path.join(root, 'CATALOG.md'), CATALOG);
+  fs.mkdirSync(path.join(root, 'docs'));
+  fs.writeFileSync(path.join(root, 'docs', 'banner.png'), 'png');
   const write = (readme, edit = {}, replies = null) => {
     fs.writeFileSync(path.join(root, 'README.md'), readme);
     const r = run(edit);
@@ -336,9 +374,13 @@ test('the command: passed, failed and did not run, as exit codes 0, 1 and 2', (t
   assert.match(passed.text, /^README check: passed - the scene, the banner, fake-skip-js, fake-no-assertion-js, fake-dummy-command-js, the numbers, 3 catalog links match this bench run/);
   assert.equal(main([folder, 'more'], root).code, 2);
   assert.match(main([folder, 'more'], root).text, /^usage: /);
-  // One difference is enough.
+  // One difference is enough: a number, or the banner's picture missing from the repository.
   write(README.replace('Node 20+', 'Node 22+'));
   assert.equal(main([folder], root).code, 1);
+  write(README);
+  fs.renameSync(path.join(root, 'docs', 'banner.png'), path.join(root, 'docs', 'banner.jpg'));
+  assert.deepEqual(main([folder], root), { code: 1, text: 'README check: failed - the README is not what this bench run gave\n- the banner: docs/banner.png is not a file in the repository' });
+  fs.renameSync(path.join(root, 'docs', 'banner.jpg'), path.join(root, 'docs', 'banner.png'));
   // A case with no reply did not run; with a difference too, it failed, and both are said.
   write(README, { replies: { 'fake-deleted-test-js': null } });
   const notRun = main([folder], root);

@@ -9,7 +9,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 
-const MUTATE = path.join(__dirname, '..', 'mutate.js');
+const GATE = path.join(__dirname, '..', '..', 'plugin', 'gate');
+const MUTATE = path.join(GATE, 'mutate.js');
 const NODE_CMD = 'node --test --test-reporter=tap';
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -267,7 +268,7 @@ test('a folder the tests leave read-only goes with the copy, and the report is s
   delete env.NODE_TEST_CONTEXT;
   let run;
   if (root) {
-    fs.cpSync(path.join(__dirname, '..'), path.join(base, 'gate'), { recursive: true });
+    fs.cpSync(GATE, path.join(base, 'gate'), { recursive: true });
     for (const folder of [dir, tmp]) assert.equal(spawnSync('chown', ['-R', '65534:65534', folder]).status, 0);
     run = spawnSync('setpriv', ['--reuid=65534', '--regid=65534', '--clear-groups', process.execPath, path.join(base, 'gate', 'mutate.js')], { cwd: dir, env, encoding: 'utf8' });
     assert.equal(run.error, undefined, 'setpriv is needed to run this test as root');
@@ -512,6 +513,17 @@ test('the base named as git names it: origin/main when origin/HEAD points there'
   assert.match(mutate(t, dir).out, /\(the merge base with origin\/main\), committed or not\n/);
 });
 
+test('origin/HEAD pointing at a branch that is gone: did not run, with how to give a base', (t) => {
+  const dir = project(t, { 'a.js': 'module.exports = 1;\n', 'pass.test.js': "require('node:test')('ok', () => {});\n" });
+  git(dir, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/master');
+  write(dir, { 'a.js': 'module.exports = 2;\n' });
+  const gone = mutate(t, dir);
+  assert.equal(gone.code, 2, gone.out);
+  assert.match(gone.out, /^Did not run: refs\/remotes\/origin\/master is not a commit \(origin\/HEAD points at it\); give one with --base$/m);
+  const given = mutate(t, dir, ['--base', 'main']);
+  assert.match(given.out, /\(the merge base with main\), committed or not\n/);
+});
+
 test('a Python file that starts with a byte order mark is broken in the right place', (t) => {
   const tests = 'import unittest\n\nfrom shop import LIMIT\n\n\nclass T(unittest.TestCase):\n    def test_limit(self):\n        self.assertEqual(LIMIT, 7)\n';
   const dir = project(t, { 'shop.py': '\uFEFFLIMIT = 5\n', 'test_shop.py': tests }, null);
@@ -538,7 +550,7 @@ test('did not run before any test: no main branch, a base that is no commit, an 
   git(dir, 'branch', '-m', 'main', 'trunk');
   const cases = [
     [[], /Did not run: no main branch found \(origin\/main, origin\/master, main, master\); give one with --base/],
-    [['--base', 'nope'], /Did not run: nope is not a commit/],
+    [['--base', 'nope'], /^Did not run: nope is not a commit$/m],
     [['--limit', '0'], /^--limit takes a whole number from 1 to 86400\nusage: /],
     [['--frobnicate', '1'], /^unknown or incomplete option --frobnicate\nusage: /],
     [['--base'], /^unknown or incomplete option --base\nusage: /],
