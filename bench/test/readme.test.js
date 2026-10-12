@@ -191,9 +191,12 @@ test('the banner: docs/banner.png alone on its line, once, its alt text holding 
   assertGreen(counted.replace('reply: greenwashing gate: this', 'reply: greenwashing gate:  this'), countedRun);
   assertGreen(counted.replace('finish yet.](', 'finish yet. Again: greenwashing gate: this turn removed 1 test - you cannot finish yet.]('), countedRun);
   assertRed(README.replace('![Your AI agent', '![Your 1 AI agent'), /^line \d+: a number no bench run gives: !\[Your 1 AI agent/);
-  // Digits on both sides of the gate's line stay apart: no catalog entry or oldest Node is made of them.
-  assertRed(README.replace('reply: greenwashing gate:', 'reply: GW-greenwashing gate:').replace('finish yet.](', 'finish yet.17]('), /^line \d+: a number no bench run gives: /);
-  assertRed(README.replace('reply: greenwashing gate:', 'reply: Node 2greenwashing gate:').replace('finish yet.](', 'finish yet.0+]('), /^line \d+: a number no bench run gives: /);
+  // Text on both sides of the gate's line stays apart: no catalog entry or oldest Node is made of it, and one next to the line stays one.
+  const around = (before, after) => README.replace('reply: greenwashing gate:', `reply: ${before}greenwashing gate:`).replace('finish yet.](', `finish yet.${after}](`);
+  for (const [before, after] of [['GW-', '17'], ['GW', '17'], ['Node 2', '0+'], ['Node', '20+']]) {
+    assertRed(around(before, after), /^line \d+: a number no bench run gives: /);
+  }
+  assertGreen(around('', 'Node 20+'));
   // An alt text without the gate's line has all its digits read.
   assertRed(README.replace('![Your AI agent', '![Your 1 AI agent').replace('reply: greenwashing gate: this', 'reply: gate: this'), /^line \d+: the banner's alt text does not hold [^]*\nline \d+: a number no bench run gives: !\[Your 1 AI agent/);
   // A run with no first line of the reply: did not run, never a pass, and the alt text's digits did not run either.
