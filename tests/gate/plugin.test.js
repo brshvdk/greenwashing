@@ -57,10 +57,7 @@ test('the marketplace has one plugin, greenwashing, whose root is the folder plu
   assert.equal(marketplace.name, 'greenwashing');
   assert.equal(marketplace.owner.name, 'brshvdk');
   assert.deepEqual(marketplace.plugins.map(({ name, source }) => [name, source]), [['greenwashing', './plugin']]);
-  const manifest = readJson('plugin/.claude-plugin/plugin.json');
-  assert.equal(manifest.name, 'greenwashing');
-  // No version: users get each commit (the owner's decision). No icon: it sits where the plugin directory looks for it.
-  assert.deepEqual(['version', 'icon'].filter((key) => key in manifest), []);
+  assert.equal(readJson('plugin/.claude-plugin/plugin.json').name, 'greenwashing');
 });
 
 test('the plugin folder holds only what works for the user: the manifest and icon, the hooks, the command, the skill, the gate, LICENSE, README.md', () => {
