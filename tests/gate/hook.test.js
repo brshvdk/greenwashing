@@ -1546,7 +1546,7 @@ test('a state file that is a link is not read', (t) => {
   assert.equal(gate.stop().json.decision, 'block');
 });
 
-test('when the state file cannot be written in its folder, the prompt still goes through and the stop fails loudly', (t) => {
+test('when the gate cannot keep its state, the prompt still goes through and the stop fails loudly', (t) => {
   const dir = project(t, { 'app.js': '1;\n' }, 'echo ok');
   const gate = session(t, dir);
   gate.prompt();
