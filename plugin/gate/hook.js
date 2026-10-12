@@ -99,15 +99,11 @@ function stateFile(folder, input, dir) {
   return path.join(folder, `${key.slice(0, 32)}.json`);
 }
 
-// Never read through a link: only a file of its own in the state folder is the state.
+// Never read through a link: only a file of its own in the state folder is the state (not a link, put
+// there before the check or after it, nor a pipe that would hold the hook).
 function readState(file) {
   if (!fs.lstatSync(file).isFile()) return null;
-  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-  try {
-    return fs.fstatSync(fd).isFile() ? fs.readFileSync(fd, 'utf8') : null;
-  } finally {
-    fs.closeSync(fd);
-  }
+  return fs.readFileSync(file, { encoding: 'utf8', flag: fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0) });
 }
 
 function loadState(file) {

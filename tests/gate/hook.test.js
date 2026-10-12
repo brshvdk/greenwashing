@@ -899,13 +899,20 @@ test('a temporary checkout is private to the user (0700) and runs no hook or fsm
   // Hooks of the repository and an fsmonitor that note the folder they run in.
   const ran = path.join(marks, 'hooks');
   const note = (name) => `#!/bin/sh\necho "${name} $(pwd)" >> ${JSON.stringify(ran)}\n`;
-  for (const name of ['post-checkout', 'reference-transaction', 'post-index-change']) fs.writeFileSync(path.join(dir, '.git', 'hooks', name), note(name), { mode: 0o755 });
+  // In the repository, and in a folder of the temp directory any user could make (the gate's hooks folder is in its own).
+  for (const hooks of [path.join(dir, '.git', 'hooks'), path.join(gate.tmp, 'no-hooks')]) {
+    fs.mkdirSync(hooks, { recursive: true });
+    for (const name of ['post-checkout', 'reference-transaction', 'post-index-change']) fs.writeFileSync(path.join(hooks, name), note(name), { mode: 0o755 });
+  }
   fs.writeFileSync(path.join(marks, 'fsmonitor'), `${note('fsmonitor')}exit 1\n`, { mode: 0o755 });
   git(dir, 'config', 'core.fsmonitor', path.join(marks, 'fsmonitor'));
   assert.match(gate.stop(false, dir).json.systemMessage, /^greenwashing: tests passed - .* in a temporary checkout of /);
   assert.match(fs.readFileSync(probed, 'utf8'), /^greenwashing-gate-check-\S+ 700\n$/);
-  const inCheckout = () => (fs.existsSync(ran) ? fs.readFileSync(ran, 'utf8') : '').split('\n').filter((line) => line.includes('greenwashing-gate-check-'));
+  const ranLines = () => (fs.existsSync(ran) ? fs.readFileSync(ran, 'utf8') : '').split('\n');
+  const inCheckout = () => ranLines().filter((line) => line.includes('greenwashing-gate-check-'));
   assert.deepEqual(inCheckout(), []);
+  // The gate changes no ref of the repository: a reference-transaction hook that ran was the checkout's, wherever it ran.
+  assert.deepEqual(ranLines().filter((line) => line.startsWith('reference-transaction ')), []);
   assert.deepEqual(leftovers(gate, dir), []);
   // The same hooks run in a checkout git makes in the same temp directory without the gate.
   const control = path.join(gate.tmp, 'greenwashing-gate-check-control');
@@ -1464,7 +1471,8 @@ test('a state folder another user made first is not used: the gate is OFF, says 
 });
 
 test('a state folder open to other users is not used until it is closed again', (t) => {
-  for (const mode of [0o770, 0o707]) {
+  // Each bit for the group and for others alone.
+  for (const mode of [0o740, 0o720, 0o710, 0o704, 0o702, 0o701]) {
     const dir = project(t, { 't.test.js': NODE_PASS });
     const gate = session(t, dir);
     const folder = stateDir(gate);
@@ -1544,6 +1552,55 @@ test('a state file that is a link is not read', (t) => {
   fs.symlinkSync(forged, path.join(stateDir(gate), name));
   write(dir, { 't.test.js': NODE_FAIL });
   assert.equal(gate.stop().json.decision, 'block');
+});
+
+test("a link put in the state file's place just after the gate checked it is not followed", (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  const [name] = fs.readdirSync(stateDir(gate));
+  const file = path.join(stateDir(gate), name);
+  const forged = path.join(tempDir(t), 'state.json');
+  const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fs.writeFileSync(forged, JSON.stringify({ ...state, support: { supported: false, why: 'no test command was found' } }));
+  // The hook swaps the file for a link to the forged state as soon as it has checked it, and notes that it did.
+  const preload = path.join(tempDir(t), 'swap-after-check.js');
+  fs.writeFileSync(preload, "const fs = require('node:fs');\nconst lstat = fs.lstatSync;\nfs.lstatSync = (at, ...rest) => {\n"
+    + '  const stat = lstat(at, ...rest);\n'
+    + "  if (at === process.env.GW_FILE && !stat.isSymbolicLink()) {\n    fs.unlinkSync(at);\n    fs.symlinkSync(process.env.GW_FORGED, at);\n"
+    + "    fs.appendFileSync(`${process.env.GW_FORGED}.swapped`, 'x');\n  }\n  return stat;\n};\n");
+  const raced = session(t, dir, { tmp: gate.tmp, env: { NODE_OPTIONS: `--require ${preload}`, GW_FILE: file, GW_FORGED: forged } });
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.equal(raced.stop().json.decision, 'block');
+  assert.equal(fs.readFileSync(`${forged}.swapped`, 'utf8'), 'x');
+});
+
+test("a pipe in the state file's place does not hold the hook: it is replaced by the state", (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  const [name] = fs.readdirSync(stateDir(gate));
+  const file = path.join(stateDir(gate), name);
+  for (const [event, input] of [['prompt', { session_id: 's', cwd: dir, hook_event_name: 'UserPromptSubmit', prompt: 'go' }], ['stop', gate.stopInput(false, dir)]]) {
+    fs.rmSync(file);
+    assert.equal(spawnSync('mkfifo', [file]).status, 0);
+    const run = spawnSync(process.execPath, [HOOK, event], { input: JSON.stringify(input), encoding: 'utf8', env: gate.env, timeout: 20000 });
+    assert.equal(run.status, 0, `${event}: ${run.error || run.stderr}`);
+    const stat = fs.lstatSync(file);
+    assert.deepEqual([stat.isFile(), stat.mode & 0o777], [true, 0o600], event);
+  }
+});
+
+test('new files a hook stopped half way left in the state folder do not stop it from keeping its state', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  const [name] = fs.readdirSync(stateDir(gate));
+  for (const left of [`${name}.tmp`, `${name}.0123456789abcdef.tmp`]) fs.writeFileSync(path.join(stateDir(gate), left), '{');
+  const prompt = gate.prompt();
+  assert.deepEqual([prompt.code, prompt.stderr], [0, '']);
+  // The start was recorded: with nothing changed, no test runs.
+  assert.deepEqual(gate.stop().json, NO_CHANGES);
 });
 
 test('when the gate cannot keep its state, the prompt still goes through and the stop fails loudly', (t) => {

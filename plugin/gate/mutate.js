@@ -102,19 +102,23 @@ function plainPath(rel) {
   return true;
 }
 
-// Writes a file of the copy that is there as a plain file, never through a link (rel: from the copy's
-// top). Returns false, writing nothing, when it is a link now, lies behind one, or is gone.
+// Writes a file of the copy that is there as a plain file of its own, never through a link (rel: from
+// the copy's top): not a symbolic link, put there before the check or after it, not behind one, and not
+// a hard link to a file elsewhere (the copy's files have one name). Returns false, writing nothing,
+// when it is not such a file now, or is gone.
 function writeInCopy(rel, text) {
   const target = path.join(copy, rel);
-  let stat = null;
+  let fd;
   try {
-    stat = fs.lstatSync(target);
+    if (!plainPath(rel) || !fs.lstatSync(target).isFile()) return false;
+    fd = fs.openSync(target, fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW || 0));
   } catch {
-    // Gone.
+    return false;
   }
-  if (!plainPath(rel) || !stat || !stat.isFile()) return false;
-  const fd = fs.openSync(target, fs.constants.O_WRONLY | fs.constants.O_TRUNC | (fs.constants.O_NOFOLLOW || 0));
   try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1) return false;
+    fs.ftruncateSync(fd, 0);
     fs.writeFileSync(fd, text);
   } finally {
     fs.closeSync(fd);
@@ -269,7 +273,15 @@ function makeCopy(home) {
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (stat.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), to);
     else if (stat.isDirectory()) fs.symlinkSync(from, to);
-    else if (stat.isFile()) fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
+    else if (stat.isFile()) {
+      try {
+        fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
+      } catch (error) {
+        // There already, and never written over: a name that differs only in case, on a file system
+        // that does not tell case apart, is the first one's.
+        if (error.code !== 'EEXIST') throw error;
+      }
+    }
   }
   for (const entry of nulList(git(home, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory']))) {
     const folder = entry.replace(/\/$/, '');

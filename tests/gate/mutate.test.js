@@ -48,8 +48,8 @@ function project(t, files, testCommand = NODE_CMD, dir = tempDir(t)) {
 
 // The command in dir, with its own temp folder (where its copy goes); NODE_TEST_CONTEXT is dropped,
 // or the node --test it starts refuses to run inside this one.
-function mutate(t, dir, args = [], tmp = tempDir(t)) {
-  const env = { ...process.env, TMPDIR: tmp };
+function mutate(t, dir, args = [], tmp = tempDir(t), extra = {}) {
+  const env = { ...process.env, TMPDIR: tmp, ...extra };
   delete env.NODE_TEST_CONTEXT;
   const result = spawnSync(process.execPath, [MUTATE, ...args], { cwd: dir, env, encoding: 'utf8' });
   return { code: result.status, out: result.stdout + result.stderr, tmp, copies: fs.readdirSync(tmp).filter((name) => name.startsWith('greenwashing-mutants-')) };
@@ -231,17 +231,21 @@ test('the copy is private to the user (0700) while the tests run in it', (t) => 
   for (const line of runs) assert.match(line, /^greenwashing-mutants-\S+ 700$/);
 });
 
-// A project whose tests, run in the copy, put a link where code of the change is (thing: a file or a
-// folder of the project, made a link to outside, where the same code sits with a comment more).
+// A project whose tests, run in the copy, put a link where code of the change is (thing: 'file' or
+// 'folder', a file or a folder of the project made a link to outside, where the same code sits with a
+// comment more; 'hard', the file made a hard link to that one; 'late', the file made a link only from
+// the second run on, after the first break is in it).
 function linkedAway(t, thing) {
   const outside = tempDir(t);
   const code = `${CART}${ADD}`;
-  const at = thing === 'file' ? 'cart.js' : 'lib';
-  const moved = thing === 'file' ? path.join(outside, 'cart.js') : outside;
+  const at = thing === 'folder' ? 'lib' : 'cart.js';
+  const moved = thing === 'folder' ? outside : path.join(outside, 'cart.js');
   fs.writeFileSync(path.join(outside, 'cart.js'), `${code}// outside the copy\n`);
-  const swap = `const fs = require('node:fs');\nif (!fs.lstatSync(${JSON.stringify(at)}).isSymbolicLink()) {\n`
-    + `  fs.rmSync(${JSON.stringify(at)}, { recursive: true });\n  fs.symlinkSync(process.argv[2], ${JSON.stringify(at)});\n}\n`;
-  const file = thing === 'file' ? 'cart.js' : 'lib/cart.js';
+  const runs = thing === 'late' ? "fs.appendFileSync('.runs', 'x');\nif (fs.readFileSync('.runs', 'utf8').length > 1 && " : 'if (';
+  const linked = thing === 'hard' ? 'nlink > 1' : 'isSymbolicLink()';
+  const swap = `const fs = require('node:fs');\n${runs}!(fs.lstatSync(${JSON.stringify(at)}).${linked})) {\n`
+    + `  fs.rmSync(${JSON.stringify(at)}, { recursive: true });\n  fs.${thing === 'hard' ? 'linkSync' : 'symlinkSync'}(process.argv[2], ${JSON.stringify(at)});\n}\n`;
+  const file = thing === 'folder' ? 'lib/cart.js' : 'cart.js';
   const tests = CART_TEST.replace("'./cart'", `'./${file.replace(/\.js$/, '')}'`);
   const dir = project(t, { [file]: CART, 'cart.test.js': tests, 'swap.js': swap }, `node swap.js ${JSON.stringify(moved)} && ${NODE_CMD}`);
   write(dir, { [file]: code, 'cart.test.js': `${tests}${ADDS}${STOPS}` });
@@ -249,7 +253,7 @@ function linkedAway(t, thing) {
 }
 
 test('a break is never written through a link: a code file or folder the tests made a link to outside the copy is left alone', (t) => {
-  for (const thing of ['file', 'folder']) {
+  for (const thing of ['file', 'folder', 'hard']) {
     const { dir, outside, file } = linkedAway(t, thing);
     const run = mutate(t, dir);
     assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, `${thing}\n${run.out}`);
@@ -264,12 +268,38 @@ test('a break is never written through a link: a code file or folder the tests m
 
 const APP_TEST = "const test = require('node:test');\nconst assert = require('node:assert');\nconst big = require('./app');\ntest('big', () => assert.equal(big(2), true));\n";
 
+test('a file the tests make a link only after a break is in it is not put back through the link', (t) => {
+  const { dir, outside } = linkedAway(t, 'late');
+  const run = mutate(t, dir);
+  assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, run.out);
+  assert.deepEqual(fs.readdirSync(outside), ['cart.js']);
+  assert.deepEqual(run.copies, []);
+});
+
+test('a link put where a break goes just after the command checked the file is not followed', (t) => {
+  const { dir, outside } = linkedAway(t, 'file');
+  // The tests make no link here: the command itself finds one there right after its check of the file.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  git(dir, 'commit', '-qam', 'no swap');
+  const preload = path.join(tempDir(t), 'swap-after-check.js');
+  fs.writeFileSync(preload, "const fs = require('node:fs');\nconst path = require('node:path');\nconst lstat = fs.lstatSync;\nfs.lstatSync = (at, ...rest) => {\n"
+    + '  const stat = lstat(at, ...rest);\n'
+    + "  if (path.basename(at) === 'cart.js' && path.basename(path.dirname(at)).startsWith('greenwashing-mutants-') && stat.isFile()) {\n"
+    + "    fs.unlinkSync(at);\n    fs.symlinkSync(process.env.GW_OUTSIDE, at);\n    fs.appendFileSync(`${process.env.GW_OUTSIDE}.swapped`, 'x');\n  }\n  return stat;\n};\n");
+  const run = mutate(t, dir, [], tempDir(t), { NODE_OPTIONS: `--require ${preload}`, GW_OUTSIDE: path.join(outside, 'cart.js') });
+  assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, run.out);
+  assert.equal(fs.readFileSync(path.join(outside, 'cart.js.swapped'), 'utf8'), 'x');
+  assert.equal(run.code, 2, run.out);
+  assert.deepEqual(run.copies, []);
+});
+
 test('the copy is made without writing through a link: a folder the working tree has as a link, its files still in the index', (t) => {
   const base = tempDir(t);
-  const dir = project(t, { 'lib/x.js': 'module.exports = 1;\n', 'app.js': 'module.exports = (a) => a;\n', 'x.test.js': APP_TEST }, NODE_CMD, path.join(base, 'p'));
+  const dir = project(t, { 'lib/x.js': 'module.exports = 1;\n', 'lib/node_modules/dep/index.js': 'module.exports = 1;\n', 'app.js': 'module.exports = (a) => a;\n', 'x.test.js': APP_TEST },
+    NODE_CMD, path.join(base, 'p'));
   write(dir, { 'app.js': 'module.exports = (a) => a > 1;\n' });
   // lib is now a link, relative, to a folder beside the project: from the copy it leads beside the copy.
-  write(base, { 'outside/x.js': 'module.exports = 2;\n' });
+  write(base, { 'outside/x.js': 'module.exports = 2;\n', 'outside/node_modules/dep/index.js': 'module.exports = 2;\n' });
   fs.rmSync(path.join(dir, 'lib'), { recursive: true });
   fs.symlinkSync(path.join('..', 'outside'), path.join(dir, 'lib'));
   const tmp = tempDir(t);
