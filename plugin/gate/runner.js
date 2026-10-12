@@ -33,9 +33,10 @@ function rootFiles(dir, settings) {
 }
 
 // Python test files git knows of, tracked or not ignored; outside git, the folder's own files only.
-function hasPythonTests(dir) {
+// options: git's own options for this call (the gate's temporary checkouts run no fsmonitor).
+function hasPythonTests(dir, options = []) {
   try {
-    const listed = execFileSync('git', ['-C', dir, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.py'],
+    const listed = execFileSync('git', [...options, '-C', dir, 'ls-files', '-z', '--cached', '--others', '--exclude-standard', '--', '*.py'],
       { stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: OUTPUT_LIMIT });
     return listed.toString('utf8').split('\0').filter(Boolean).some(isPythonTest);
   } catch {

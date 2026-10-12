@@ -16,6 +16,11 @@ const MIN_NODE = 20;
 const NO_NODE = 'node could not start it (node is not on PATH or too old to load it, or the files of the gate are missing)';
 const gateOff = (found) => `greenwashing: the gate is OFF - ${found}. It needs Node.js ${MIN_NODE} or newer on PATH; `
   + 'no turn is checked until a human sets that up and restarts Claude Code.';
+// Why the gate is not running when it has no safe place for its state (folder: its state folder; why:
+// what is wrong with it; gone: it could not be made, so there is no folder to remove).
+const stateOff = (folder, why, gone) => `greenwashing: the gate is OFF - its state folder ${folder} ${why}, and the gate keeps its state `
+  + 'only in a folder of its own that no one else can open. No turn is checked until a human '
+  + `${gone ? '' : 'removes that folder (the gate then makes a new one) or '}starts Claude Code with TMPDIR (TEMP on Windows) set to a folder only they can open.`;
 const CONFIG_KEYS = ['testCommand', 'timeoutSeconds', 'checks', 'python', 'mutants'];
 // The mutation command's limits (gate/mutate.js): how many breaks, the time for everything, and the
 // time for one test run with a break (none: it comes from the control run's length, estimate() in
@@ -211,5 +216,5 @@ function notChecked(why, files, hasPythonTests) {
 
 module.exports = {
   chooseCommand, readConfig, support, notChecked, pytestConfigured, pythonOf, isPythonTest, ROOT_FILES, CHECKS, CHECK_NAMES, CONFIG_FILE, DEFAULT_TIMEOUT_SECONDS,
-  MAX_TIMEOUT_SECONDS, MIN_NODE, NO_NODE, gateOff, HOW_TO, PYTHON_HOW_TO, MUTANT_LIMITS, MUTANT_MAX,
+  MAX_TIMEOUT_SECONDS, MIN_NODE, NO_NODE, gateOff, stateOff, HOW_TO, PYTHON_HOW_TO, MUTANT_LIMITS, MUTANT_MAX,
 };

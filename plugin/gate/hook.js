@@ -16,7 +16,7 @@ const {
   checkJs, jsTests, removedTests, carries, testFileKind,
 } = require('./lib/checks');
 const {
-  chooseCommand, readConfig, support, notChecked, pythonOf, gateOff, CONFIG_FILE, CHECKS, DEFAULT_TIMEOUT_SECONDS, MIN_NODE, PYTHON_HOW_TO,
+  chooseCommand, readConfig, support, notChecked, pythonOf, gateOff, stateOff, CONFIG_FILE, CHECKS, DEFAULT_TIMEOUT_SECONDS, MIN_NODE, PYTHON_HOW_TO,
 } = require('./lib/command');
 const { lineChanges, splitLines } = require('./lib/diff');
 const {
@@ -67,15 +67,54 @@ function onSignal(signal) {
 // session's first prompt or a human's settings change calls for it (missing: no prompt recorded).
 const NO_STATE = { starts: {}, turn: {}, stopped: {}, adopted: {}, seen: {}, known: [], blocks: 0, accepted: false, allowRemoval: false, turnStopped: false };
 
-function stateFile(input, dir) {
+// The folder of the state in the temp directory, made private (0700) when missing, and used only when
+// it is a folder, not a link, of this user's, that no one else can open: in one another user of the
+// machine made first, or can open, they could read the state, change it, or put a link where it is
+// written. Windows gives no user id and no permission bits here: its temp folder is the user's own,
+// and only a link or a file is refused. Returns {dir}, or {dir, why, gone} when it is not to be used
+// (why: what is wrong; gone: it could not be made).
+function stateFolder() {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null;
+  const dir = path.join(os.tmpdir(), `greenwashing-gate-${uid === null ? 'user' : uid}`);
+  try {
+    fs.mkdirSync(dir, { mode: 0o700 });
+  } catch (error) {
+    if (error.code !== 'EEXIST') return { dir, why: `could not be made (${error.code || error.message})`, gone: true };
+  }
+  let stat;
+  try {
+    stat = fs.lstatSync(dir);
+  } catch (error) {
+    return { dir, why: `could not be read (${error.code || error.message})`, gone: true };
+  }
+  if (stat.isSymbolicLink()) return { dir, why: 'is a link' };
+  if (!stat.isDirectory()) return { dir, why: 'is not a folder' };
+  if (uid !== null && stat.uid !== uid) return { dir, why: 'belongs to another user' };
+  if (uid !== null && (stat.mode & 0o077) !== 0) return { dir, why: 'is open to other users' };
+  return { dir };
+}
+
+function stateFile(folder, input, dir) {
   const key = crypto.createHash('sha256').update(`${input.session_id || 'no-session'}\0${dir}`).digest('hex');
-  const user = typeof process.getuid === 'function' ? process.getuid() : 'user';
-  return path.join(os.tmpdir(), `greenwashing-gate-${user}`, `${key.slice(0, 32)}.json`);
+  return path.join(folder, `${key.slice(0, 32)}.json`);
+}
+
+// Never read through a link: only a file of its own in the state folder is the state.
+function readState(file) {
+  if (!fs.lstatSync(file).isFile()) return null;
+  const fd = fs.openSync(file, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    return fs.fstatSync(fd).isFile() ? fs.readFileSync(fd, 'utf8') : null;
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 
 function loadState(file) {
   try {
-    const state = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const text = readState(file);
+    if (text === null) return NO_STATE;
+    const state = JSON.parse(text);
     const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
     if (!isObject(state.starts) || !isObject(state.seen) || !Array.isArray(state.known)) return NO_STATE;
     return {
@@ -99,9 +138,22 @@ function loadState(file) {
   }
 }
 
+// Written to a new file of its own (made here, 0600, never opened through a link) that then takes the
+// state's place: a link there is replaced, not followed, and no reader sees half a state.
 function saveState(file, state) {
-  fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(file, JSON.stringify(state));
+  const fresh = `${file}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+  const fd = fs.openSync(fresh, 'wx', 0o600);
+  try {
+    fs.writeFileSync(fd, JSON.stringify(state));
+  } finally {
+    fs.closeSync(fd);
+  }
+  try {
+    fs.renameSync(fresh, file);
+  } catch (error) {
+    fs.unlinkSync(fresh);
+    throw error;
+  }
 }
 
 function git(root, args) {
@@ -359,13 +411,23 @@ function isAncestor(root, commit, of) {
   }
 }
 
+// git's settings for the gate's temporary checkouts (dir: the checkout, in the gate's private folder):
+// no hook of the repository runs there - its hooks are read from a folder that is not there - and no
+// fsmonitor; the filters of the user's settings (a smudge filter such as Git LFS) still do.
+const inCopy = (dir) => ['-c', `core.hooksPath=${path.join(path.dirname(dir), 'no-hooks')}`, '-c', 'core.fsmonitor=false'];
+
 // Removes the gate's own temporary checkout and nothing else: `git worktree prune` would also drop
-// the user's worktrees whose folder is away.
+// the user's worktrees whose folder is away. Then its private folder, when nothing is left in it.
 function removeWorktree(root, dir) {
   try {
-    git(root, ['worktree', 'remove', '--force', dir]);
+    git(root, [...inCopy(dir), 'worktree', 'remove', '--force', dir]);
   } catch {
     // Not a worktree: git never made it, or removed it itself when the checkout failed.
+  }
+  try {
+    fs.rmdirSync(path.dirname(dir));
+  } catch {
+    // Not empty: the checkout is still there.
   }
   checkouts.delete(dir);
 }
@@ -390,11 +452,11 @@ const notRun = (where, configError, fields = {}) => ({ command: '(none)', source
 // The tests at dir, with the gate's settings (the project's .greenwashing.json text at the start of
 // the turn), within the deadline. A folder of another tree that has a .greenwashing.json of its own
 // that differs is told so: that one is ignored.
-async function runIn(dir, where, deadline, settings) {
+async function runIn(dir, where, deadline, settings, options = []) {
   if (!fs.existsSync(dir)) return notRun(where, "the project's folder is missing there");
   const own = readRootFiles(dir)[CONFIG_FILE];
   const note = where && own !== null && own !== settings ? { ignoredSettings: true } : {};
-  const choice = chooseCommand(rootFiles(dir, settings), hasPythonTests(dir));
+  const choice = chooseCommand(rootFiles(dir, settings), hasPythonTests(dir, options));
   if (choice.error) return notRun(where, choice.error, note);
   const timeoutSeconds = Math.min(choice.timeoutSeconds, Math.ceil((deadline - Date.now()) / 1000));
   if (timeoutSeconds < 1) {
@@ -406,16 +468,17 @@ async function runIn(dir, where, deadline, settings) {
 // The tests of a commit no tree has checked out any more: in a temporary worktree of the
 // repository, removed afterwards whatever the outcome.
 async function runAtCommit(home, project, target, deadline, settings) {
-  // A new path: git makes the folder, and removes it again when the checkout fails.
-  const dir = path.join(os.tmpdir(), `greenwashing-gate-check-${crypto.randomBytes(8).toString('hex')}`);
+  // In a new folder of the temp directory that only this user can open (0700): a new path in it, where
+  // git makes the checkout's folder, and removes it again when the checkout fails.
+  const dir = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'greenwashing-gate-check-')), 'checkout');
   checkouts.set(dir, home);
   try {
     try {
-      git(home, ['worktree', 'add', '--detach', '--quiet', dir, target.commit]);
+      git(home, [...inCopy(dir), 'worktree', 'add', '--detach', '--quiet', dir, target.commit]);
     } catch {
       return notRun(target.where, `commit ${target.commit} could not be checked out`);
     }
-    return await runIn(path.join(dir, path.relative(home, project)), target.where, deadline, settings);
+    return await runIn(path.join(dir, path.relative(home, project)), target.where, deadline, settings, inCopy(dir));
   } finally {
     removeWorktree(home, dir);
   }
@@ -452,9 +515,9 @@ function uncheckedLine(why, project, settings) {
   return fs.existsSync(project) ? notChecked(why, rootFiles(project, settings), hasPythonTests(project)) : notChecked(why);
 }
 
-async function onStop(input) {
+async function onStop(input, folder) {
   const { project, home, here } = places(input);
-  const file = stateFile(input, project);
+  const file = stateFile(folder, input, project);
   const active = input.stop_hook_active === true;
   // A Stop that is neither the first since the latest prompt nor a continuation after a block starts a
   // turn with no prompt of the user (a background task): it has no permission to remove tests, and what
@@ -767,9 +830,9 @@ function settle(file, state, runs, stopHookActive, note = '', accepted = {}) {
   return { systemMessage: decision.action === 'allow' ? `${decision.message}${note}` : decision.message };
 }
 
-function onPrompt(input) {
+function onPrompt(input, folder) {
   const { project, home, here } = places(input);
-  const file = stateFile(input, project);
+  const file = stateFile(folder, input, project);
   const state = loadState(file);
   const settings = home ? settingsPath(path.relative(home, project)) : null;
   const own = (tree) => (tree === home ? settings : null);
@@ -886,7 +949,14 @@ async function main() {
     if (event !== 'prompt') process.stdout.write(`${JSON.stringify({ systemMessage: gateOff(`the node on PATH is v${process.versions.node}`) })}\n`);
     return;
   }
-  if (event === 'session') return;
+  // With no safe place for its state the gate is off, as on an old Node, and never blocks for it: the
+  // session's start and each Stop tell the user, and the prompt says it on stderr only.
+  const folder = stateFolder();
+  const off = folder.why ? stateOff(folder.dir, folder.why, folder.gone) : null;
+  if (event === 'session') {
+    if (off) process.stdout.write(`${JSON.stringify({ systemMessage: off })}\n`);
+    return;
+  }
   let input = {};
   let inputError = null;
   try {
@@ -896,22 +966,30 @@ async function main() {
   }
   if (event === 'prompt') {
     // Never exit 2 here: on UserPromptSubmit that would block and erase the user's prompt.
+    if (off) {
+      process.stderr.write(`${off}\n`);
+      return;
+    }
     try {
       if (inputError) throw new Error(inputError);
-      onPrompt(input);
+      onPrompt(input, folder.dir);
     } catch (error) {
       process.stderr.write(`greenwashing gate: could not record the start of the turn: ${error.message}\n`);
     }
+    return;
+  }
+  if (off) {
+    process.stdout.write(`${JSON.stringify({ systemMessage: off })}\n`);
     return;
   }
   for (const signal of SIGNALS) process.on(signal, onSignal);
   let output;
   try {
     if (inputError) throw new Error(inputError);
-    output = await onStop(input);
+    output = await onStop(input, folder.dir);
   } catch (error) {
     // The gate itself failing is "did not run": block like any other red result.
-    const file = stateFile(input, realpath(process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()));
+    const file = stateFile(folder.dir, input, realpath(process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd()));
     const run = { command: '(gate)', source: 'greenwashing gate', timeoutSeconds: 0, configError: `the gate failed: ${error.message}`, output: '' };
     output = settle(file, loadState(file), [run], input.stop_hook_active === true);
   }

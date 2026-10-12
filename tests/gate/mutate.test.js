@@ -215,6 +215,71 @@ test("the user's files stay byte for byte; node_modules, .venv and venv are link
   assert.deepEqual(run.copies, []);
 });
 
+test('the copy is private to the user (0700) while the tests run in it', (t) => {
+  const probed = path.join(tempDir(t), 'probe');
+  // The test command first notes the folder of the temp directory it runs in, and that folder's mode.
+  const probe = "const fs = require('node:fs');\nconst path = require('node:path');\nconst top = fs.realpathSync(process.env.TMPDIR);\nlet at = process.cwd();\n"
+    + 'while (path.dirname(at) !== top && path.dirname(at) !== at) at = path.dirname(at);\n'
+    + 'fs.appendFileSync(process.argv[2], `${path.basename(at)} ${(fs.statSync(at).mode & 0o777).toString(8)}\\n`);\n';
+  const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST, 'probe.js': probe }, `node probe.js ${JSON.stringify(probed)} && ${NODE_CMD}`);
+  write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}${STOPS}` });
+  const run = mutate(t, dir);
+  assert.equal(run.code, 0, run.out);
+  const runs = fs.readFileSync(probed, 'utf8').trim().split('\n');
+  // The control run, one control break and four breaks, each in the copy.
+  assert.equal(runs.length, 6);
+  for (const line of runs) assert.match(line, /^greenwashing-mutants-\S+ 700$/);
+});
+
+// A project whose tests, run in the copy, put a link where code of the change is (thing: a file or a
+// folder of the project, made a link to outside, where the same code sits with a comment more).
+function linkedAway(t, thing) {
+  const outside = tempDir(t);
+  const code = `${CART}${ADD}`;
+  const at = thing === 'file' ? 'cart.js' : 'lib';
+  const moved = thing === 'file' ? path.join(outside, 'cart.js') : outside;
+  fs.writeFileSync(path.join(outside, 'cart.js'), `${code}// outside the copy\n`);
+  const swap = `const fs = require('node:fs');\nif (!fs.lstatSync(${JSON.stringify(at)}).isSymbolicLink()) {\n`
+    + `  fs.rmSync(${JSON.stringify(at)}, { recursive: true });\n  fs.symlinkSync(process.argv[2], ${JSON.stringify(at)});\n}\n`;
+  const file = thing === 'file' ? 'cart.js' : 'lib/cart.js';
+  const tests = CART_TEST.replace("'./cart'", `'./${file.replace(/\.js$/, '')}'`);
+  const dir = project(t, { [file]: CART, 'cart.test.js': tests, 'swap.js': swap }, `node swap.js ${JSON.stringify(moved)} && ${NODE_CMD}`);
+  write(dir, { [file]: code, 'cart.test.js': `${tests}${ADDS}${STOPS}` });
+  return { dir, outside, file };
+}
+
+test('a break is never written through a link: a code file or folder the tests made a link to outside the copy is left alone', (t) => {
+  for (const thing of ['file', 'folder']) {
+    const { dir, outside, file } = linkedAway(t, thing);
+    const run = mutate(t, dir);
+    assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, `${thing}\n${run.out}`);
+    assert.deepEqual(fs.readdirSync(outside), ['cart.js'], thing);
+    assert.equal(run.code, 2, run.out);
+    const name = file.replace(/[./]/g, '\\$&');
+    assert.match(run.out, new RegExp(`\\n- did not run: ${name}: 4 mutants not run - its control break did not run \\(the command could not start: `
+      + `${name} is no longer a plain file in the copy \\(a link now, behind one, or gone\\), and a break is never written outside the copy\\), so whether the tests run this file is not known\\n`));
+    assert.deepEqual(run.copies, [], thing);
+  }
+});
+
+const APP_TEST = "const test = require('node:test');\nconst assert = require('node:assert');\nconst big = require('./app');\ntest('big', () => assert.equal(big(2), true));\n";
+
+test('the copy is made without writing through a link: a folder the working tree has as a link, its files still in the index', (t) => {
+  const base = tempDir(t);
+  const dir = project(t, { 'lib/x.js': 'module.exports = 1;\n', 'app.js': 'module.exports = (a) => a;\n', 'x.test.js': APP_TEST }, NODE_CMD, path.join(base, 'p'));
+  write(dir, { 'app.js': 'module.exports = (a) => a > 1;\n' });
+  // lib is now a link, relative, to a folder beside the project: from the copy it leads beside the copy.
+  write(base, { 'outside/x.js': 'module.exports = 2;\n' });
+  fs.rmSync(path.join(dir, 'lib'), { recursive: true });
+  fs.symlinkSync(path.join('..', 'outside'), path.join(dir, 'lib'));
+  const tmp = tempDir(t);
+  fs.mkdirSync(path.join(tmp, 'outside'));
+  const run = mutate(t, dir, [], tmp);
+  assert.match(run.out, /\nControl: .* on the unchanged copy: /);
+  assert.deepEqual(fs.readdirSync(path.join(tmp, 'outside')), []);
+  assert.deepEqual(run.copies, []);
+});
+
 test('Python runs no cached bytecode: none from the user\'s tree, none of an earlier break of the same size', (t) => {
   const tests = 'import unittest\n\nfrom shop import double\n\n\nclass T(unittest.TestCase):\n    def test_double(self):\n        self.assertEqual(double(2), 4)\n';
   const dir = project(t, { 'test_shop.py': tests, 'shop.py': 'def double(n):\n    return n + n\n' }, null);

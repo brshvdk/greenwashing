@@ -885,6 +885,36 @@ test('a worktree removed after a green commit: the temporary checkout passes and
   assert.deepEqual(leftovers(gate, dir), []);
 });
 
+test('a temporary checkout is private to the user (0700) and runs no hook or fsmonitor of the repository', (t) => {
+  const marks = tempDir(t);
+  const probed = path.join(marks, 'probe');
+  // The test command first notes the folder of the temp directory it runs in, and that folder's mode.
+  const probe = "const fs = require('node:fs');\nconst path = require('node:path');\nconst top = fs.realpathSync(process.env.TMPDIR);\nlet at = process.cwd();\n"
+    + 'while (path.dirname(at) !== top && path.dirname(at) !== at) at = path.dirname(at);\n'
+    + 'fs.appendFileSync(process.argv[2], `${path.basename(at)} ${(fs.statSync(at).mode & 0o777).toString(8)}\\n`);\n';
+  const { dir, tree, gate } = seenWorktree(t, { 't.test.js': NODE_PASS, 'probe.js': probe }, `node probe.js ${JSON.stringify(probed)} && ${NODE_CMD}`);
+  write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
+  git(tree, 'commit', '-qam', 'green');
+  git(dir, 'worktree', 'remove', tree);
+  // Hooks of the repository and an fsmonitor that note the folder they run in.
+  const ran = path.join(marks, 'hooks');
+  const note = (name) => `#!/bin/sh\necho "${name} $(pwd)" >> ${JSON.stringify(ran)}\n`;
+  for (const name of ['post-checkout', 'reference-transaction', 'post-index-change']) fs.writeFileSync(path.join(dir, '.git', 'hooks', name), note(name), { mode: 0o755 });
+  fs.writeFileSync(path.join(marks, 'fsmonitor'), `${note('fsmonitor')}exit 1\n`, { mode: 0o755 });
+  git(dir, 'config', 'core.fsmonitor', path.join(marks, 'fsmonitor'));
+  assert.match(gate.stop(false, dir).json.systemMessage, /^greenwashing: tests passed - .* in a temporary checkout of /);
+  assert.match(fs.readFileSync(probed, 'utf8'), /^greenwashing-gate-check-\S+ 700\n$/);
+  const inCheckout = () => (fs.existsSync(ran) ? fs.readFileSync(ran, 'utf8') : '').split('\n').filter((line) => line.includes('greenwashing-gate-check-'));
+  assert.deepEqual(inCheckout(), []);
+  assert.deepEqual(leftovers(gate, dir), []);
+  // The same hooks run in a checkout git makes in the same temp directory without the gate.
+  const control = path.join(gate.tmp, 'greenwashing-gate-check-control');
+  git(dir, 'worktree', 'add', '--detach', '-q', control, 'HEAD');
+  git(dir, 'worktree', 'remove', '--force', control);
+  assert.ok(inCheckout().some((line) => line.startsWith('post-checkout ')), inCheckout().join('\n'));
+  assert.ok(inCheckout().some((line) => line.startsWith('fsmonitor ')), inCheckout().join('\n'));
+});
+
 test('a removed worktree whose branch the project merged is not tested again', (t) => {
   const log = path.join(tempDir(t), 'ran-in');
   const { dir, tree, gate } = seenWorktree(t, { 't.test.js': NODE_PASS }, `pwd >> ${JSON.stringify(log)}; ${NODE_CMD}`);
@@ -1007,9 +1037,12 @@ test('a commit that cannot be checked out: did not run, and no checkout is left'
   write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
   git(tree, 'commit', '-qam', 'green');
   git(dir, 'worktree', 'remove', tree);
-  // A post-checkout hook that fails makes `git worktree add` fail for the gate's checkout.
-  write(dir, { '.git/hooks/post-checkout': '#!/bin/sh\nexit 1\n' });
-  fs.chmodSync(path.join(dir, '.git', 'hooks', 'post-checkout'), 0o755);
+  // A required filter that fails in the gate's checkout makes `git worktree add` fail there (no hook of
+  // the repository runs there).
+  write(dir, { '.git/info/attributes': '* filter=broken\n' });
+  git(dir, 'config', 'filter.broken.smudge', 'case "$PWD" in *greenwashing-gate-check-*) exit 1;; esac; cat');
+  git(dir, 'config', 'filter.broken.clean', 'cat');
+  git(dir, 'config', 'filter.broken.required', 'true');
   const { json } = gate.stop(false, dir);
   assert.equal(json.decision, 'block');
   assert.match(json.reason, /Result: did not run - commit [0-9a-f]{40} could not be checked out/);
@@ -1089,9 +1122,9 @@ test('a signal while the temporary checkout is being made removes it too', async
   write(tree, { 't.test.js': `${NODE_PASS}// more\n` });
   git(tree, 'commit', '-qam', 'green');
   git(dir, 'worktree', 'remove', tree);
-  // A slow post-checkout hook keeps `git worktree add` busy when the signal comes.
-  write(dir, { '.git/hooks/post-checkout': `#!/bin/sh\ntouch ${JSON.stringify(started)}\nsleep 2\n` });
-  fs.chmodSync(path.join(dir, '.git', 'hooks', 'post-checkout'), 0o755);
+  // A slow filter keeps `git worktree add` busy when the signal comes (no hook of the repository runs there).
+  write(dir, { '.git/info/attributes': '* filter=slow\n' });
+  git(dir, 'config', 'filter.slow.smudge', `touch ${JSON.stringify(started)}; sleep 2; cat`);
   const hook = spawn(process.execPath, [HOOK, 'stop'], { env: gate.env, stdio: ['pipe', 'ignore', 'ignore'] });
   const exited = new Promise((resolve) => hook.on('exit', (code) => resolve(code)));
   hook.stdin.end(JSON.stringify(gate.stopInput(false, dir)));
@@ -1386,11 +1419,141 @@ test('the state folder is per user and private', (t) => {
   assert.equal(fs.statSync(path.join(gate.tmp, folder)).mode & 0o777, 0o700);
 });
 
-test('when the gate cannot keep its state, the prompt still goes through and the stop fails loudly', (t) => {
-  const dir = project(t, { 'app.js': '1;\n' }, 'echo ok');
+// The gate's state folder in a session's temp directory.
+const stateDir = (gate, uid = process.getuid()) => path.join(gate.tmp, `greenwashing-gate-${uid}`);
+
+// What the gate says when it has no safe place for its state (gone: the folder could not be made).
+const STATE_OFF = (folder, why, gone = false) => `greenwashing: the gate is OFF - its state folder ${folder} ${why}, and the gate keeps its state `
+  + 'only in a folder of its own that no one else can open. No turn is checked until a human '
+  + `${gone ? '' : 'removes that folder (the gate then makes a new one) or '}starts Claude Code with TMPDIR (TEMP on Windows) set to a folder only they can open.`;
+
+// The session start, a prompt and a failing turn's Stops with no safe place for the state: the gate says
+// it is off at the session start and at each Stop, says it on stderr at the prompt (its stdout goes to
+// the agent) and blocks nothing.
+function assertOff(gate, dir, message) {
+  const off = { systemMessage: message };
+  const started = gate.raw('session', { session_id: 's', cwd: dir, hook_event_name: 'SessionStart', source: 'startup' });
+  assert.deepEqual([started.code, started.json, started.stderr], [0, off, '']);
+  const prompt = gate.prompt();
+  assert.deepEqual([prompt.code, prompt.stdout, prompt.stderr], [0, '', `${message}\n`]);
+  write(dir, { 't.test.js': NODE_FAIL });
+  for (const active of [false, true]) {
+    const stop = gate.stop(active);
+    assert.deepEqual([stop.code, stop.json, stop.stderr], [0, off, '']);
+  }
+}
+
+test('when the gate cannot make its state folder, it is OFF: it says so and blocks nothing', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
   const file = path.join(tempDir(t), 'not-a-folder');
   fs.writeFileSync(file, '');
   const gate = session(t, dir, { tmp: file });
+  assertOff(gate, dir, STATE_OFF(path.join(file, `greenwashing-gate-${process.getuid()}`), 'could not be made (ENOTDIR)', true));
+});
+
+test('a state folder another user made first is not used: the gate is OFF, says so, and writes nothing there', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  // The hook runs as if its user id were 4242: the folder made here, by this user, is another user's to it.
+  const preload = path.join(tempDir(t), 'other-user.js');
+  fs.writeFileSync(preload, 'process.getuid = () => 4242;\n');
+  const gate = session(t, dir, { env: { NODE_OPTIONS: `--require ${preload}` } });
+  const folder = stateDir(gate, 4242);
+  fs.mkdirSync(folder, { mode: 0o700 });
+  assertOff(gate, dir, STATE_OFF(folder, 'belongs to another user'));
+  assert.deepEqual(fs.readdirSync(folder), []);
+});
+
+test('a state folder open to other users is not used until it is closed again', (t) => {
+  for (const mode of [0o770, 0o707]) {
+    const dir = project(t, { 't.test.js': NODE_PASS });
+    const gate = session(t, dir);
+    const folder = stateDir(gate);
+    fs.mkdirSync(folder);
+    fs.chmodSync(folder, mode);
+    assertOff(gate, dir, STATE_OFF(folder, 'is open to other users'));
+    assert.deepEqual(fs.readdirSync(folder), [], mode.toString(8));
+    fs.chmodSync(folder, 0o700);
+    gate.prompt();
+    write(dir, { 'app.js': '1;\n' });
+    assert.equal(gate.stop().json.decision, 'block', mode.toString(8));
+  }
+});
+
+test("a link or a file in the state folder's place is not used: the gate is OFF", (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const linked = session(t, dir);
+  const elsewhere = tempDir(t);
+  fs.symlinkSync(elsewhere, stateDir(linked));
+  assertOff(linked, dir, STATE_OFF(stateDir(linked), 'is a link'));
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
+  const other = project(t, { 't.test.js': NODE_PASS });
+  const filed = session(t, other);
+  fs.writeFileSync(stateDir(filed), '');
+  assertOff(filed, other, STATE_OFF(stateDir(filed), 'is not a folder'));
+  assert.equal(fs.readFileSync(stateDir(filed), 'utf8'), '');
+});
+
+test('the state file is private: 0600, after the prompt and after the stop', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  const modes = () => fs.readdirSync(stateDir(gate)).map((name) => fs.statSync(path.join(stateDir(gate), name)).mode & 0o777);
+  gate.prompt();
+  assert.deepEqual(modes(), [0o600]);
+  write(dir, { 'app.js': '1;\n' });
+  assert.match(gate.stop().json.systemMessage, /^greenwashing: tests passed/);
+  assert.deepEqual(modes(), [0o600]);
+});
+
+test("a link in the state file's place is replaced, never written through", (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  const [name] = fs.readdirSync(stateDir(gate));
+  const file = path.join(stateDir(gate), name);
+  const outside = tempDir(t);
+  const victim = path.join(outside, 'victim.txt');
+  fs.writeFileSync(victim, 'untouched\n');
+  for (const [event, target] of [['prompt', victim], ['stop', victim], ['prompt', path.join(outside, 'missing.txt')]]) {
+    fs.rmSync(file);
+    fs.symlinkSync(target, file);
+    gate.raw(event, event === 'prompt' ? { session_id: 's', cwd: dir, hook_event_name: 'UserPromptSubmit', prompt: 'go' } : gate.stopInput(false, dir));
+    assert.deepEqual(fs.readdirSync(outside), ['victim.txt'], event);
+    assert.equal(fs.readFileSync(victim, 'utf8'), 'untouched\n', event);
+    const stat = fs.lstatSync(file);
+    assert.deepEqual([stat.isFile(), stat.mode & 0o777], [true, 0o600], event);
+    assert.deepEqual(fs.readdirSync(stateDir(gate)), [name], event);
+  }
+});
+
+test('a state file that is a link is not read', (t) => {
+  const dir = project(t, { 't.test.js': NODE_PASS });
+  const gate = session(t, dir);
+  gate.prompt();
+  const [name] = fs.readdirSync(stateDir(gate));
+  // Elsewhere, the same state as the gate's, but one that lets the turn end unchecked.
+  const forged = path.join(tempDir(t), 'state.json');
+  const state = JSON.parse(fs.readFileSync(path.join(stateDir(gate), name), 'utf8'));
+  fs.writeFileSync(forged, JSON.stringify({ ...state, support: { supported: false, why: 'no test command was found' } }));
+  // As it is, it is read: the turn ends unchecked.
+  fs.copyFileSync(forged, path.join(stateDir(gate), name));
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.deepEqual(gate.stop().json, { systemMessage: FIRST_COMMAND(`${NODE_CMD} (.greenwashing.json)`) });
+  write(dir, { 't.test.js': NODE_PASS });
+  gate.prompt();
+  fs.rmSync(path.join(stateDir(gate), name));
+  fs.symlinkSync(forged, path.join(stateDir(gate), name));
+  write(dir, { 't.test.js': NODE_FAIL });
+  assert.equal(gate.stop().json.decision, 'block');
+});
+
+test('when the state file cannot be written in its folder, the prompt still goes through and the stop fails loudly', (t) => {
+  const dir = project(t, { 'app.js': '1;\n' }, 'echo ok');
+  const gate = session(t, dir);
+  gate.prompt();
+  const [name] = fs.readdirSync(stateDir(gate));
+  // A folder where the file goes: it cannot be replaced by a file.
+  fs.rmSync(path.join(stateDir(gate), name));
+  fs.mkdirSync(path.join(stateDir(gate), name));
   const prompt = gate.prompt();
   assert.deepEqual([prompt.code, prompt.stdout], [0, '']);
   assert.match(prompt.stderr, /could not record the start of the turn/);
@@ -1398,6 +1561,8 @@ test('when the gate cannot keep its state, the prompt still goes through and the
   // Exit code 2 on Stop: Claude Code keeps the agent working and shows it stderr.
   assert.deepEqual([stop.code, stop.stdout], [2, '']);
   assert.match(stop.stderr, /^greenwashing gate failed: /);
+  // The new file it wrote is not left behind.
+  assert.deepEqual(fs.readdirSync(stateDir(gate)), [name]);
 });
 
 test('two sessions in one project keep separate starts', (t) => {

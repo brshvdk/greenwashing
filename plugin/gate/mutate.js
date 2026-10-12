@@ -83,6 +83,45 @@ function git(root, args) {
 
 const nulList = (buffer) => buffer.toString('utf8').split('\0').filter(Boolean);
 
+// Whether a path in the copy (rel: from the copy's top) is reached through no link: every folder on
+// the way that is there is a folder of the copy's own, so what is made or written there stays in the
+// copy. The copy holds links (the project's own, the dependency folders), and its tests can make more.
+function plainPath(rel) {
+  let at = copy;
+  for (const part of path.dirname(rel).split('/').filter((name) => name !== '.')) {
+    at = path.join(at, part);
+    let stat;
+    try {
+      stat = fs.lstatSync(at);
+    } catch {
+      // Not there yet: made as a folder of the copy's own.
+      return true;
+    }
+    if (!stat.isDirectory()) return false;
+  }
+  return true;
+}
+
+// Writes a file of the copy that is there as a plain file, never through a link (rel: from the copy's
+// top). Returns false, writing nothing, when it is a link now, lies behind one, or is gone.
+function writeInCopy(rel, text) {
+  const target = path.join(copy, rel);
+  let stat = null;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    // Gone.
+  }
+  if (!plainPath(rel) || !stat || !stat.isFile()) return false;
+  const fd = fs.openSync(target, fs.constants.O_WRONLY | fs.constants.O_TRUNC | (fs.constants.O_NOFOLLOW || 0));
+  try {
+    fs.writeFileSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return true;
+}
+
 // The options, or {error}. Numbers are whole and at least 1.
 function parseArgs(argv) {
   const options = {};
@@ -225,10 +264,12 @@ function makeCopy(home) {
       // Deleted in the working tree.
       continue;
     }
+    // Never into a link the copy holds by now (a folder the working tree has as a link, its files listed).
+    if (!plainPath(file)) continue;
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (stat.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), to);
     else if (stat.isDirectory()) fs.symlinkSync(from, to);
-    else if (stat.isFile()) fs.copyFileSync(from, to);
+    else if (stat.isFile()) fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
   }
   for (const entry of nulList(git(home, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory']))) {
     const folder = entry.replace(/\/$/, '');
@@ -236,7 +277,7 @@ function makeCopy(home) {
   }
   for (const folder of links) {
     const to = path.join(copy, folder);
-    if (fs.existsSync(to) || !fs.existsSync(path.join(home, folder))) continue;
+    if (fs.existsSync(to) || !fs.existsSync(path.join(home, folder)) || !plainPath(folder)) continue;
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (path.basename(folder) === 'node_modules') linkModules(home, path.join(home, folder), to);
     else fs.symlinkSync(path.join(home, folder), to);
@@ -374,14 +415,17 @@ async function run(argv) {
   }
   // Each run with a break: the time the estimate gives it, within the time left.
   const runSeconds = () => Math.min(estimated.perRun, timeLeft());
-  // One file broken, the tests run, the file back as it was: the run.
+  // One file broken, the tests run, the file back as it was: the run. Never through a link: a file the
+  // tests made a link, put behind one or removed is not broken (its run did not start), nor put back.
   const runBroken = async (file, source, edit, seconds) => {
-    const target = path.join(dir, file);
-    fs.writeFileSync(target, apply(source, edit));
+    if (!writeInCopy(file, apply(source, edit))) {
+      return { command: choice.command, source: choice.source, timeoutSeconds: seconds, exitCode: null, output: '',
+        startError: `${file} is no longer a plain file in the copy (a link now, behind one, or gone), and a break is never written outside the copy` };
+    }
     try {
       return await runIn(seconds);
     } finally {
-      fs.writeFileSync(target, source);
+      writeInCopy(file, source);
     }
   };
   const named = (file) => path.relative(project, path.join(home, file));
