@@ -1,6 +1,6 @@
 'use strict';
 // The I/O the gate's two entry points share (hook.js and mutate.js): which files the test command is
-// chosen from, and running it the way the gate does.
+// chosen from, running it the way the gate does, and whether the temp folder is safe to work in.
 
 const { spawn, execFileSync } = require('node:child_process');
 const fs = require('node:fs');
@@ -105,4 +105,18 @@ function runTests(dir, choice, env = {}) {
   });
 }
 
-module.exports = { readRootFiles, rootFiles, hasPythonTests, runTests, stopTests, OUTPUT_LIMIT };
+// The temp folder (os.tmpdir()) when other users can write to it without the sticky bit: they could
+// move a folder made there away and put one of their own in its place. Null when it is not so, or on
+// Windows (no permission bits). A missing folder is said where it is used.
+function sharedTemp() {
+  if (typeof process.getuid !== 'function') return null;
+  let mode;
+  try {
+    ({ mode } = fs.statSync(os.tmpdir()));
+  } catch {
+    return null;
+  }
+  return (mode & 0o002) !== 0 && (mode & 0o1000) === 0 ? os.tmpdir() : null;
+}
+
+module.exports = { readRootFiles, rootFiles, hasPythonTests, runTests, stopTests, sharedTemp, OUTPUT_LIMIT };

@@ -23,7 +23,7 @@ const {
   verdict, decide, removedNote, PERMISSION_WORDS,
 } = require('./lib/verdict');
 const {
-  readRootFiles, rootFiles, hasPythonTests, runTests, stopTests, OUTPUT_LIMIT,
+  readRootFiles, rootFiles, hasPythonTests, runTests, stopTests, sharedTemp, OUTPUT_LIMIT,
 } = require('./runner');
 
 // The start text of a test file that is dirty when the turn starts is kept up to this size; past it
@@ -76,6 +76,8 @@ const NO_STATE = { starts: {}, turn: {}, stopped: {}, adopted: {}, seen: {}, kno
 function stateFolder() {
   const uid = typeof process.getuid === 'function' ? process.getuid() : null;
   const dir = path.join(os.tmpdir(), `greenwashing-gate-${uid === null ? 'user' : uid}`);
+  // Not even made in a temp folder where others could swap it for a folder of their own.
+  if (sharedTemp()) return { dir, why: 'is in a temp folder that other users can write to without the sticky bit', gone: true };
   try {
     fs.mkdirSync(dir, { mode: 0o700 });
   } catch (error) {

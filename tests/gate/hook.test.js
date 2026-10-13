@@ -1458,6 +1458,23 @@ test('when the gate cannot make its state folder, it is OFF: it says so and bloc
   assertOff(gate, dir, STATE_OFF(path.join(file, `greenwashing-gate-${process.getuid()}`), 'could not be made (ENOTDIR)', true));
 });
 
+test('a temp folder others can write to without the sticky bit holds no state: the gate is OFF; with the sticky bit it is used', (t) => {
+  for (const [mode, off] of [[0o777, true], [0o1777, false]]) {
+    const dir = project(t, { 't.test.js': NODE_PASS });
+    const tmp = tempDir(t);
+    fs.chmodSync(tmp, mode);
+    const gate = session(t, dir, { tmp });
+    if (off) {
+      assertOff(gate, dir, STATE_OFF(stateDir(gate), 'is in a temp folder that other users can write to without the sticky bit', true));
+      assert.deepEqual(fs.readdirSync(tmp), []);
+    } else {
+      gate.prompt();
+      write(dir, { 't.test.js': NODE_FAIL });
+      assert.equal(gate.stop().json.decision, 'block');
+    }
+  }
+});
+
 test('a state folder another user made first is not used: the gate is OFF, says so, and writes nothing there', (t) => {
   const dir = project(t, { 't.test.js': NODE_PASS });
   // The hook runs as if its user id were 4242: the folder made here, by this user, is another user's to it.

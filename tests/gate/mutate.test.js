@@ -297,6 +297,40 @@ test('a link put where a break goes just after the command checked the file is n
   assert.deepEqual(run.copies, []);
 });
 
+test('a folder on the way to a break made a link just after the command checked it is not followed', (t) => {
+  const { dir, outside } = linkedAway(t, 'folder');
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  git(dir, 'commit', '-qam', 'no swap');
+  // Right after the command looks at lib/cart.js in its copy, lib becomes a link to the outside folder.
+  const preload = path.join(tempDir(t), 'swap-folder-after-check.js');
+  fs.writeFileSync(preload, "const fs = require('node:fs');\nconst path = require('node:path');\nconst lstat = fs.lstatSync;\nfs.lstatSync = (at, ...rest) => {\n"
+    + '  const stat = lstat(at, ...rest);\n  const lib = path.dirname(at);\n'
+    + "  if (path.basename(at) === 'cart.js' && path.basename(lib) === 'lib' && path.basename(path.dirname(lib)).startsWith('greenwashing-mutants-')\n"
+    + '      && !lstat(lib).isSymbolicLink()) {\n'
+    + "    fs.renameSync(lib, `${lib}-away`);\n    fs.symlinkSync(process.env.GW_OUTSIDE, lib);\n    fs.appendFileSync(path.join(process.env.GW_OUTSIDE, '..', 'swapped'), 'x');\n  }\n"
+    + '  return stat;\n};\n');
+  const run = mutate(t, dir, [], tempDir(t), { NODE_OPTIONS: `--require ${preload}`, GW_OUTSIDE: outside });
+  assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, run.out);
+  assert.equal(fs.readFileSync(path.join(outside, '..', 'swapped'), 'utf8'), 'x');
+  assert.equal(run.code, 2, run.out);
+  assert.deepEqual(run.copies, []);
+});
+
+test('the copy is not made in a temp folder others can write to without the sticky bit: did not run; with the sticky bit it is', (t) => {
+  for (const [mode, off] of [[0o777, true], [0o1777, false]]) {
+    const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST });
+    write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}${STOPS}` });
+    const tmp = tempDir(t);
+    fs.chmodSync(tmp, mode);
+    const run = mutate(t, dir, [], tmp);
+    if (off) {
+      assert.equal(run.code, 2, run.out);
+      assert.match(run.out, new RegExp(`\\nDid not run: the temp folder ${tmp.replace(/[./]/g, '\\$&')} lets other users write to it without the sticky bit, so one of them could put a folder of their own where the copy goes; start the command with TMPDIR set to a folder only you can open\\n`));
+      assert.deepEqual(fs.readdirSync(tmp), []);
+    } else assert.equal(run.code, 0, run.out);
+  }
+});
+
 test('a file already in the copy when the command copies one there is not written over: a link there is not followed', (t) => {
   const { dir, outside } = linkedAway(t, 'file');
   write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });

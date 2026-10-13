@@ -26,7 +26,7 @@ const {
   codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, controlBreak, stillParses, describe, choose, byPlace, estimate, report,
   OUTCOMES, OPERATORS, DEPENDENCY_FOLDERS, NOT_EXERCISED,
 } = require('./lib/mutants');
-const { rootFiles, readRootFiles, hasPythonTests, runTests, stopTests, OUTPUT_LIMIT } = require('./runner');
+const { rootFiles, readRootFiles, hasPythonTests, runTests, stopTests, sharedTemp, OUTPUT_LIMIT } = require('./runner');
 
 const PYTHON_MUTANTS = path.join(__dirname, 'lib', 'python_mutants.py');
 const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT'];
@@ -116,8 +116,17 @@ function writeInCopy(rel, text) {
     return false;
   }
   try {
+    // The file open is the copy's own: one name, and the one the path names now, through no link (a
+    // folder on the way made a link after the check would have led the open elsewhere).
     const stat = fs.fstatSync(fd);
     if (!stat.isFile() || stat.nlink !== 1) return false;
+    let now = null;
+    try {
+      now = plainPath(rel) ? fs.lstatSync(target) : null;
+    } catch {
+      // Gone.
+    }
+    if (!now || now.dev !== stat.dev || now.ino !== stat.ino) return false;
     fs.ftruncateSync(fd, 0);
     fs.writeFileSync(fd, text);
   } finally {
@@ -389,6 +398,14 @@ async function run(argv) {
   const choice = chooseCommand(rootFiles(project, settings), hasPythonTests(project));
   if (choice.error) return finish({ header, control: 'Control: not run', results: [], notTried: 0, problems: [...problems, choice.error] });
 
+  // The copy is made only where no other user can swap it for a folder of their own.
+  const shared = sharedTemp();
+  if (shared) {
+    return finish({
+      header, control: 'Control: not run', results: [], notTried: 0,
+      problems: [...problems, `the temp folder ${shared} lets other users write to it without the sticky bit, so one of them could put a folder of their own where the copy goes; start the command with TMPDIR set to a folder only you can open`],
+    });
+  }
   const dir = makeCopy(home);
   const at = path.join(dir, rel);
   const runIn = (seconds) => runTests(at, { ...choice, timeoutSeconds: seconds }, RUN_ENV);
