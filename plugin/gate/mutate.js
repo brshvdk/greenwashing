@@ -26,7 +26,7 @@ const {
   codeKind, addedLines, ownLines, jsMutants, fromLines, touches, apply, controlBreak, stillParses, describe, choose, byPlace, estimate, report,
   OUTCOMES, OPERATORS, DEPENDENCY_FOLDERS, NOT_EXERCISED,
 } = require('./lib/mutants');
-const { rootFiles, readRootFiles, hasPythonTests, runTests, stopTests, OUTPUT_LIMIT } = require('./runner');
+const { rootFiles, readRootFiles, hasPythonTests, runTests, stopTests, sharedTemp, OUTPUT_LIMIT } = require('./runner');
 
 const PYTHON_MUTANTS = path.join(__dirname, 'lib', 'python_mutants.py');
 const SIGNALS = ['SIGTERM', 'SIGINT', 'SIGHUP', 'SIGQUIT'];
@@ -82,6 +82,58 @@ function git(root, args) {
 }
 
 const nulList = (buffer) => buffer.toString('utf8').split('\0').filter(Boolean);
+
+// Whether a path in the copy (rel: from the copy's top) is reached through no link: every folder on
+// the way that is there is a folder of the copy's own, so what is made or written there stays in the
+// copy. The copy holds links (the project's own, the dependency folders), and its tests can make more.
+function plainPath(rel) {
+  let at = copy;
+  for (const part of path.dirname(rel).split('/').filter((name) => name !== '.')) {
+    at = path.join(at, part);
+    let stat;
+    try {
+      stat = fs.lstatSync(at);
+    } catch {
+      // Not there yet: made as a folder of the copy's own.
+      return true;
+    }
+    if (!stat.isDirectory()) return false;
+  }
+  return true;
+}
+
+// Writes a file of the copy that is there as a plain file of its own, never through a link (rel: from
+// the copy's top): not a symbolic link, put there before the check or after it, not behind one, and not
+// a hard link to a file elsewhere (the copy's files have one name). Returns false, writing nothing,
+// when it is not such a file now, or is gone.
+function writeInCopy(rel, text) {
+  const target = path.join(copy, rel);
+  let fd;
+  try {
+    if (!plainPath(rel) || !fs.lstatSync(target).isFile()) return false;
+    fd = fs.openSync(target, fs.constants.O_WRONLY | (fs.constants.O_NOFOLLOW || 0));
+  } catch {
+    return false;
+  }
+  try {
+    // The file open is the copy's own: one name, and the one the path names now, through no link (a
+    // folder on the way made a link after the check would have led the open elsewhere).
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1) return false;
+    let now = null;
+    try {
+      now = plainPath(rel) ? fs.lstatSync(target) : null;
+    } catch {
+      // Gone.
+    }
+    if (!now || now.dev !== stat.dev || now.ino !== stat.ino) return false;
+    fs.ftruncateSync(fd, 0);
+    fs.writeFileSync(fd, text);
+  } finally {
+    fs.closeSync(fd);
+  }
+  return true;
+}
 
 // The options, or {error}. Numbers are whole and at least 1.
 function parseArgs(argv) {
@@ -225,10 +277,20 @@ function makeCopy(home) {
       // Deleted in the working tree.
       continue;
     }
+    // Never into a link the copy holds by now (a folder the working tree has as a link, its files listed).
+    if (!plainPath(file)) continue;
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (stat.isSymbolicLink()) fs.symlinkSync(fs.readlinkSync(from), to);
     else if (stat.isDirectory()) fs.symlinkSync(from, to);
-    else if (stat.isFile()) fs.copyFileSync(from, to);
+    else if (stat.isFile()) {
+      try {
+        fs.copyFileSync(from, to, fs.constants.COPYFILE_EXCL);
+      } catch (error) {
+        // There already, and never written over: a name that differs only in case, on a file system
+        // that does not tell case apart, is the first one's.
+        if (error.code !== 'EEXIST') throw error;
+      }
+    }
   }
   for (const entry of nulList(git(home, ['ls-files', '-z', '--others', '--ignored', '--exclude-standard', '--directory']))) {
     const folder = entry.replace(/\/$/, '');
@@ -236,7 +298,7 @@ function makeCopy(home) {
   }
   for (const folder of links) {
     const to = path.join(copy, folder);
-    if (fs.existsSync(to) || !fs.existsSync(path.join(home, folder))) continue;
+    if (fs.existsSync(to) || !fs.existsSync(path.join(home, folder)) || !plainPath(folder)) continue;
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (path.basename(folder) === 'node_modules') linkModules(home, path.join(home, folder), to);
     else fs.symlinkSync(path.join(home, folder), to);
@@ -336,6 +398,14 @@ async function run(argv) {
   const choice = chooseCommand(rootFiles(project, settings), hasPythonTests(project));
   if (choice.error) return finish({ header, control: 'Control: not run', results: [], notTried: 0, problems: [...problems, choice.error] });
 
+  // The copy is made only where no other user can swap it for a folder of their own.
+  const shared = sharedTemp();
+  if (shared) {
+    return finish({
+      header, control: 'Control: not run', results: [], notTried: 0,
+      problems: [...problems, `the temp folder ${shared} lets other users write to it without the sticky bit, so one of them could put a folder of their own where the copy goes; start the command with TMPDIR set to a folder only you can open`],
+    });
+  }
   const dir = makeCopy(home);
   const at = path.join(dir, rel);
   const runIn = (seconds) => runTests(at, { ...choice, timeoutSeconds: seconds }, RUN_ENV);
@@ -374,15 +444,23 @@ async function run(argv) {
   }
   // Each run with a break: the time the estimate gives it, within the time left.
   const runSeconds = () => Math.min(estimated.perRun, timeLeft());
-  // One file broken, the tests run, the file back as it was: the run.
+  // One file broken, the tests run, the file back as it was: the run. Never through a link: a file the
+  // tests made a link, put behind one or removed is not broken, nor put back, and a run during which it
+  // became one tells nothing (the tests may have loaded a file that is not the broken one); refused:
+  // why such a run did not run.
   const runBroken = async (file, source, edit, seconds) => {
-    const target = path.join(dir, file);
-    fs.writeFileSync(target, apply(source, edit));
-    try {
-      return await runIn(seconds);
-    } finally {
-      fs.writeFileSync(target, source);
+    const refused = (why) => ({ command: choice.command, source: choice.source, timeoutSeconds: seconds, exitCode: null, output: '', refused: why });
+    if (!writeInCopy(file, apply(source, edit))) {
+      return refused(`${file} is no longer a plain file of the copy (a link, behind one, or gone), and a break is never written outside the copy`);
     }
+    let run;
+    let back = false;
+    try {
+      run = await runIn(seconds);
+    } finally {
+      back = writeInCopy(file, source);
+    }
+    return back ? run : refused(`${file} stopped being a plain file of the copy during the run (a link, behind one, or gone), so the tests may not have run the break`);
   };
   const named = (file) => path.relative(project, path.join(home, file));
   // The control breaks, before the breaks: each file with a break chosen fails as soon as it runs.
@@ -399,8 +477,8 @@ async function run(argv) {
     const { text, kind } = files.find((f) => f.file === file);
     const run = await runBroken(file, text, controlBreak(text, kind, python.controls && python.controls[file]), seconds);
     const count = chosen.filter((m) => m.file === file).length;
-    if (run.timedOut || run.startError) {
-      unrun.set(file, { file: named(file), count, outcome: 'did not run', why: `its control break did not run (${verdict(run).why}), so whether the tests run this file is not known` });
+    if (run.timedOut || run.startError || run.refused) {
+      unrun.set(file, { file: named(file), count, outcome: 'did not run', why: `its control break did not run (${run.refused || verdict(run).why}), so whether the tests run this file is not known` });
     } else if (verdict(run).outcome === 'passed') unrun.set(file, { file: named(file), count, outcome: 'not exercised', why: NOT_EXERCISED });
     else exercised.add(file);
   }
@@ -421,7 +499,8 @@ async function run(argv) {
       continue;
     }
     const source = files.find((f) => f.file === mutant.file).text;
-    const result = verdict(await runBroken(mutant.file, source, mutant, seconds));
+    const run = await runBroken(mutant.file, source, mutant, seconds);
+    const result = run.refused ? { outcome: 'did not run', why: run.refused } : verdict(run);
     outcomes.set(mutant, {
       file: named(mutant.file), op: mutant.op, ...describe(source, mutant),
       outcome: OUTCOMES[result.outcome], why: result.outcome === 'did not run' ? result.why : '',

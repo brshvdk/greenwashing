@@ -48,8 +48,8 @@ function project(t, files, testCommand = NODE_CMD, dir = tempDir(t)) {
 
 // The command in dir, with its own temp folder (where its copy goes); NODE_TEST_CONTEXT is dropped,
 // or the node --test it starts refuses to run inside this one.
-function mutate(t, dir, args = [], tmp = tempDir(t)) {
-  const env = { ...process.env, TMPDIR: tmp };
+function mutate(t, dir, args = [], tmp = tempDir(t), extra = {}) {
+  const env = { ...process.env, TMPDIR: tmp, ...extra };
   delete env.NODE_TEST_CONTEXT;
   const result = spawnSync(process.execPath, [MUTATE, ...args], { cwd: dir, env, encoding: 'utf8' });
   return { code: result.status, out: result.stdout + result.stderr, tmp, copies: fs.readdirSync(tmp).filter((name) => name.startsWith('greenwashing-mutants-')) };
@@ -212,6 +212,158 @@ test("the user's files stay byte for byte; node_modules, .venv and venv are link
   assert.match(run.out, /Control: .* on the unchanged copy: passed \(2 passed/);
   assert.equal(run.code, 1, run.out);
   assert.deepEqual(snapshot(dir), before);
+  assert.deepEqual(run.copies, []);
+});
+
+test('the copy is private to the user (0700) while the tests run in it', (t) => {
+  const probed = path.join(tempDir(t), 'probe');
+  // The test command first notes the folder of the temp directory it runs in, and that folder's mode.
+  const probe = "const fs = require('node:fs');\nconst path = require('node:path');\nconst top = fs.realpathSync(process.env.TMPDIR);\nlet at = process.cwd();\n"
+    + 'while (path.dirname(at) !== top && path.dirname(at) !== at) at = path.dirname(at);\n'
+    + 'fs.appendFileSync(process.argv[2], `${path.basename(at)} ${(fs.statSync(at).mode & 0o777).toString(8)}\\n`);\n';
+  const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST, 'probe.js': probe }, `node probe.js ${JSON.stringify(probed)} && ${NODE_CMD}`);
+  write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}${STOPS}` });
+  const run = mutate(t, dir);
+  assert.equal(run.code, 0, run.out);
+  const runs = fs.readFileSync(probed, 'utf8').trim().split('\n');
+  // The control run, one control break and four breaks, each in the copy.
+  assert.equal(runs.length, 6);
+  for (const line of runs) assert.match(line, /^greenwashing-mutants-\S+ 700$/);
+});
+
+// A project whose tests, run in the copy, put a link where code of the change is (thing: 'file' or
+// 'folder', a file or a folder of the project made a link to outside, where the same code sits with a
+// comment more; 'hard', the file made a hard link to that one; 'late', the file made a link only from
+// the third run on - the control run, the control break, then a break - after the break is in it).
+function linkedAway(t, thing) {
+  const outside = tempDir(t);
+  const code = `${CART}${ADD}`;
+  const at = thing === 'folder' ? 'lib' : 'cart.js';
+  const moved = thing === 'folder' ? outside : path.join(outside, 'cart.js');
+  fs.writeFileSync(path.join(outside, 'cart.js'), `${code}// outside the copy\n`);
+  const runs = thing === 'late' ? "fs.appendFileSync('.runs', 'x');\nif (fs.readFileSync('.runs', 'utf8').length > 2 && " : 'if (';
+  const linked = thing === 'hard' ? 'nlink > 1' : 'isSymbolicLink()';
+  const swap = `const fs = require('node:fs');\n${runs}!(fs.lstatSync(${JSON.stringify(at)}).${linked})) {\n`
+    + `  fs.rmSync(${JSON.stringify(at)}, { recursive: true });\n  fs.${thing === 'hard' ? 'linkSync' : 'symlinkSync'}(process.argv[2], ${JSON.stringify(at)});\n}\n`;
+  const file = thing === 'folder' ? 'lib/cart.js' : 'cart.js';
+  const tests = CART_TEST.replace("'./cart'", `'./${file.replace(/\.js$/, '')}'`);
+  const dir = project(t, { [file]: CART, 'cart.test.js': tests, 'swap.js': swap }, `node swap.js ${JSON.stringify(moved)} && ${NODE_CMD}`);
+  write(dir, { [file]: code, 'cart.test.js': `${tests}${ADDS}${STOPS}` });
+  return { dir, outside, file };
+}
+
+test('a break is never written through a link: a code file or folder the tests made a link to outside the copy is left alone', (t) => {
+  for (const thing of ['file', 'folder', 'hard']) {
+    const { dir, outside, file } = linkedAway(t, thing);
+    const run = mutate(t, dir);
+    assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, `${thing}\n${run.out}`);
+    assert.deepEqual(fs.readdirSync(outside), ['cart.js'], thing);
+    assert.equal(run.code, 2, run.out);
+    const name = file.replace(/[./]/g, '\\$&');
+    assert.match(run.out, new RegExp(`\\n- did not run: ${name}: 4 mutants not run - its control break did not run \\(`
+      + `${name} is no longer a plain file of the copy \\(a link, behind one, or gone\\), and a break is never written outside the copy\\), so whether the tests run this file is not known\\n`));
+    assert.deepEqual(run.copies, [], thing);
+  }
+});
+
+const APP_TEST = "const test = require('node:test');\nconst assert = require('node:assert');\nconst big = require('./app');\ntest('big', () => assert.equal(big(2), true));\n";
+
+test('a file the tests make a link only after a break is in it is not put back through the link', (t) => {
+  const { dir, outside } = linkedAway(t, 'late');
+  const run = mutate(t, dir);
+  assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, run.out);
+  // The tests of that run loaded the file outside, not the break: no survivor.
+  assert.match(run.out, /\nMutants: 4 tried - 0 killed, 0 survived, 4 did not run\n/);
+  assert.match(run.out, /stopped being a plain file of the copy during the run \(a link, behind one, or gone\), so the tests may not have run the break/);
+  assert.equal(run.code, 2, run.out);
+  assert.deepEqual(fs.readdirSync(outside), ['cart.js']);
+  assert.deepEqual(run.copies, []);
+});
+
+test('a link put where a break goes just after the command checked the file is not followed', (t) => {
+  const { dir, outside } = linkedAway(t, 'file');
+  // The tests make no link here: the command itself finds one there right after its check of the file.
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  git(dir, 'commit', '-qam', 'no swap');
+  const preload = path.join(tempDir(t), 'swap-after-check.js');
+  fs.writeFileSync(preload, "const fs = require('node:fs');\nconst path = require('node:path');\nconst lstat = fs.lstatSync;\nfs.lstatSync = (at, ...rest) => {\n"
+    + '  const stat = lstat(at, ...rest);\n'
+    + "  if (path.basename(at) === 'cart.js' && path.basename(path.dirname(at)).startsWith('greenwashing-mutants-') && stat.isFile()) {\n"
+    + "    fs.unlinkSync(at);\n    fs.symlinkSync(process.env.GW_OUTSIDE, at);\n    fs.appendFileSync(`${process.env.GW_OUTSIDE}.swapped`, 'x');\n  }\n  return stat;\n};\n");
+  const run = mutate(t, dir, [], tempDir(t), { NODE_OPTIONS: `--require ${preload}`, GW_OUTSIDE: path.join(outside, 'cart.js') });
+  assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, run.out);
+  assert.equal(fs.readFileSync(path.join(outside, 'cart.js.swapped'), 'utf8'), 'x');
+  assert.equal(run.code, 2, run.out);
+  assert.deepEqual(run.copies, []);
+});
+
+test('a folder on the way to a break made a link just after the command checked it is not followed', (t) => {
+  const { dir, outside } = linkedAway(t, 'folder');
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  git(dir, 'commit', '-qam', 'no swap');
+  // Right after the command looks at lib/cart.js in its copy, lib becomes a link to the outside folder.
+  const preload = path.join(tempDir(t), 'swap-folder-after-check.js');
+  fs.writeFileSync(preload, "const fs = require('node:fs');\nconst path = require('node:path');\nconst lstat = fs.lstatSync;\nfs.lstatSync = (at, ...rest) => {\n"
+    + '  const stat = lstat(at, ...rest);\n  const lib = path.dirname(at);\n'
+    + "  if (path.basename(at) === 'cart.js' && path.basename(lib) === 'lib' && path.basename(path.dirname(lib)).startsWith('greenwashing-mutants-')\n"
+    + '      && !lstat(lib).isSymbolicLink()) {\n'
+    + "    fs.renameSync(lib, `${lib}-away`);\n    fs.symlinkSync(process.env.GW_OUTSIDE, lib);\n    fs.appendFileSync(process.env.GW_MARK, 'x');\n  }\n"
+    + '  return stat;\n};\n');
+  const mark = path.join(tempDir(t), 'swapped');
+  const run = mutate(t, dir, [], tempDir(t), { NODE_OPTIONS: `--require ${preload}`, GW_OUTSIDE: outside, GW_MARK: mark });
+  assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, run.out);
+  assert.equal(fs.readFileSync(mark, 'utf8'), 'x');
+  assert.equal(run.code, 2, run.out);
+  assert.deepEqual(run.copies, []);
+});
+
+test('the copy is not made in a temp folder others can write to without the sticky bit: did not run; with the sticky bit, or closed to others, it is', (t) => {
+  for (const [mode, off] of [[0o777, true], [0o1777, false], [0o700, false]]) {
+    const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST });
+    write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}${STOPS}` });
+    const tmp = tempDir(t);
+    fs.chmodSync(tmp, mode);
+    const run = mutate(t, dir, [], tmp);
+    if (off) {
+      assert.equal(run.code, 2, run.out);
+      assert.match(run.out, new RegExp(`\\nDid not run: the temp folder ${tmp.replace(/[./]/g, '\\$&')} lets other users write to it without the sticky bit, so one of them could put a folder of their own where the copy goes; start the command with TMPDIR set to a folder only you can open\\n`));
+      assert.deepEqual(fs.readdirSync(tmp), []);
+    } else assert.equal(run.code, 0, run.out);
+  }
+});
+
+test('a file already in the copy when the command copies one there is not written over: a link there is not followed', (t) => {
+  const { dir, outside } = linkedAway(t, 'file');
+  write(dir, { '.greenwashing.json': JSON.stringify({ testCommand: NODE_CMD }) });
+  git(dir, 'commit', '-qam', 'no swap');
+  // Just before cart.js is copied, a link to the outside file is put where the copy goes.
+  const preload = path.join(tempDir(t), 'link-before-copy.js');
+  fs.writeFileSync(preload, "const fs = require('node:fs');\nconst os = require('node:os');\nconst path = require('node:path');\nconst lstat = fs.lstatSync;\n"
+    + 'fs.lstatSync = (at, ...rest) => {\n  const stat = lstat(at, ...rest);\n'
+    + "  if (at === path.join(process.env.GW_HOME, 'cart.js')) {\n"
+    + "    for (const name of fs.readdirSync(os.tmpdir()).filter((one) => one.startsWith('greenwashing-mutants-'))) {\n"
+    + "      const to = path.join(os.tmpdir(), name, 'cart.js');\n      if (!fs.existsSync(to)) fs.symlinkSync(process.env.GW_OUTSIDE, to);\n    }\n  }\n  return stat;\n};\n");
+  const run = mutate(t, dir, [], tempDir(t), { NODE_OPTIONS: `--require ${preload}`, GW_HOME: fs.realpathSync(dir), GW_OUTSIDE: path.join(outside, 'cart.js') });
+  assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, run.out);
+  assert.match(run.out, /\nControl: .* on the unchanged copy: passed/);
+  assert.equal(run.code, 2, run.out);
+  assert.deepEqual(run.copies, []);
+});
+
+test('the copy is made without writing through a link: a folder the working tree has as a link, its files still in the index', (t) => {
+  const base = tempDir(t);
+  const dir = project(t, { 'lib/x.js': 'module.exports = 1;\n', 'lib/node_modules/dep/index.js': 'module.exports = 1;\n', 'app.js': 'module.exports = (a) => a;\n', 'x.test.js': APP_TEST },
+    NODE_CMD, path.join(base, 'p'));
+  write(dir, { 'app.js': 'module.exports = (a) => a > 1;\n' });
+  // lib is now a link, relative, to a folder beside the project: from the copy it leads beside the copy.
+  write(base, { 'outside/x.js': 'module.exports = 2;\n', 'outside/node_modules/dep/index.js': 'module.exports = 2;\n' });
+  fs.rmSync(path.join(dir, 'lib'), { recursive: true });
+  fs.symlinkSync(path.join('..', 'outside'), path.join(dir, 'lib'));
+  const tmp = tempDir(t);
+  fs.mkdirSync(path.join(tmp, 'outside'));
+  const run = mutate(t, dir, [], tmp);
+  assert.match(run.out, /\nControl: .* on the unchanged copy: /);
+  assert.deepEqual(fs.readdirSync(path.join(tmp, 'outside')), []);
   assert.deepEqual(run.copies, []);
 });
 
