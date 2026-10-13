@@ -307,11 +307,12 @@ test('a folder on the way to a break made a link just after the command checked 
     + '  const stat = lstat(at, ...rest);\n  const lib = path.dirname(at);\n'
     + "  if (path.basename(at) === 'cart.js' && path.basename(lib) === 'lib' && path.basename(path.dirname(lib)).startsWith('greenwashing-mutants-')\n"
     + '      && !lstat(lib).isSymbolicLink()) {\n'
-    + "    fs.renameSync(lib, `${lib}-away`);\n    fs.symlinkSync(process.env.GW_OUTSIDE, lib);\n    fs.appendFileSync(path.join(process.env.GW_OUTSIDE, '..', 'swapped'), 'x');\n  }\n"
+    + "    fs.renameSync(lib, `${lib}-away`);\n    fs.symlinkSync(process.env.GW_OUTSIDE, lib);\n    fs.appendFileSync(process.env.GW_MARK, 'x');\n  }\n"
     + '  return stat;\n};\n');
-  const run = mutate(t, dir, [], tempDir(t), { NODE_OPTIONS: `--require ${preload}`, GW_OUTSIDE: outside });
+  const mark = path.join(tempDir(t), 'swapped');
+  const run = mutate(t, dir, [], tempDir(t), { NODE_OPTIONS: `--require ${preload}`, GW_OUTSIDE: outside, GW_MARK: mark });
   assert.equal(fs.readFileSync(path.join(outside, 'cart.js'), 'utf8'), `${CART}${ADD}// outside the copy\n`, run.out);
-  assert.equal(fs.readFileSync(path.join(outside, '..', 'swapped'), 'utf8'), 'x');
+  assert.equal(fs.readFileSync(mark, 'utf8'), 'x');
   assert.equal(run.code, 2, run.out);
   assert.deepEqual(run.copies, []);
 });
