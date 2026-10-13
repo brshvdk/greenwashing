@@ -316,8 +316,8 @@ test('a folder on the way to a break made a link just after the command checked 
   assert.deepEqual(run.copies, []);
 });
 
-test('the copy is not made in a temp folder others can write to without the sticky bit: did not run; with the sticky bit it is', (t) => {
-  for (const [mode, off] of [[0o777, true], [0o1777, false]]) {
+test('the copy is not made in a temp folder others can write to without the sticky bit: did not run; with the sticky bit, or closed to others, it is', (t) => {
+  for (const [mode, off] of [[0o777, true], [0o1777, false], [0o700, false]]) {
     const dir = project(t, { 'cart.js': CART, 'cart.test.js': CART_TEST });
     write(dir, { 'cart.js': `${CART}${ADD}`, 'cart.test.js': `${CART_TEST}${ADDS}${STOPS}` });
     const tmp = tempDir(t);

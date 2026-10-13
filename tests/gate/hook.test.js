@@ -1458,8 +1458,8 @@ test('when the gate cannot make its state folder, it is OFF: it says so and bloc
   assertOff(gate, dir, STATE_OFF(path.join(file, `greenwashing-gate-${process.getuid()}`), 'could not be made (ENOTDIR)', true));
 });
 
-test('a temp folder others can write to without the sticky bit holds no state: the gate is OFF; with the sticky bit it is used', (t) => {
-  for (const [mode, off] of [[0o777, true], [0o1777, false]]) {
+test('a temp folder others can write to without the sticky bit holds no state: the gate is OFF; with the sticky bit, or closed to others, it is used', (t) => {
+  for (const [mode, off] of [[0o777, true], [0o1777, false], [0o700, false]]) {
     const dir = project(t, { 't.test.js': NODE_PASS });
     const tmp = tempDir(t);
     fs.chmodSync(tmp, mode);
